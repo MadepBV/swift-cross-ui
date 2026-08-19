@@ -33,6 +33,36 @@ enum SFSymbolLucideMapping {
         table.keys.sorted()
     }
 
+    /// Whether a symbol is drawn as a solid glyph rather than an
+    /// outline.
+    ///
+    /// Filled and outline SF Symbols usually mean different things --
+    /// a filled warning triangle is a warning, an outline one is a
+    /// note -- so a name spelled `.fill` is drawn filled wherever the
+    /// generator could derive a filled variant for its Lucide icon.
+    ///
+    /// - Parameter name: An SF Symbol name.
+    /// - Returns: `true` if the symbol has a solid glyph.
+    static func drawsFilled(_ name: String) -> Bool {
+        filledSystemNames.contains(name)
+    }
+
+    /// Every SF Symbol name drawn with a solid glyph, sorted.
+    static let filledSystemNames: Set<String> = [
+        "arrowtriangle.down.fill",
+        "checkmark.circle.fill",
+        "checkmark.seal.fill",
+        "circle.fill",
+        "exclamationmark.circle.fill",
+        "exclamationmark.triangle.fill",
+        "lock.fill",
+        "lock.open.fill",
+        "lock.shield.fill",
+        "smallcircle.filled.circle.fill",
+        "xmark.circle.fill",
+        "xmark.octagon.fill",
+    ]
+
     private static let table: [String: String] = [
         // angle: Lucide has no angle glyph; a right triangle is the closest shape.
         "angle": "triangle-right",
@@ -68,8 +98,8 @@ enum SFSymbolLucideMapping {
         // arrow.uturn.backward.circle: Lucide has no circled u-turn arrow; the uncircled undo arrow is used.
         "arrow.uturn.backward.circle": "undo-2",
         "arrow.uturn.forward": "redo-2",
-        // arrowtriangle.down.fill: Lucide has no solid triangle glyph; a downward chevron is used.
-        "arrowtriangle.down.fill": "chevron-down",
+        // arrowtriangle.down.fill: Lucide has no downward triangle; its upward one is turned half a turn about the canvas centre. Lucide has no filled variants, so the solid glyph is derived from the outline geometry by the generator.
+        "arrowtriangle.down.fill": "triangle-down",
         "books.vertical": "library",
         "building.2": "building-2",
         // building.2.crop.circle: Lucide has no circle-cropped building; the plain building is used.
@@ -81,10 +111,10 @@ enum SFSymbolLucideMapping {
         "character.cursor.ibeam": "text-cursor",
         "checkmark": "check",
         "checkmark.circle": "circle-check",
-        // checkmark.circle.fill: Lucide has no filled variants; the outline icon is used.
+        // checkmark.circle.fill: Lucide has no filled variants, so the solid glyph is derived from the outline geometry by the generator.
         "checkmark.circle.fill": "circle-check",
         "checkmark.seal": "badge-check",
-        // checkmark.seal.fill: Lucide has no filled variants; the outline icon is used.
+        // checkmark.seal.fill: Lucide has no filled variants, so the solid glyph is derived from the outline geometry by the generator.
         "checkmark.seal.fill": "badge-check",
         "checkmark.shield": "shield-check",
         "chevron.backward": "chevron-left",
@@ -95,7 +125,7 @@ enum SFSymbolLucideMapping {
         "chevron.up.chevron.down": "chevrons-up-down",
         "circle": "circle",
         "circle.dashed": "circle-dashed",
-        // circle.fill: Lucide has no filled variants; the outline icon is used.
+        // circle.fill: Lucide has no filled variants, so the solid glyph is derived from the outline geometry by the generator.
         "circle.fill": "circle",
         "circle.grid.3x3": "grid-3x3",
         // circle.grid.cross: Lucide has no cross-arranged dot grid; a full 3x3 grid is used.
@@ -124,10 +154,10 @@ enum SFSymbolLucideMapping {
         // exclamationmark.arrow.triangle.2.circlepath: Lucide has no warning-badged refresh; the plain refresh is used.
         "exclamationmark.arrow.triangle.2.circlepath": "refresh-cw",
         "exclamationmark.circle": "circle-alert",
-        // exclamationmark.circle.fill: Lucide has no filled variants; the outline icon is used.
+        // exclamationmark.circle.fill: Lucide has no filled variants, so the solid glyph is derived from the outline geometry by the generator.
         "exclamationmark.circle.fill": "circle-alert",
         "exclamationmark.triangle": "triangle-alert",
-        // exclamationmark.triangle.fill: Lucide has no filled variants; the outline icon is used.
+        // exclamationmark.triangle.fill: Lucide has no filled variants, so the solid glyph is derived from the outline geometry by the generator.
         "exclamationmark.triangle.fill": "triangle-alert",
         "eye": "eye",
         "eye.slash": "eye-off",
@@ -151,12 +181,12 @@ enum SFSymbolLucideMapping {
         "link.circle.fill": "link",
         "list.bullet.rectangle": "list",
         "list.bullet.rectangle.portrait": "list",
-        // lock.fill: Lucide has no filled variants; the outline icon is used.
+        // lock.fill: Lucide has no filled variants, so the solid glyph is derived from the outline geometry by the generator.
         "lock.fill": "lock",
         "lock.open": "lock-open",
-        // lock.open.fill: Lucide has no filled variants; the outline icon is used.
+        // lock.open.fill: Lucide has no filled variants, so the solid glyph is derived from the outline geometry by the generator.
         "lock.open.fill": "lock-open",
-        // lock.shield.fill: Lucide has no lock-in-shield icon; a plain shield is used.
+        // lock.shield.fill: Lucide has no lock-in-shield icon; a plain shield is used. Lucide has no filled variants, so the solid glyph is derived from the outline geometry by the generator.
         "lock.shield.fill": "shield",
         "minus": "minus",
         "minus.magnifyingglass": "zoom-out",
@@ -222,7 +252,7 @@ enum SFSymbolLucideMapping {
         "sidebar.trailing": "panel-right",
         "slider.horizontal.3": "sliders-horizontal",
         "smallcircle.filled.circle": "circle-dot",
-        // smallcircle.filled.circle.fill: Lucide has no filled variants; the outline icon is used.
+        // smallcircle.filled.circle.fill: Lucide has no filled variants, so the solid glyph is derived from the outline geometry by the generator.
         "smallcircle.filled.circle.fill": "circle-dot",
         "square.3.layers.3d": "layers-3",
         "square.3.stack.3d": "layers-3",
@@ -258,9 +288,9 @@ enum SFSymbolLucideMapping {
         "wand.and.stars": "wand-sparkles",
         "xmark": "x",
         "xmark.circle": "circle-x",
-        // xmark.circle.fill: Lucide has no filled variants; the outline icon is used.
+        // xmark.circle.fill: Lucide has no filled variants, so the solid glyph is derived from the outline geometry by the generator.
         "xmark.circle.fill": "circle-x",
-        // xmark.octagon.fill: Lucide has no filled variants; the outline icon is used.
+        // xmark.octagon.fill: Lucide has no filled variants, so the solid glyph is derived from the outline geometry by the generator.
         "xmark.octagon.fill": "octagon-x",
     ]
 }

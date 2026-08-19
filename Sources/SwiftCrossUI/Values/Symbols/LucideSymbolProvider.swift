@@ -6,9 +6,19 @@
 /// disk and no SVG is parsed at runtime, so symbols cost nothing to start up
 /// and stay sharp at any size.
 ///
-/// Lucide is a stroke-only set with no filled counterparts, so SF Symbol
-/// names ending in `.fill` resolve to the same outline icon as their unfilled
-/// siblings.
+/// ## Filled symbols
+///
+/// Filled and outline SF Symbols usually mean different things -- a filled
+/// warning triangle is a warning, an outline one is a note -- so `.fill`
+/// names are not simply aliased onto their outline siblings. Lucide is a
+/// stroke-only set, so the generator derives a solid glyph from the outline
+/// geometry: the enclosure is made solid and the inner glyph is punched
+/// through it, which is how SF Symbols builds its own `.fill` variants.
+///
+/// That is only possible for icons whose construction is unambiguous, so a
+/// `.fill` name whose icon has no derived variant still draws the outline.
+/// ``SFSymbolLucideMapping/drawsFilled(_:)`` says which is which, and the
+/// generated mapping table records the reason against each name.
 ///
 /// ## Unknown names
 ///
@@ -44,8 +54,9 @@ public struct LucideSymbolProvider: SymbolProvider {
     /// The Lucide icon drawn in place of an SF Symbol.
     ///
     /// A name the table doesn't list is retried with any trailing `.fill`
-    /// removed, since Lucide draws filled and unfilled symbols identically
-    /// anyway.
+    /// removed, so that an unlisted `.fill` name still draws its sibling's
+    /// shape rather than a placeholder. It draws it as an outline: only names
+    /// the table lists are drawn filled.
     ///
     /// - Parameter name: An SF Symbol name.
     /// - Returns: A kebab-case Lucide icon name, or `nil` if the symbol isn't
@@ -70,10 +81,15 @@ public struct LucideSymbolProvider: SymbolProvider {
             ?? (drawsPlaceholderForUnknownNames
                 ? SFSymbolLucideMapping.placeholderIcon
                 : nil)
-        guard
-            let icon,
-            let geometry = LucideIconGeometry.geometry(forIcon: icon)
-        else {
+        guard let icon else {
+            return nil
+        }
+        if SFSymbolLucideMapping.drawsFilled(request.name),
+            let filled = LucideIconGeometry.filledGeometry(forIcon: icon)
+        {
+            return .geometry(filled)
+        }
+        guard let geometry = LucideIconGeometry.geometry(forIcon: icon) else {
             return nil
         }
         return .geometry(geometry)

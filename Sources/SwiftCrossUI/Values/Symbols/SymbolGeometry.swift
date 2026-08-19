@@ -39,6 +39,13 @@ public struct SymbolGeometry: Sendable {
         /// This is how the bundled Lucide icons are drawn.
         case stroked
         /// The geometry encloses areas to be filled, and is never stroked.
+        ///
+        /// Every subpath is closed, and they are shaded with the non-zero
+        /// winding rule, so a subpath wound against the others is a hole
+        /// rather than another filled island. That is how a filled symbol
+        /// keeps its inner glyph transparent: the enclosure is wound one way
+        /// and the glyph the other, letting whatever is behind the symbol
+        /// show through the glyph.
         case filled
     }
 
@@ -137,7 +144,20 @@ public struct SymbolGeometry: Sendable {
                     )
             }
         }
-        return path.fillRule(.winding).stroke(style: strokeStyle(in: bounds))
+        // Both renderings use the non-zero rule. Outlines are a single open
+        // stroke, so it makes no difference to them; filled symbols rely on
+        // it, since their contours are wound to add or subtract from one
+        // another rather than to alternate.
+        path = path.fillRule(.winding)
+        switch rendering {
+            case .stroked:
+                return path.stroke(style: strokeStyle(in: bounds))
+            case .filled:
+                // A filled symbol's stroke width describes the outline it was
+                // derived from, not anything drawn, so it is left off the
+                // path rather than being handed on as a drawing instruction.
+                return path
+        }
     }
 
     /// The stroke style to draw this symbol's path with in the given bounds.

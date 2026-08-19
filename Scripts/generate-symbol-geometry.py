@@ -55,10 +55,16 @@ from typing import Iterable
 # mapping deliberately picks a visibly generic icon rather than a confidently
 # wrong one.
 #
-# Lucide is a stroke-only icon set: it has no filled counterparts. Every SF
-# Symbol name ending in `.fill` therefore resolves to the same outline icon as
-# its unfilled sibling. Those entries carry the FILL note.
+# Lucide is a stroke-only icon set: it has no filled counterparts. A name
+# ending in `.fill` therefore resolves to the same outline icon as its
+# unfilled sibling, and is drawn filled only where the generator could derive
+# a filled variant from that icon's geometry (see FILL_RECIPES). Entries that
+# could not be derived keep the FILL note; the rest get DERIVED_FILL.
 FILL = "Lucide has no filled variants; the outline icon is used."
+DERIVED_FILL = (
+    "Lucide has no filled variants, so the solid glyph is derived from the "
+    "outline geometry by the generator."
+)
 
 SYMBOL_MAP: dict[str, tuple[str, str | None]] = {
     # -- 27..10 occurrences ------------------------------------------------
@@ -143,8 +149,9 @@ SYMBOL_MAP: dict[str, tuple[str, str | None]] = {
     "checkmark.seal.fill": ("badge-check", FILL),
     "books.vertical": ("library", None),
     "arrowtriangle.down.fill": (
-        "chevron-down",
-        "Lucide has no solid triangle glyph; a downward chevron is used.",
+        "triangle-down",
+        "Lucide has no downward triangle; its upward one is turned half a "
+        "turn about the canvas centre.",
     ),
     "arrow.up.left.and.arrow.down.right": ("move-diagonal", None),
     "arrow.right": ("arrow-right", None),
@@ -350,6 +357,24 @@ PLACEHOLDER_ICON = "square-dashed"
 CANVAS_SIZE = 24.0
 STROKE_WIDTH = 2.0
 
+
+def _rotate_half_turn(point: tuple[float, float]) -> tuple[float, float]:
+    """Turn a point half a turn about the centre of the canvas."""
+    return (CANVAS_SIZE - point[0], CANVAS_SIZE - point[1])
+
+
+# Icons built by rigidly transforming another Lucide icon. Lucide draws its
+# triangle pointing up and has no downward one, and a half turn about the
+# canvas centre is an exact, reversible operation on the same artwork rather
+# than a redrawing of it.
+DERIVED_ICONS: dict[str, tuple[str, str]] = {
+    "triangle-down": ("triangle", "half turn about the canvas centre"),
+}
+
+DERIVED_TRANSFORMS = {
+    "triangle-down": _rotate_half_turn,
+}
+
 LUCIDE_LICENSE = """\
 ISC License
 
@@ -480,46 +505,61 @@ def _parse_svg(source: str) -> list[Element]:
 
 Point = tuple[float, float]
 
+# A rigid point map applied to an icon's geometry as it is emitted. Only
+# distance-preserving maps are allowed, because circles stay circles and
+# stroke offsets stay symmetric only under those.
+Transform = "callable"
+
 
 class CommandBuilder:
     """Accumulates ``SymbolGeometry.Command`` values for one icon."""
 
-    def __init__(self) -> None:
+    def __init__(self, transform=None) -> None:
         self.commands: list[str] = []
         self.current: Point = (0.0, 0.0)
         self.subpath_start: Point = (0.0, 0.0)
         self.last_control: Point | None = None
         self.last_command: str = ""
+        # Applied on the way out only: `current` and `subpath_start` stay in
+        # the source's own coordinates so that relative path data still works.
+        self.transform = transform
+
+    def place(self, point: Point) -> Point:
+        """Map a source-space point into output space."""
+        return self.transform(point) if self.transform else point
 
     def move(self, point: Point) -> None:
-        self.commands.append(f".move({_point(point)})")
+        self.commands.append(f".move({_point(self.place(point))})")
         self.current = point
         self.subpath_start = point
         self.last_control = None
 
     def line(self, point: Point) -> None:
-        self.commands.append(f".line({_point(point)})")
+        self.commands.append(f".line({_point(self.place(point))})")
         self.current = point
         self.last_control = None
 
     def quad(self, control: Point, end: Point) -> None:
         self.commands.append(
-            f".quadCurve(control: {_point(control)}, end: {_point(end)})"
+            f".quadCurve(control: {_point(self.place(control))}, "
+            f"end: {_point(self.place(end))})"
         )
         self.current = end
         self.last_control = control
 
     def cubic(self, control1: Point, control2: Point, end: Point) -> None:
         self.commands.append(
-            f".cubicCurve(control1: {_point(control1)}, "
-            f"control2: {_point(control2)}, end: {_point(end)})"
+            f".cubicCurve(control1: {_point(self.place(control1))}, "
+            f"control2: {_point(self.place(control2))}, "
+            f"end: {_point(self.place(end))})"
         )
         self.current = end
         self.last_control = control2
 
     def circle(self, center: Point, radius: float) -> None:
         self.commands.append(
-            f".circle(center: {_point(center)}, radius: {_number(radius)})"
+            f".circle(center: {_point(self.place(center))}, "
+            f"radius: {_number(radius)})"
         )
         self.last_control = None
 
@@ -849,11 +889,735 @@ def _append_rect(
     builder.cubic((x, y + ry - ry * KAPPA), (x + rx - rx * KAPPA, y), (x + rx, y))
 
 
-def build_commands(elements: Iterable[Element]) -> list[str]:
-    builder = CommandBuilder()
+def build_commands(elements: Iterable[Element], transform=None) -> list[str]:
+    builder = CommandBuilder(transform=transform)
     for tag, attrs in elements:
         append_element(builder, tag, attrs)
     return builder.commands
+
+
+# --------------------------------------------------------------------------
+# Deriving filled variants
+# --------------------------------------------------------------------------
+#
+# Lucide draws outlines only, so a filled glyph has to be constructed. SF
+# Symbols builds its own `.fill` variants the same way this does: a solid
+# enclosure with the inner glyph punched straight through it, so that whatever
+# is behind the symbol shows through the punched-out part.
+#
+# The construction is entirely geometric, and relies on one property of the
+# non-zero winding rule: subpaths wound the same way union for free, no matter
+# how they overlap, and a subpath wound the other way subtracts. So a filled
+# variant is a list of closed contours, each carrying a sign:
+#
+#   +1  solid: the enclosure, and any stroke that is part of the solid body.
+#   -1  punched out: the inner glyph, converted from a stroke to its outline.
+#
+# The one case the winding rule cannot handle by itself is two punched-out
+# contours that overlap each other (the two bars of an X cross in the middle):
+# -1 + -1 is still non-zero, so the crossing would fill back in. Those are
+# fixed by inclusion-exclusion, adding the overlap back as a +1 contour.
+
+HALF_STROKE = STROKE_WIDTH / 2.0
+
+# How far flattened geometry may stray from the true curve, in canvas units.
+# A symbol is drawn from a 24-unit canvas at 16-32pt, so 0.008 units is well
+# under a hundredth of a pixel and cannot be seen at any realistic size.
+FLATTEN_TOLERANCE = 0.008
+# How far dropping a near-collinear point may move an edge, in canvas units.
+# Deliberately tighter than the flattening tolerance so that simplification
+# only ever removes points that flattening did not need to add.
+SIMPLIFY_TOLERANCE = 0.002
+# How far past a corner the inward side of an offset may be cut back, as a
+# multiple of the offset distance. Anything sharper than this would need a
+# bevel to stay tidy, and no bundled icon comes close, so it is refused rather
+# than quietly drawn wrong.
+INNER_JOIN_LIMIT = 6.0
+EPSILON = 1e-9
+
+
+class FillRecipe:
+    """How to build one icon's filled variant from its outline elements.
+
+    `body` and `knockout` are indices into the icon's element list, in the
+    order Lucide declares them. Everything in `body` becomes solid; everything
+    in `knockout` is punched out of it.
+    """
+
+    def __init__(
+        self,
+        body: Iterable[int],
+        knockout: Iterable[int] = (),
+        note: str | None = None,
+    ) -> None:
+        self.body = tuple(body)
+        self.knockout = tuple(knockout)
+        self.note = note
+
+
+# Filled variants are only derived for icons whose construction is
+# unambiguous: a closed enclosure, optionally with an inner glyph to punch out
+# of it. Icons that are a loose collection of strokes (a printer, a palette, a
+# ruler) have no "inside" to fill, so they keep their outline and the mapping
+# says so. A wrong fill reads as a different symbol; a missing one only reads
+# as a less emphatic version of the right symbol.
+FILL_RECIPES: dict[str, FillRecipe] = {
+    "badge-check": FillRecipe(body=(0,), knockout=(1,)),
+    "circle": FillRecipe(body=(0,)),
+    "circle-alert": FillRecipe(body=(0,), knockout=(1, 2)),
+    "circle-check": FillRecipe(body=(0,), knockout=(1,)),
+    "circle-dot": FillRecipe(body=(0,), knockout=(1,)),
+    "circle-x": FillRecipe(body=(0,), knockout=(1, 2)),
+    # The shackle is an open stroke rather than an enclosure, so it joins the
+    # solid body as its own outline instead of being filled.
+    "lock": FillRecipe(body=(0, 1)),
+    "lock-open": FillRecipe(body=(0, 1)),
+    # Lucide declares the octagon between the two bars of the cross.
+    "octagon-x": FillRecipe(body=(1,), knockout=(0, 2)),
+    "shield": FillRecipe(body=(0,)),
+    "triangle-alert": FillRecipe(body=(0,), knockout=(1, 2)),
+    "triangle-down": FillRecipe(body=(0,)),
+}
+
+
+class FlatSubpath:
+    """One contour of an icon element, flattened into straight segments.
+
+    Circles keep their exact centre and radius alongside the polygon, because
+    a circular enclosure can be offset exactly rather than approximated.
+    """
+
+    def __init__(self, points: list[Point], closed: bool) -> None:
+        self.points = points
+        self.closed = closed
+        self.circle: tuple[Point, float] | None = None
+
+    @classmethod
+    def from_circle(cls, center: Point, radius: float) -> "FlatSubpath":
+        subpath = cls(_circle_polygon(center, radius, 1), True)
+        subpath.circle = (center, radius)
+        return subpath
+
+
+class FlatteningBuilder(CommandBuilder):
+    """A ``CommandBuilder`` that collects flattened contours, not Swift.
+
+    Reusing ``CommandBuilder``'s bookkeeping means the SVG parser above feeds
+    the outline and the fill derivation from exactly the same code path, so
+    the two can never disagree about what an icon's geometry is.
+    """
+
+    def __init__(self, transform=None) -> None:
+        super().__init__(transform=transform)
+        self.subpaths: list[FlatSubpath] = []
+        self._points: list[Point] = []
+        self._closed = False
+
+    def move(self, point: Point) -> None:
+        self._flush()
+        self.current = point
+        self.subpath_start = point
+        self.last_control = None
+        self._points = [point]
+
+    def line(self, point: Point) -> None:
+        self._start_if_needed()
+        self._points.append(point)
+        self.current = point
+        self.last_control = None
+
+    def quad(self, control: Point, end: Point) -> None:
+        self._start_if_needed()
+        self._points.extend(
+            _flatten_quad(self.current, control, end)[1:]
+        )
+        self.current = end
+        self.last_control = control
+
+    def cubic(self, control1: Point, control2: Point, end: Point) -> None:
+        self._start_if_needed()
+        self._points.extend(
+            _flatten_cubic(self.current, control1, control2, end)[1:]
+        )
+        self.current = end
+        self.last_control = control2
+
+    def circle(self, center: Point, radius: float) -> None:
+        self._flush()
+        self.subpaths.append(
+            FlatSubpath.from_circle(self.place(center), radius)
+        )
+        self.last_control = None
+
+    def close(self) -> None:
+        self._start_if_needed()
+        if self._points and self._points[0] != self._points[-1]:
+            self._points.append(self.subpath_start)
+        self._closed = True
+        self._flush()
+        self.current = self.subpath_start
+        self.last_control = None
+
+    def finish(self) -> list[FlatSubpath]:
+        """Flush the contour in progress and return everything collected."""
+        self._flush()
+        return self.subpaths
+
+    def _start_if_needed(self) -> None:
+        # Path data may carry on drawing after a `Z`, starting again from the
+        # subpath's start point.
+        if not self._points:
+            self._points = [self.current]
+
+    def _flush(self) -> None:
+        points = _drop_repeated(
+            [self.place(point) for point in self._points]
+        )
+        if len(points) >= 2:
+            # Lucide closes most shapes by drawing back to where they
+            # started rather than with an explicit `Z`, and the two mean the
+            # same thing to a renderer.
+            closed = self._closed or (
+                len(points) > 2 and _distance(points[0], points[-1]) <= 1e-6
+            )
+            self.subpaths.append(FlatSubpath(points, closed))
+        self._points = []
+        self._closed = False
+
+
+def flatten_element(
+    tag: str, attrs: dict[str, str], transform=None
+) -> list[FlatSubpath]:
+    """Flatten one SVG element into contours."""
+    builder = FlatteningBuilder(transform=transform)
+    append_element(builder, tag, attrs)
+    return builder.finish()
+
+
+# -- Flattening -------------------------------------------------------------
+
+
+def _flatten_cubic(
+    start: Point, control1: Point, control2: Point, end: Point
+) -> list[Point]:
+    """Split a cubic Bézier into straight segments within tolerance."""
+    steps = _bezier_steps(
+        _distance(start, control1)
+        + _distance(control1, control2)
+        + _distance(control2, end)
+    )
+    points = [start]
+    for step in range(1, steps + 1):
+        t = step / steps
+        u = 1.0 - t
+        points.append(
+            (
+                u * u * u * start[0]
+                + 3 * u * u * t * control1[0]
+                + 3 * u * t * t * control2[0]
+                + t * t * t * end[0],
+                u * u * u * start[1]
+                + 3 * u * u * t * control1[1]
+                + 3 * u * t * t * control2[1]
+                + t * t * t * end[1],
+            )
+        )
+    return points
+
+
+def _flatten_quad(start: Point, control: Point, end: Point) -> list[Point]:
+    """Split a quadratic Bézier into straight segments within tolerance."""
+    steps = _bezier_steps(
+        _distance(start, control) + _distance(control, end)
+    )
+    points = [start]
+    for step in range(1, steps + 1):
+        t = step / steps
+        u = 1.0 - t
+        points.append(
+            (
+                u * u * start[0] + 2 * u * t * control[0] + t * t * end[0],
+                u * u * start[1] + 2 * u * t * control[1] + t * t * end[1],
+            )
+        )
+    return points
+
+
+def _bezier_steps(control_polygon_length: float) -> int:
+    """How many segments a Bézier of the given size needs.
+
+    The control polygon bounds the curve's length, and a curve deviates from
+    its chords by at most a fixed fraction of that bound per segment, so this
+    is a conservative count rather than an adaptive subdivision.
+    """
+    if control_polygon_length <= EPSILON:
+        return 1
+    steps = math.ceil(
+        math.sqrt(control_polygon_length / (8.0 * FLATTEN_TOLERANCE))
+    )
+    return max(1, min(steps, 200))
+
+
+def _arc_steps(radius: float, sweep: float) -> int:
+    """How many segments an arc of the given radius and sweep needs."""
+    if radius <= EPSILON:
+        return 1
+    ratio = max(-1.0, min(1.0, 1.0 - FLATTEN_TOLERANCE / radius))
+    step = 2.0 * math.acos(ratio)
+    if step <= EPSILON:
+        return 1
+    return max(1, min(int(math.ceil(abs(sweep) / step)), 512))
+
+
+def _circle_polygon(center: Point, radius: float, sign: int) -> list[Point]:
+    """A regular polygon approximating a circle, wound to match `sign`."""
+    steps = max(8, _arc_steps(radius, 2.0 * math.pi))
+    direction = 1.0 if sign >= 0 else -1.0
+    return [
+        (
+            center[0] + radius * math.cos(direction * 2.0 * math.pi * i / steps),
+            center[1] + radius * math.sin(direction * 2.0 * math.pi * i / steps),
+        )
+        for i in range(steps)
+    ]
+
+
+# -- Polygon helpers --------------------------------------------------------
+
+
+def _distance(a: Point, b: Point) -> float:
+    return math.hypot(b[0] - a[0], b[1] - a[1])
+
+
+def _drop_repeated(points: list[Point]) -> list[Point]:
+    """Remove consecutive duplicate points."""
+    result: list[Point] = []
+    for point in points:
+        if not result or _distance(result[-1], point) > EPSILON:
+            result.append(point)
+    return result
+
+
+def _signed_area(points: list[Point]) -> float:
+    """Twice the signed area of a closed polygon.
+
+    Positive means the polygon is wound clockwise on screen, since SVG's y
+    axis points down.
+    """
+    total = 0.0
+    for i, (x0, y0) in enumerate(points):
+        x1, y1 = points[(i + 1) % len(points)]
+        total += x0 * y1 - x1 * y0
+    return total / 2.0
+
+
+def _orient(points: list[Point], sign: int) -> list[Point]:
+    """Wind a polygon so that its signed area matches `sign`."""
+    if (_signed_area(points) >= 0.0) == (sign >= 0):
+        return points
+    return list(reversed(points))
+
+
+def _simplify(points: list[Point]) -> list[Point]:
+    """Drop points that barely bend the contour they sit on."""
+    if len(points) < 4:
+        return points
+    result: list[Point] = []
+    for index, point in enumerate(points):
+        previous = result[-1] if result else points[-1]
+        following = points[(index + 1) % len(points)]
+        if _point_line_distance(point, previous, following) > SIMPLIFY_TOLERANCE:
+            result.append(point)
+    return result if len(result) >= 3 else points
+
+
+def _point_line_distance(point: Point, start: Point, end: Point) -> float:
+    """The distance from `point` to the segment `start`-`end`."""
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    length = math.hypot(dx, dy)
+    if length <= EPSILON:
+        return _distance(point, start)
+    t = ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / (
+        length * length
+    )
+    t = max(0.0, min(1.0, t))
+    return _distance(point, (start[0] + t * dx, start[1] + t * dy))
+
+
+def _offset_ring(ring: list[Point], distance: float) -> list[Point]:
+    """Offset a closed ring outwards by `distance`, with round joins.
+
+    The ring must be wound so that its signed area is positive; the offset is
+    then taken on its outward side.
+
+    Corners are handled the way a stroke rasteriser handles them. On the
+    outward side of a corner the offset edges pull apart, and an arc rounds
+    the gap off. On the inward side they overlap, and both are cut back to
+    where they cross, so the contour stays simple. Letting them run past each
+    other instead would leave a loop wound against the rest of the contour,
+    which the non-zero rule would punch out as a notch.
+    """
+    starts: list[Point] = []
+    ends: list[Point] = []
+    vertices: list[Point] = []
+    directions: list[Point] = []
+    normals: list[Point] = []
+    count = len(ring)
+    for index in range(count):
+        start = ring[index]
+        end = ring[(index + 1) % count]
+        direction = _normalised((end[0] - start[0], end[1] - start[1]))
+        if direction is None:
+            continue
+        # The outward side of a positively wound ring, i.e. the source
+        # direction turned a quarter turn anticlockwise on screen.
+        normal = (direction[1] * distance, -direction[0] * distance)
+        starts.append((start[0] + normal[0], start[1] + normal[1]))
+        ends.append((end[0] + normal[0], end[1] + normal[1]))
+        vertices.append(end)
+        directions.append(direction)
+        normals.append(normal)
+
+    edges = len(starts)
+    if edges == 0:
+        return []
+
+    arcs: list[list[Point]] = [[] for _ in range(edges)]
+    for index in range(edges):
+        following = (index + 1) % edges
+        turn = _turn_between(directions[index], directions[following])
+        if turn > EPSILON:
+            arcs[index] = _join_arc(vertices[index], normals[index], turn)
+        elif turn < -EPSILON:
+            crossing = _line_intersection(
+                starts[index], ends[index], starts[following], ends[following]
+            )
+            if _distance(crossing, vertices[index]) > INNER_JOIN_LIMIT * abs(
+                distance
+            ):
+                raise SystemExit(
+                    "an inward corner is too sharp to offset cleanly at "
+                    f"{vertices[index]}"
+                )
+            ends[index] = crossing
+            starts[following] = crossing
+
+    result: list[Point] = []
+    for index in range(edges):
+        result.append(starts[index])
+        result.append(ends[index])
+        result.extend(arcs[index])
+    return _drop_repeated(result)
+
+
+def _turn_between(before: Point, after: Point) -> float:
+    """The signed angle from one unit direction to the next."""
+    cross = before[0] * after[1] - before[1] * after[0]
+    dot = before[0] * after[0] + before[1] * after[1]
+    if abs(cross) <= EPSILON and dot < 0.0:
+        # An exact reversal, which is what the end of a stroke looks like once
+        # it has been walked out and back. Whether that counts as turning left
+        # or right is down to the sign of a zero, so say left and round the
+        # end off rather than pinching it shut.
+        return math.pi
+    return math.atan2(cross, dot)
+
+
+def _join_arc(center: Point, normal: Point, turn: float) -> list[Point]:
+    """The arc that rounds off an outward corner of an offset ring."""
+    radius = math.hypot(normal[0], normal[1])
+    steps = _arc_steps(radius, turn)
+    points: list[Point] = []
+    for step in range(1, steps):
+        angle = turn * step / steps
+        cos_a, sin_a = math.cos(angle), math.sin(angle)
+        points.append(
+            (
+                center[0] + normal[0] * cos_a - normal[1] * sin_a,
+                center[1] + normal[0] * sin_a + normal[1] * cos_a,
+            )
+        )
+    return points
+
+
+def _normalised(vector: Point) -> Point | None:
+    length = math.hypot(vector[0], vector[1])
+    if length <= EPSILON:
+        return None
+    return (vector[0] / length, vector[1] / length)
+
+
+def _outset_closed(points: list[Point], distance: float) -> list[Point]:
+    """Grow a closed contour outwards by `distance`."""
+    ring = _drop_repeated(points)
+    if len(ring) > 1 and _distance(ring[0], ring[-1]) <= EPSILON:
+        ring = ring[:-1]
+    return _simplify(_offset_ring(_orient(ring, 1), distance))
+
+
+def _stroke_outline(points: list[Point], half_width: float) -> list[Point]:
+    """The outline of an open polyline stroked with round caps and joins.
+
+    Walking the polyline out and back gives a zero-area ring whose outward
+    offset is exactly the stroked region: the 180-degree turns at each end
+    become the round caps, and each interior corner is rounded on its outer
+    side and crossed on its inner side.
+    """
+    ring = _drop_repeated(points)
+    if len(ring) < 2:
+        raise ValueError("cannot outline a polyline with no length")
+    ring = ring + list(reversed(ring[1:-1]))
+    return _simplify(_offset_ring(ring, half_width))
+
+
+def _convex_clip(subject: list[Point], clip: list[Point]) -> list[Point]:
+    """Intersect a polygon with a convex one (Sutherland-Hodgman).
+
+    Both polygons must be wound positively; `clip` must be convex.
+    """
+    output = list(subject)
+    for index in range(len(clip)):
+        if not output:
+            return []
+        start = clip[index]
+        end = clip[(index + 1) % len(clip)]
+
+        def inside(point: Point) -> bool:
+            return (end[0] - start[0]) * (point[1] - start[1]) - (
+                end[1] - start[1]
+            ) * (point[0] - start[0]) >= -EPSILON
+
+        clipped: list[Point] = []
+        for edge_index, current in enumerate(output):
+            previous = output[edge_index - 1]
+            if inside(current):
+                if not inside(previous):
+                    clipped.append(_line_intersection(previous, current, start, end))
+                clipped.append(current)
+            elif inside(previous):
+                clipped.append(_line_intersection(previous, current, start, end))
+        output = _drop_repeated(clipped)
+    return output
+
+
+def _line_intersection(a: Point, b: Point, c: Point, d: Point) -> Point:
+    """Where the line through `a`-`b` meets the line through `c`-`d`."""
+    denominator = (b[0] - a[0]) * (d[1] - c[1]) - (b[1] - a[1]) * (d[0] - c[0])
+    if abs(denominator) <= EPSILON:
+        return b
+    t = ((c[0] - a[0]) * (d[1] - c[1]) - (c[1] - a[1]) * (d[0] - c[0])) / denominator
+    return (a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1]))
+
+
+def _is_convex(points: list[Point]) -> bool:
+    """Whether a polygon turns the same way at every vertex."""
+    sign = 0
+    count = len(points)
+    for index in range(count):
+        a = points[index]
+        b = points[(index + 1) % count]
+        c = points[(index + 2) % count]
+        cross = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])
+        if abs(cross) <= 1e-7:
+            continue
+        if sign == 0:
+            sign = 1 if cross > 0 else -1
+        elif (cross > 0) != (sign > 0):
+            return False
+    return True
+
+
+def _contains(polygon: list[Point], point: Point) -> bool:
+    """Whether a point is inside a polygon, by the even-odd rule."""
+    inside = False
+    count = len(polygon)
+    for index in range(count):
+        x0, y0 = polygon[index]
+        x1, y1 = polygon[(index + 1) % count]
+        if (y0 > point[1]) != (y1 > point[1]):
+            crossing = x0 + (point[1] - y0) * (x1 - x0) / (y1 - y0)
+            if crossing > point[0]:
+                inside = not inside
+    return inside
+
+
+def _centroid(points: list[Point]) -> Point:
+    return (
+        sum(point[0] for point in points) / len(points),
+        sum(point[1] for point in points) / len(points),
+    )
+
+
+# -- Assembling a filled variant --------------------------------------------
+
+
+class Contour:
+    """One closed contour of a filled symbol, with its winding sign."""
+
+    def __init__(self, commands: list[str], polygon: list[Point], sign: int):
+        self.commands = commands
+        self.polygon = polygon
+        self.sign = sign
+
+
+def _polygon_contour(points: list[Point], sign: int) -> Contour:
+    """A contour drawn as straight segments."""
+    wound = _orient(_drop_repeated(points), sign)
+    if len(wound) < 3:
+        raise SystemExit("a filled contour collapsed to fewer than 3 points")
+    commands = [f".move({_point(wound[0])})"]
+    commands.extend(f".line({_point(point)})" for point in wound[1:])
+    commands.append(f".line({_point(wound[0])})")
+    return Contour(commands, wound, sign)
+
+
+def _circle_contour(center: Point, radius: float, sign: int) -> Contour:
+    """A contour drawn as four cubic Béziers, exactly circular.
+
+    Enclosures are almost always circles, and they are the most visible part
+    of a filled symbol, so they are kept exact rather than flattened.
+    """
+    direction = 1.0 if sign >= 0 else -1.0
+    handle = KAPPA * radius
+    reach = handle * direction
+    right = (center[0] + radius, center[1])
+    bottom = (center[0], center[1] + radius * direction)
+    left = (center[0] - radius, center[1])
+    top = (center[0], center[1] - radius * direction)
+    commands = [f".move({_point(right)})"]
+    for control1, control2, end in (
+        ((right[0], right[1] + reach), (bottom[0] + handle, bottom[1]), bottom),
+        ((bottom[0] - handle, bottom[1]), (left[0], left[1] + reach), left),
+        ((left[0], left[1] - reach), (top[0] - handle, top[1]), top),
+        ((top[0] + handle, top[1]), (right[0], right[1] - reach), right),
+    ):
+        commands.append(
+            f".cubicCurve(control1: {_point(control1)}, "
+            f"control2: {_point(control2)}, end: {_point(end)})"
+        )
+    return Contour(commands, _circle_polygon(center, radius, sign), sign)
+
+
+def _solid_contours(icon: str, subpath: FlatSubpath) -> list[Contour]:
+    """The solid contours one body element contributes.
+
+    A closed contour grows by half a stroke width so that the filled symbol
+    has exactly the silhouette the outline symbol's stroke covers. An open
+    one is a stroke that is part of the body -- a padlock's shackle -- and
+    becomes its own outline.
+    """
+    if subpath.circle is not None:
+        center, radius = subpath.circle
+        return [_circle_contour(center, radius + HALF_STROKE, 1)]
+    if subpath.closed:
+        return [_polygon_contour(_outset_closed(subpath.points, HALF_STROKE), 1)]
+    return [_polygon_contour(_stroke_outline(subpath.points, HALF_STROKE), 1)]
+
+
+def _knockout_contours(icon: str, subpath: FlatSubpath) -> list[Contour]:
+    """The contours one knocked-out element contributes.
+
+    A stroke has to become the area it covers before it can be punched out,
+    which is what stroking a circle into a ring, or a polyline into its
+    outline, does here.
+    """
+    if subpath.circle is not None:
+        center, radius = subpath.circle
+        contours = [_circle_contour(center, radius + HALF_STROKE, -1)]
+        if radius - HALF_STROKE > EPSILON:
+            # A ring, not a disc: put the middle back.
+            contours.append(_circle_contour(center, radius - HALF_STROKE, 1))
+        return contours
+    if subpath.closed:
+        raise SystemExit(
+            f"{icon}: punching out a closed contour isn't supported; it would "
+            "need a ring rather than a stroke outline"
+        )
+    return [_polygon_contour(_stroke_outline(subpath.points, HALF_STROKE), -1)]
+
+
+def _overlap_corrections(icon: str, knockouts: list[Contour]) -> list[Contour]:
+    """Contours that undo double-subtraction where knockouts overlap.
+
+    Two punched-out contours that cross would subtract twice and fill their
+    crossing back in, so the overlap is added back once. Three overlapping
+    knockouts would need a third-order term, which no bundled icon has, so
+    that case is refused rather than drawn wrongly.
+    """
+    negatives = [contour for contour in knockouts if contour.sign < 0]
+    overlaps: dict[tuple[int, int], list[Point]] = {}
+    for i in range(len(negatives)):
+        for j in range(i + 1, len(negatives)):
+            first = _orient(negatives[i].polygon, 1)
+            second = _orient(negatives[j].polygon, 1)
+            if _is_convex(second):
+                overlap = _convex_clip(first, second)
+            elif _is_convex(first):
+                overlap = _convex_clip(second, first)
+            else:
+                raise SystemExit(
+                    f"{icon}: two knocked-out contours overlap and neither is "
+                    "convex, so their union can't be computed"
+                )
+            if len(overlap) >= 3 and abs(_signed_area(overlap)) > 1e-6:
+                overlaps[(i, j)] = overlap
+
+    for i in range(len(negatives)):
+        for j in range(i + 1, len(negatives)):
+            for k in range(j + 1, len(negatives)):
+                if all(
+                    pair in overlaps for pair in ((i, j), (i, k), (j, k))
+                ):
+                    raise SystemExit(
+                        f"{icon}: three knocked-out contours overlap, which "
+                        "needs an inclusion-exclusion term this script "
+                        "doesn't emit"
+                    )
+
+    return [_polygon_contour(overlap, 1) for overlap in overlaps.values()]
+
+
+def build_filled_commands(
+    icon: str,
+    elements: list[Element],
+    recipe: FillRecipe,
+    transform=None,
+) -> list[str]:
+    """Derive an icon's filled variant from its outline elements."""
+    body: list[Contour] = []
+    for index in recipe.body:
+        if index >= len(elements):
+            raise SystemExit(f"{icon}: fill recipe names element {index}")
+        tag, attrs = elements[index]
+        for subpath in flatten_element(tag, attrs, transform=transform):
+            body.extend(_solid_contours(icon, subpath))
+    if not body:
+        raise SystemExit(f"{icon}: fill recipe produced no solid body")
+
+    knockouts: list[Contour] = []
+    for index in recipe.knockout:
+        if index >= len(elements):
+            raise SystemExit(f"{icon}: fill recipe names element {index}")
+        tag, attrs = elements[index]
+        for subpath in flatten_element(tag, attrs, transform=transform):
+            knockouts.extend(_knockout_contours(icon, subpath))
+
+    # A knockout outside the body would punch a hole in nothing, which always
+    # means the recipe named the wrong element.
+    for contour in knockouts:
+        if contour.sign >= 0:
+            continue
+        centre = _centroid(contour.polygon)
+        if not any(_contains(solid.polygon, centre) for solid in body):
+            raise SystemExit(
+                f"{icon}: a knocked-out contour lies outside the solid body"
+            )
+
+    contours = body + knockouts + _overlap_corrections(icon, knockouts)
+    commands: list[str] = []
+    for contour in contours:
+        commands.extend(contour.commands)
+    return commands
 
 
 # --------------------------------------------------------------------------
@@ -883,7 +1647,9 @@ def swift_identifier(icon: str) -> str:
     return head + "".join(part.capitalize() for part in tail)
 
 
-def emit_geometry(icons: dict[str, list[str]]) -> str:
+def emit_geometry(
+    icons: dict[str, list[str]], filled: dict[str, list[str]]
+) -> str:
     license_comment = "\n".join(
         ("// " + line).rstrip() for line in LUCIDE_LICENSE.splitlines()
     )
@@ -896,7 +1662,7 @@ def emit_geometry(icons: dict[str, list[str]]) -> str:
         "/// Each icon is expressed in Lucide's native 24x24 coordinate space;",
         "/// ``SymbolGeometry/path(in:)`` scales it to the size a view needs.",
         "enum LucideIconGeometry {",
-        "    /// Looks up an icon's geometry by its Lucide name.",
+        "    /// Looks up an icon's outline geometry by its Lucide name.",
         "    ///",
         "    /// - Parameter name: A kebab-case Lucide icon name.",
         "    /// - Returns: The icon's geometry, or `nil` if it isn't bundled.",
@@ -907,10 +1673,36 @@ def emit_geometry(icons: dict[str, list[str]]) -> str:
         "        return SymbolGeometry(commands: commands)",
         "    }",
         "",
+        "    /// Looks up an icon's filled variant by its Lucide name.",
+        "    ///",
+        "    /// Lucide draws outlines only, so these are derived from the",
+        "    /// outline geometry by the generator: the enclosure is made",
+        "    /// solid and the inner glyph is punched through it, which is how",
+        "    /// SF Symbols builds its own `.fill` variants. Only icons whose",
+        "    /// construction is unambiguous have one.",
+        "    ///",
+        "    /// - Parameter name: A kebab-case Lucide icon name.",
+        "    /// - Returns: The icon's filled geometry, or `nil` if it has no",
+        "    ///   derived filled variant.",
+        "    static func filledGeometry(",
+        "        forIcon name: String",
+        "    ) -> SymbolGeometry? {",
+        "        guard let commands = filledCommands(forIcon: name) else {",
+        "            return nil",
+        "        }",
+        "        return SymbolGeometry(commands: commands, rendering: .filled)",
+        "    }",
+        "",
         "    /// Every bundled Lucide icon name, sorted.",
         "    static let iconNames: [String] = [",
     ]
     for icon in sorted(icons):
+        lines.append(f'        "{icon}",')
+    lines.append("    ]")
+    lines.append("")
+    lines.append("    /// Every bundled icon that has a filled variant, sorted.")
+    lines.append("    static let filledIconNames: [String] = [")
+    for icon in sorted(filled):
         lines.append(f'        "{icon}",')
     lines.append("    ]")
     lines.append("")
@@ -924,9 +1716,28 @@ def emit_geometry(icons: dict[str, list[str]]) -> str:
     lines.append("        }")
     lines.append("    }")
     lines.append("")
+    lines.append("    private static func filledCommands(")
+    lines.append("        forIcon name: String")
+    lines.append("    ) -> [SymbolGeometry.Command]? {")
+    lines.append("        switch name {")
+    for icon in sorted(filled):
+        identifier = swift_identifier(icon) + "Filled"
+        lines.append(f'            case "{icon}": return {identifier}')
+    lines.append("            default: return nil")
+    lines.append("        }")
+    lines.append("    }")
+    lines.append("")
     for icon in sorted(icons):
         commands = icons[icon]
         lines.append(f"    private static let {swift_identifier(icon)}:")
+        lines.append("        [SymbolGeometry.Command] = [")
+        for command in commands:
+            lines.append(f"            {command},")
+        lines.append("        ]")
+        lines.append("")
+    for icon in sorted(filled):
+        commands = filled[icon]
+        lines.append(f"    private static let {swift_identifier(icon)}Filled:")
         lines.append("        [SymbolGeometry.Command] = [")
         for command in commands:
             lines.append(f"            {command},")
@@ -936,7 +1747,27 @@ def emit_geometry(icons: dict[str, list[str]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def emit_mapping(mapping: dict[str, tuple[str, str | None]]) -> str:
+def filled_system_names(filled: dict[str, list[str]]) -> set[str]:
+    """The SF Symbol names that will actually be drawn filled.
+
+    A name asks to be filled by its spelling, and gets it only if the Lucide
+    icon it maps to has a derived filled variant.
+    """
+    return {
+        symbol
+        for symbol, (icon, _) in SYMBOL_MAP.items()
+        if wants_filled_variant(symbol) and icon in filled
+    }
+
+
+def wants_filled_variant(symbol: str) -> bool:
+    """Whether an SF Symbol name asks for a filled glyph."""
+    return symbol.endswith(".fill") or symbol.endswith(".filled")
+
+
+def emit_mapping(
+    mapping: dict[str, tuple[str, str | None]], filled: set[str]
+) -> str:
     lines = [
         GENERATED_HEADER,
         "//",
@@ -970,10 +1801,37 @@ def emit_mapping(mapping: dict[str, tuple[str, str | None]]) -> str:
         "        table.keys.sorted()",
         "    }",
         "",
-        "    private static let table: [String: String] = [",
+        "    /// Whether a symbol is drawn as a solid glyph rather than an",
+        "    /// outline.",
+        "    ///",
+        "    /// Filled and outline SF Symbols usually mean different things --",
+        "    /// a filled warning triangle is a warning, an outline one is a",
+        "    /// note -- so a name spelled `.fill` is drawn filled wherever the",
+        "    /// generator could derive a filled variant for its Lucide icon.",
+        "    ///",
+        "    /// - Parameter name: An SF Symbol name.",
+        "    /// - Returns: `true` if the symbol has a solid glyph.",
+        "    static func drawsFilled(_ name: String) -> Bool {",
+        "        filledSystemNames.contains(name)",
+        "    }",
+        "",
+        "    /// Every SF Symbol name drawn with a solid glyph, sorted.",
+        "    static let filledSystemNames: Set<String> = [",
     ]
+    for symbol in sorted(filled):
+        lines.append(f'        "{symbol}",')
+    lines.append("    ]")
+    lines.append("")
+    lines.append("    private static let table: [String: String] = [")
     for symbol in sorted(mapping):
         icon, note = mapping[symbol]
+        if symbol in filled:
+            if note is None:
+                note = DERIVED_FILL
+            elif FILL in note:
+                note = note.replace(FILL, DERIVED_FILL)
+            else:
+                note = note.rstrip() + " " + DERIVED_FILL
         if note:
             lines.append(f'        // {symbol}: {note}')
         lines.append(f'        "{symbol}": "{icon}",')
@@ -999,18 +1857,28 @@ def main() -> int:
 
     wanted = sorted({icon for icon, _ in SYMBOL_MAP.values()} | {PLACEHOLDER_ICON})
     icons: dict[str, list[str]] = {}
+    filled: dict[str, list[str]] = {}
     missing: list[str] = []
     empty: list[str] = []
     for icon in wanted:
-        elements = read_icon(directory, icon)
+        derived = DERIVED_ICONS.get(icon)
+        source = derived[0] if derived else icon
+        transform = DERIVED_TRANSFORMS.get(icon)
+        elements = read_icon(directory, source)
         if elements is None:
-            missing.append(icon)
+            missing.append(source)
             continue
-        commands = build_commands(elements)
+        commands = build_commands(elements, transform=transform)
         if not commands:
-            empty.append(icon)
+            empty.append(source)
             continue
         icons[icon] = commands
+
+        recipe = FILL_RECIPES.get(icon)
+        if recipe is not None:
+            filled[icon] = build_filled_commands(
+                icon, elements, recipe, transform=transform
+            )
 
     if missing:
         print("Missing Lucide icons:", ", ".join(missing), file=sys.stderr)
@@ -1021,20 +1889,35 @@ def main() -> int:
     if missing or empty:
         return 1
 
+    unused = sorted(set(FILL_RECIPES) - set(filled))
+    if unused:
+        # A recipe for an icon nothing maps to is dead weight that no visual
+        # check would ever cover.
+        print("Fill recipes for unmapped icons:", ", ".join(unused), file=sys.stderr)
+        return 1
+
+    filled_symbols = filled_system_names(filled)
+
     if arguments.check:
-        print(f"All {len(icons)} Lucide icons resolved for {len(SYMBOL_MAP)} symbols.")
+        print(
+            f"All {len(icons)} Lucide icons resolved for {len(SYMBOL_MAP)} "
+            f"symbols, {len(filled)} of them with a derived filled variant "
+            f"covering {len(filled_symbols)} `.fill` names."
+        )
         return 0
 
     output = repo_root / "Sources/SwiftCrossUI/Values/Symbols"
     output.mkdir(parents=True, exist_ok=True)
     (output / "LucideIconGeometry.swift").write_text(
-        emit_geometry(icons), encoding="utf-8"
+        emit_geometry(icons, filled), encoding="utf-8"
     )
     (output / "SFSymbolLucideMapping.swift").write_text(
-        emit_mapping(SYMBOL_MAP), encoding="utf-8"
+        emit_mapping(SYMBOL_MAP, filled_symbols), encoding="utf-8"
     )
     print(
-        f"Wrote {len(icons)} icons covering {len(SYMBOL_MAP)} SF Symbol names."
+        f"Wrote {len(icons)} icons covering {len(SYMBOL_MAP)} SF Symbol "
+        f"names, {len(filled)} with filled variants used by "
+        f"{len(filled_symbols)} `.fill` names."
     )
     return 0
 

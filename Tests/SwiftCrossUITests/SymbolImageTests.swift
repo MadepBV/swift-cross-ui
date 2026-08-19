@@ -79,10 +79,11 @@ struct SymbolImageTests {
         #expect(bundled.contains(SFSymbolLucideMapping.placeholderIcon))
     }
 
-    @Test("Filled variants resolve to their outline sibling")
+    @Test("Filled variants are drawn from their outline sibling's icon")
     func testFilledVariantsShareTheirOutlineIcon() {
-        // Lucide has no filled counterparts, so `.fill` names deliberately
-        // land on the same icon as their unfilled siblings.
+        // Lucide has no filled counterparts, so a `.fill` name lands on the
+        // same icon as its unfilled sibling. What differs is how that icon is
+        // drawn, not which icon it is.
         let pairs = [
             ("checkmark.circle.fill", "checkmark.circle"),
             ("exclamationmark.circle.fill", "exclamationmark.circle"),
@@ -99,6 +100,190 @@ struct SymbolImageTests {
             )
             #expect(filledIcon == outlineIcon, "'\(filled)' diverged")
         }
+    }
+
+    // MARK: - Filled symbols
+
+    /// The `.fill` names that carry state or severity in the production app,
+    /// with how often they appear, and which must never quietly degrade to an
+    /// outline: an outline warning triangle reads as an informational note.
+    static let semanticFillNames = [
+        "checkmark.circle.fill",  // 27 uses: success
+        "exclamationmark.triangle.fill",  // 26 uses: warning
+        "exclamationmark.circle.fill",  // 18 uses: error
+        "lock.fill",  // 16 uses: locked
+    ]
+
+    @Test("The .fill names that carry meaning are drawn solid")
+    func testSemanticFillNamesAreFilled() {
+        let provider = LucideSymbolProvider(
+            drawsPlaceholderForUnknownNames: false
+        )
+
+        for name in Self.semanticFillNames {
+            #expect(
+                SFSymbolLucideMapping.drawsFilled(name),
+                "'\(name)' isn't marked as filled"
+            )
+            let request = SymbolRenderRequest(name: name, pointSize: 17)
+            guard case .geometry(let geometry) = provider.resolve(request)
+            else {
+                Issue.record("'\(name)' didn't resolve")
+                continue
+            }
+            #expect(
+                geometry.rendering == .filled,
+                "'\(name)' resolved to an outline"
+            )
+        }
+    }
+
+    @Test("A filled symbol differs from its outline sibling")
+    func testFilledSymbolsDifferFromTheirOutline() {
+        // The whole point of the exercise: the two must not be the same
+        // drawing, or the state they encode is invisible to the reader.
+        let provider = LucideSymbolProvider(
+            drawsPlaceholderForUnknownNames: false
+        )
+        let pairs = [
+            ("checkmark.circle.fill", "checkmark.circle"),
+            ("exclamationmark.circle.fill", "exclamationmark.circle"),
+            ("exclamationmark.triangle.fill", "exclamationmark.triangle"),
+            ("xmark.circle.fill", "xmark.circle"),
+            ("circle.fill", "circle"),
+        ]
+
+        for (filled, outline) in pairs {
+            guard
+                case .geometry(let solid) = provider.resolve(
+                    SymbolRenderRequest(name: filled, pointSize: 17)
+                ),
+                case .geometry(let stroked) = provider.resolve(
+                    SymbolRenderRequest(name: outline, pointSize: 17)
+                )
+            else {
+                Issue.record("'\(filled)' or '\(outline)' didn't resolve")
+                continue
+            }
+            #expect(solid.rendering == .filled, "'\(filled)' isn't filled")
+            #expect(stroked.rendering == .stroked, "'\(outline)' is filled")
+            #expect(solid != stroked, "'\(filled)' draws its outline")
+        }
+    }
+
+    @Test("Only names the table lists are drawn filled")
+    func testUnlistedFillNamesStayOutlines() {
+        // `pencil.fill` falls back to `pencil`'s geometry, but a fallback is
+        // a guess about the name, not a licence to guess at the drawing too.
+        #expect(!SFSymbolLucideMapping.drawsFilled("pencil.fill"))
+
+        let provider = LucideSymbolProvider(
+            drawsPlaceholderForUnknownNames: false
+        )
+        guard
+            case .geometry(let geometry) = provider.resolve(
+                SymbolRenderRequest(name: "pencil.fill", pointSize: 17)
+            )
+        else {
+            Issue.record("'pencil.fill' should still draw something")
+            return
+        }
+        #expect(geometry == LucideIconGeometry.geometry(forIcon: "pencil"))
+    }
+
+    @Test("Every name marked filled resolves to filled geometry")
+    func testEveryFilledNameResolvesFilled() {
+        let provider = LucideSymbolProvider(
+            drawsPlaceholderForUnknownNames: false
+        )
+
+        for name in SFSymbolLucideMapping.filledSystemNames {
+            let request = SymbolRenderRequest(name: name, pointSize: 17)
+            guard case .geometry(let geometry) = provider.resolve(request)
+            else {
+                Issue.record("'\(name)' didn't resolve")
+                continue
+            }
+            #expect(geometry.rendering == .filled, "'\(name)' isn't filled")
+            #expect(!geometry.commands.isEmpty, "'\(name)' is empty")
+        }
+    }
+
+    @Test("Filled geometry is closed subpaths only")
+    func testFilledGeometryIsMadeOfClosedSubpaths() {
+        // An unclosed subpath in filled geometry would be closed implicitly
+        // by a straight chord, which is never what the artwork meant.
+        for icon in LucideIconGeometry.filledIconNames {
+            guard
+                let geometry = LucideIconGeometry.filledGeometry(forIcon: icon)
+            else {
+                Issue.record("'\(icon)' is listed but not bundled")
+                continue
+            }
+
+            var start: SIMD2<Double>? = nil
+            var current: SIMD2<Double>? = nil
+            var subpaths = 0
+            for command in geometry.commands {
+                switch command {
+                    case .move(let point):
+                        if let start, let current {
+                            #expect(
+                                isClosed(current, start),
+                                "'\(icon)' has an open subpath at \(start)"
+                            )
+                        }
+                        subpaths += 1
+                        start = point
+                        current = point
+                    case .line(let point):
+                        current = point
+                    case .quadCurve(_, let end):
+                        current = end
+                    case .cubicCurve(_, _, let end):
+                        current = end
+                    case .circle:
+                        // A circle is closed by construction, but the derived
+                        // geometry spells circles out as cubics so that their
+                        // winding direction is under the generator's control.
+                        Issue.record("'\(icon)' uses an implicit circle")
+                }
+            }
+            if let start, let current {
+                #expect(
+                    isClosed(current, start),
+                    "'\(icon)' has an open subpath at \(start)"
+                )
+            }
+            #expect(subpaths >= 1, "'\(icon)' has no subpaths")
+        }
+    }
+
+    @Test("A filled symbol's path is filled rather than stroked")
+    func testFilledGeometryProducesAnUnstrokedPath() {
+        let bounds = Path.Rect(x: 0, y: 0, width: 24, height: 24)
+        let filled = SymbolGeometry(
+            commands: [
+                .move(SIMD2(0, 0)),
+                .line(SIMD2(24, 0)),
+                .line(SIMD2(24, 24)),
+                .line(SIMD2(0, 0)),
+            ],
+            rendering: .filled
+        )
+
+        // Both renderings need the non-zero rule; filled geometry relies on
+        // it to tell a hole from another island.
+        #expect(filled.path(in: bounds).fillRule == .winding)
+        #expect(
+            SymbolGeometry(commands: []).path(in: bounds).fillRule == .winding
+        )
+
+        // An outline carries its stroke width onto the path; a fill does not,
+        // because nothing is stroked.
+        let stroked = SymbolGeometry(commands: [], strokeWidth: 2)
+        #expect(stroked.path(in: bounds).strokeStyle.width == 2)
+        #expect(filled.path(in: bounds).strokeStyle.width != 2)
     }
 
     @Test("An unlisted .fill name falls back to its unfilled sibling")
@@ -154,9 +339,15 @@ struct SymbolImageTests {
 
     @Test("Every bundled icon stays inside its canvas")
     func testGeometryStaysWithinItsCanvas() {
-        for icon in LucideIconGeometry.iconNames {
-            guard let geometry = LucideIconGeometry.geometry(forIcon: icon)
-            else {
+        let outlines = LucideIconGeometry.iconNames.map {
+            ($0, LucideIconGeometry.geometry(forIcon: $0))
+        }
+        let fills = LucideIconGeometry.filledIconNames.map {
+            ($0 + " (filled)", LucideIconGeometry.filledGeometry(forIcon: $0))
+        }
+
+        for (icon, geometry) in outlines + fills {
+            guard let geometry else {
                 Issue.record("'\(icon)' is listed but not bundled")
                 continue
             }
@@ -353,6 +544,17 @@ private struct FixedSymbolProvider: SymbolProvider {
 }
 
 extension SymbolImageTests {
+    /// Whether a subpath ended where it began, allowing for the rounding the
+    /// generator applies to its coordinate literals.
+    fileprivate func isClosed(
+        _ end: SIMD2<Double>,
+        _ start: SIMD2<Double>
+    ) -> Bool {
+        let tolerance = 0.001
+        return abs(end.x - start.x) <= tolerance
+            && abs(end.y - start.y) <= tolerance
+    }
+
     /// Every point referenced by a symbol's commands.
     private func points(in geometry: SymbolGeometry) -> [SIMD2<Double>] {
         geometry.commands.flatMap { command -> [SIMD2<Double>] in
