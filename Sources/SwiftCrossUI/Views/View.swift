@@ -194,6 +194,14 @@ extension View {
 
     /// The default `View.computeLayout` implementation. Haters may see this as a
     /// composition lover re-implementing inheritance; I see it as innovation.
+    ///
+    /// The body is evaluated through ``ViewObservationTracking`` so that any
+    /// `@Observable` property it reads invalidates this view (and only this
+    /// view) when it changes. The tracked scope deliberately covers nothing but
+    /// the body evaluation: the layout system recurses into this view's
+    /// children afterwards, and `Observation` merges nested tracking scopes
+    /// into their enclosing scope, so tracking any more than this would make
+    /// every ancestor of a changed view re-render too.
     public func defaultComputeLayout<Backend: BaseAppBackend>(
         _ widget: Backend.Widget,
         children: any ViewGraphNodeChildren,
@@ -201,7 +209,7 @@ extension View {
         environment: EnvironmentValues,
         backend: Backend
     ) -> ViewLayoutResult {
-        let vStack = VStack(content: body)
+        let vStack = VStack(content: ViewObservationTracking.trackedBody(of: self))
         return vStack.computeLayout(
             widget,
             children: children,

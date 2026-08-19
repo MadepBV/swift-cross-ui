@@ -60,6 +60,23 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
     /// The dynamic property updater for this view.
     private var dynamicPropertyUpdater: DynamicPropertyUpdater<NodeView>
 
+    /// Whether the view can never have child view graph nodes. Set once,
+    /// during initialisation.
+    ///
+    /// Leaf views can't recurse into other nodes while computing their layout,
+    /// which makes it safe to install observation tracking around their whole
+    /// layout computation without accidentally capturing a descendant's
+    /// property reads. See ``ViewObservationTracking`` for why that matters.
+    private var isLeaf = false
+
+    /// Bridges `Observation` change notifications to this node's updates.
+    ///
+    /// Created on demand by ``observationRegistration`` so that nodes which
+    /// never evaluate anything under observation tracking (SwiftCrossUI's own
+    /// container and modifier views, whose bodies are never user code) don't
+    /// pay for it.
+    private var _observationRegistration: ObservationRegistration?
+
     /// Creates a node for a given view while also creating the nodes for its children, creating
     /// the view's widget, and starting to observe its state for changes.
     public init(
@@ -97,6 +114,7 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
             environment: viewEnvironment
         )
         self.children = children
+        self.isLeaf = Self.cannotHaveChildNodes(children)
 
         // Then create the widget for the view itself
         let widget = view.asWidget(
@@ -131,6 +149,48 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
             }
             cancellables.append(cancellable)
         }
+    }
+
+    /// Children collection types that can never contain child view graph
+    /// nodes.
+    ///
+    /// ``EmptyViewChildren`` covers every ``ElementaryView`` (``Text``,
+    /// ``TextField``, ``Slider`` and friends). The rest are persistent storage
+    /// for views that render themselves directly through the backend rather
+    /// than through child nodes.
+    ///
+    /// The list is deliberately conservative: a type that isn't listed just
+    /// misses out on leaf-level observation tracking, which is never worse
+    /// than the behaviour before observation existed.
+    ///
+    /// - Parameter children: The node's children.
+    /// - Returns: Whether `children` can never contain child nodes.
+    private static func cannotHaveChildNodes(
+        _ children: any ViewGraphNodeChildren
+    ) -> Bool {
+        children is EmptyViewChildren
+            || children is ShapeStorage
+            || children is CanvasStorage
+            || children is ImageChildren
+            || children is MenuStorage
+            || children is BuiltinPickerChildren
+    }
+
+    /// Recomputes the view after an `@Observable` property that it read
+    /// changed.
+    ///
+    /// Runs on the main thread, after the mutation has completed, and never
+    /// inside an update pass; see ``ObservationRegistration``.
+    private func observationDidChange() {
+        _observationRegistration?.updateWillRun()
+
+        // Observation tracking closures fire at most once and are re-installed
+        // by the next body evaluation, so an update that gets satisfied by the
+        // layout cache would leave this node permanently unobserved. Clearing
+        // the cache guarantees that the body runs again and re-registers.
+        resultCache = [:]
+
+        bottomUpUpdate()
     }
 
     /// Triggers the view to be updated as part of a bottom-up chain of updates (where either the
@@ -228,13 +288,24 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
 
         dynamicPropertyUpdater.update(view, with: viewEnvironment, previousValue: previousView)
 
-        let result = view.computeLayout(
-            widget,
-            children: children,
-            proposedSize: proposedSize,
-            environment: viewEnvironment,
-            backend: backend
-        )
+        let result = ViewObservationTracking.withNode(self) {
+            // A leaf view has no children to recurse into, so tracking its
+            // whole layout computation can't swallow a descendant's property
+            // reads. Composite views instead get tracked around their body
+            // evaluation alone (see `View.defaultComputeLayout`).
+            let computeLayout = {
+                self.view.computeLayout(
+                    self.widget,
+                    children: self.children,
+                    proposedSize: proposedSize,
+                    environment: viewEnvironment,
+                    backend: self.backend
+                )
+            }
+            return isLeaf
+                ? ViewObservationTracking.tracking(computeLayout)
+                : computeLayout()
+        }
 
         // We assume that the view's sizing behaviour won't change between consecutive
         // layout computations and the following commit, because groups of updates
@@ -275,17 +346,53 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
             )
         }
 
-        view.commit(
-            widget,
-            children: children,
-            layout: currentLayout,
-            environment: parentEnvironment,
-            backend: backend
-        )
+        let commit = {
+            self.view.commit(
+                self.widget,
+                children: self.children,
+                layout: currentLayout,
+                environment: self.parentEnvironment,
+                backend: self.backend
+            )
+        }
+        if isLeaf {
+            // Leaf views read the bindings they were handed while committing
+            // (a `TextField` reads its text here, for instance), so their
+            // commits are tracked too. Composite views evaluate their bodies
+            // during layout, which is where their tracking is installed, so
+            // there's nothing to track here for them.
+            ViewObservationTracking.withNode(self) {
+                ViewObservationTracking.tracking(commit)
+            }
+        } else {
+            commit()
+        }
         resultCache = [:]
 
         backend.showUpdate(of: widget)
 
         return currentLayout
+    }
+}
+
+extension ViewGraphNode: ObservationTrackingNode {
+    /// The node's observation registration, created on first access.
+    ///
+    /// The registration schedules updates through the backend's main thread,
+    /// which is always asynchronous. That's what keeps an invalidation raised
+    /// part-way through a mutation (or part-way through an update pass) from
+    /// running before the mutation has completed or re-entering the pass.
+    var observationRegistration: ObservationRegistration {
+        if let _observationRegistration {
+            return _observationRegistration
+        }
+
+        let registration = ObservationRegistration { [weak self, backend] in
+            backend.runInMainThread {
+                self?.observationDidChange()
+            }
+        }
+        _observationRegistration = registration
+        return registration
     }
 }

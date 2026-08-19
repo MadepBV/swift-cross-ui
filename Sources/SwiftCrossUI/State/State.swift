@@ -1,5 +1,9 @@
 import Foundation
 
+#if canImport(Observation)
+    import Observation
+#endif
+
 // TODO: Document State properly, this is an important type.
 // - It supports value types
 // - It supports ObservableObject
@@ -67,6 +71,24 @@ extension State {
     public init(wrappedValue initialValue: Value) where Value: ObservableObject {
         implementation = StateImpl(initialStorage: Storage(initialValue))
     }
+
+    #if canImport(Observation)
+        /// Creates a `State` holding an `@Observable` object.
+        ///
+        /// Objects declared with the standard library's `@Observable` macro are
+        /// fully supported by `State`: reading one of the object's properties
+        /// from a view's body subscribes that view to the property, and
+        /// mutating it re-renders the view. This overload exists so that they
+        /// don't hit the deprecated non-observable class initialiser.
+        ///
+        /// - Parameter initialValue: The state's initial value.
+        @available(macOS 14.0, iOS 17.0, tvOS 17.0, watchOS 10.0, *)
+        public init(wrappedValue initialValue: Value)
+            where Value: Observation.Observable & AnyObject
+        {
+            implementation = StateImpl(initialStorage: Storage(initialValue))
+        }
+    #endif
 }
 
 extension State: SnapshottableProperty {
