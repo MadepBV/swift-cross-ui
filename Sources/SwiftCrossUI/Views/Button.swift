@@ -5,32 +5,44 @@ public struct Button<Label: View> {
     @_spi(Backends) public var label: () -> Label
     /// The action to be performed when the button is clicked.
     @_spi(Backends) public var action: @MainActor @Sendable () -> Void
+    /// The button's role, if it has one.
+    ///
+    /// See ``ButtonRole`` for what a role changes.
+    @_spi(Backends) public var role: ButtonRole?
 
     /// Creates a button that displays a text label.
     ///
     /// - Parameters:
     ///   - label: The label to show on the button.
+    ///   - role: The button's role, describing what kind of action it
+    ///     performs. Defaults to `nil` (no particular role).
     ///   - action: The action to be performed when the button is clicked.
     public init(
         _ label: String,
+        role: ButtonRole? = nil,
         action: @escaping @MainActor @Sendable () -> Void = {}
     ) where Label == TupleView1<Text> {
         self.label = { TupleView1(Text(label)) }
         self.action = action
+        self.role = role
     }
 
     /// Creates a button that displays a custom view as label.
     ///
     /// - Parameters:
+    ///   - role: The button's role, describing what kind of action it
+    ///     performs. Defaults to `nil` (no particular role).
     ///   - label: The label to show on the button.
     ///   - action: The action to be performed when the button is clicked.
     @MainActor
     public init (
+        role: ButtonRole? = nil,
         action: @escaping @MainActor @Sendable () -> Void = {},
         @ViewBuilder label: @escaping @MainActor @Sendable () -> Label
     ) {
         self.label = label
         self.action = action
+        self.role = role
     }
 
     private struct ConstrainedButtonLabel<ConstrainedLabel: View>: View {
@@ -54,6 +66,7 @@ public struct Button<Label: View> {
     )
     public func _buttonWidth(_ width: Int?) -> Button<some View> {
         return Button<TupleView1<ConstrainedButtonLabel<TupleView1<Label>>>>(
+            role: role,
             action: action,
             label: { ConstrainedButtonLabel(content: body, width: width) }
         )
@@ -91,7 +104,11 @@ extension Button: TypeSafeView {
         backend: Backend
     ) -> ViewLayoutResult {
         let buttonPadding = backend.buttonPadding(in: environment)
-        let childEnvironment = backend.computeButtonLabelEnvironment(from: environment)
+        let childEnvironment = Self.labelEnvironment(
+            role: role,
+            environment: environment,
+            backend: backend
+        )
 
         var childProposal = proposedSize
         if let proposedWidth = proposedSize.width {
@@ -109,7 +126,7 @@ extension Button: TypeSafeView {
 
         backend.updateButton(
             widget,
-            environment: environment,
+            environment: environment.with(\.buttonRole, role),
             action: action
         )
 
@@ -132,6 +149,42 @@ extension Button: TypeSafeView {
     ) {
         _ = children.child0.commit()
         backend.setSize(of: widget, to: layout.size.vector)
+    }
+
+    /// Computes the environment for a button's label, applying the button's
+    /// role on top of whatever the backend asks for.
+    ///
+    /// A ``ButtonRole/destructive`` button's label is tinted with the
+    /// platform's warning colour. Backends draw the button's chrome but not
+    /// its label (the label is an arbitrary view), so tinting here is the only
+    /// way a destructive button reads as destructive on every backend rather
+    /// than only on the ones with a native destructive flag.
+    ///
+    /// The tint is skipped when the author set an explicit foreground colour,
+    /// which wins over the role, and when the button is disabled, so that the
+    /// backend's dimming survives.
+    ///
+    /// - Parameters:
+    ///   - role: The button's role, if it has one.
+    ///   - environment: The button's own environment.
+    ///   - backend: The app's backend.
+    /// - Returns: The environment to give the button's label.
+    static func labelEnvironment<Backend: BaseAppBackend>(
+        role: ButtonRole?,
+        environment: EnvironmentValues,
+        backend: Backend
+    ) -> EnvironmentValues {
+        let labelEnvironment = backend.computeButtonLabelEnvironment(from: environment)
+
+        guard
+            role?.kind == .destructive,
+            environment.isEnabled,
+            environment.foregroundColor == nil
+        else {
+            return labelEnvironment
+        }
+
+        return labelEnvironment.with(\.foregroundColor, .system(.red))
     }
 }
 

@@ -28,6 +28,82 @@ extension View {
             sheetContent: content
         )
     }
+
+    /// Presents a modal overlay whenever `item` is non-`nil`, handing the
+    /// unwrapped item to `content`.
+    ///
+    /// This is the item-based counterpart of
+    /// ``View/sheet(isPresented:onDismiss:content:)``, for the common case
+    /// where the thing being presented *is* the reason for presenting:
+    ///
+    /// ```swift
+    /// @State var placementBeingEdited: Placement?
+    ///
+    /// var body: some View {
+    ///     PlacementList(selection: $placementBeingEdited)
+    ///         .sheet(item: $placementBeingEdited) { placement in
+    ///             PlacementEditor(placement)
+    ///         }
+    /// }
+    /// ```
+    ///
+    /// The sheet is presented while `item` holds a value, and `item` is set
+    /// back to `nil` when the sheet is dismissed — whether the user dismissed
+    /// it or ``EnvironmentValues/dismiss`` did. Setting `item` to `nil`
+    /// yourself dismisses the sheet.
+    ///
+    /// `onDismiss` behaves exactly as it does for
+    /// ``View/sheet(isPresented:onDismiss:content:)``: it runs when the user
+    /// dismisses the sheet, not when it's dismissed programmatically, and it
+    /// runs before `item` is cleared.
+    ///
+    /// - Note: Unlike SwiftUI, replacing `item` with a *differently identified*
+    ///   item while the sheet is presented updates the existing sheet's
+    ///   contents in place rather than dismissing and re-presenting it.
+    ///
+    /// - Parameters:
+    ///   - item: A binding to the item to present. The sheet is shown while
+    ///     it's non-`nil`.
+    ///   - onDismiss: An action to perform when the sheet is dismissed by the
+    ///     user.
+    ///   - content: Builds the sheet's content from the unwrapped item.
+    public func sheet<Item: Identifiable, SheetContent: View>(
+        item: Binding<Item?>,
+        onDismiss: (() -> Void)? = nil,
+        @ViewBuilder content: @escaping (Item) -> SheetContent
+    ) -> some View {
+        // Built on the `isPresented` sheet rather than a parallel mechanism, so
+        // that presentation, nesting, detents and dismissal all behave
+        // identically for both spellings.
+        sheet(isPresented: .presenting(item), onDismiss: onDismiss) {
+            OptionalView(item.wrappedValue.map(content))
+        }
+    }
+}
+
+extension Binding where Value == Bool {
+    /// Derives a presentation binding from a binding to an optional item.
+    ///
+    /// The derived binding reads `true` while `item` holds a value, and clears
+    /// `item` when set to `false`. Setting it to `true` does nothing, because
+    /// there'd be no item to present; presentation is driven by `item` alone.
+    ///
+    /// - Parameter item: The item binding to derive from.
+    /// - Returns: A binding suitable for
+    ///   ``View/sheet(isPresented:onDismiss:content:)`` and friends.
+    static func presenting<Item>(_ item: Binding<Item?>) -> Self {
+        Binding(
+            get: {
+                item.wrappedValue != nil
+            },
+            set: { isPresented in
+                guard !isPresented else {
+                    return
+                }
+                item.wrappedValue = nil
+            }
+        )
+    }
 }
 
 struct SheetModifier<Content: View, SheetContent: View>: TypeSafeView {

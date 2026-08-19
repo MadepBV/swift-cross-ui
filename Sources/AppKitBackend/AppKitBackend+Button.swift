@@ -1,5 +1,6 @@
 import AppKit
-import SwiftCrossUI
+
+@_spi(Backends) import SwiftCrossUI
 
 extension AppKitBackend {
     public func createSimpleButton() -> Widget {
@@ -47,6 +48,7 @@ extension AppKitBackend {
         button.action = action
         button.isEnabled = environment.isEnabled
         button.buttonStyle = environment.resolvedButtonStyle.kind
+        button.role = environment.buttonRole
     }
 
     public func buttonPadding(in environment: EnvironmentValues) -> SIMD2<Int> {
@@ -89,6 +91,28 @@ public final class NSCustomButton: NSView {
     fileprivate let button = NSButtonBackground()
     fileprivate var buttonStyle: ButtonStyle.Kind = .bordered {
         didSet { updateButtonAppearance() }
+    }
+
+    /// The role of the ``SwiftCrossUI/Button`` this view backs, if it has one.
+    ///
+    /// AppKit can only express ``SwiftCrossUI/ButtonRole/destructive``, and
+    /// only from macOS 11 onwards. ``SwiftCrossUI/ButtonRole/cancel`` has no
+    /// AppKit equivalent for a standalone button (it's meaningful inside
+    /// dialogs, which have their own backend methods), so it's stored but not
+    /// rendered.
+    var role: ButtonRole? {
+        didSet { updateDestructiveAction() }
+    }
+
+    /// Whether the underlying `NSButton` is marked as performing a destructive
+    /// action.
+    ///
+    /// Always `false` before macOS 11, which has no way to express it.
+    var rendersAsDestructive: Bool {
+        guard #available(macOS 11, *) else {
+            return false
+        }
+        return button.hasDestructiveAction
     }
 
     var isEnabled = true {
@@ -232,6 +256,19 @@ public final class NSCustomButton: NSView {
         buttonStyle.applyModifications(self)
         noteFocusRingMaskChanged()
         self.needsDisplay = true
+    }
+
+    /// Tells AppKit whether the button performs a destructive action.
+    private func updateDestructiveAction() {
+        guard #available(macOS 11, *) else {
+            return
+        }
+        let isDestructive = role?.kind == .destructive
+        guard button.hasDestructiveAction != isDestructive else {
+            return
+        }
+        button.hasDestructiveAction = isDestructive
+        needsDisplay = true
     }
 
     fileprivate func setupButton() {
