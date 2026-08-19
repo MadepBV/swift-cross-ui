@@ -46,6 +46,10 @@ public struct PreferenceValues: Sendable {
     /// Controls whether the user can resize the enclosing window.
     public var windowResizeBehavior: WindowInteractionBehavior?
 
+    /// The number of columns that the view spans when it's used as a cell of
+    /// a ``Grid``. Consumed by the enclosing ``GridRow``.
+    var gridCellColumns: Int?
+
     /// The layout priority of the view.
     var layoutPriority: Double
 
@@ -89,6 +93,7 @@ extension PreferenceValues {
         preferredWindowMinimizeBehavior =
             children.compactMap(\.preferredWindowMinimizeBehavior).first
         windowResizeBehavior = children.compactMap(\.windowResizeBehavior).first
+        gridCellColumns = children.compactMap(\.gridCellColumns).first
 
         if let firstChild = children.first, children.count == 1 {
             layoutPriority = firstChild.layoutPriority
