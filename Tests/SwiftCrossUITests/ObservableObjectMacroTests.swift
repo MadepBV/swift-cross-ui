@@ -117,18 +117,18 @@ struct ObservableTests {
         )
     }
 
-    @Test("ObservationIgnored is honored")
-    func testObservationIgnoredIsHonored() {
+    @Test("ObservableObjectIgnored is honored")
+    func testObservableObjectIgnoredIsHonored() {
         assertMacroExpansion(
             """
             @ObservableObject
             class ViewModel {
-                @ObservationIgnored var skipMe = false
+                @ObservableObjectIgnored var skipMe = false
             }
             """,
             expandedSource: """
                 class ViewModel {
-                    @ObservationIgnored var skipMe = false
+                    @ObservableObjectIgnored var skipMe = false
                 }
 
                 extension ViewModel: SwiftCrossUI.ObservableObject {
@@ -165,18 +165,49 @@ struct ObservableTests {
         )
     }
 
-    @Test("Namespaced ObservationIgnored blocks application")
-    func namespacedObservationIgnoredBlocksApplication() async throws {
+    @Test("Namespaced ObservableObjectIgnored blocks application")
+    func namespacedObservableObjectIgnoredBlocksApplication() async throws {
         assertMacroExpansion(
             """
             @ObservableObject
             class ViewModel {
-                @SwiftCrossUI.ObservationIgnored var skipMe = false
+                @SwiftCrossUI.ObservableObjectIgnored var skipMe = false
             }
             """,
             expandedSource: """
                 class ViewModel {
-                    @SwiftCrossUI.ObservationIgnored var skipMe = false
+                    @SwiftCrossUI.ObservableObjectIgnored var skipMe = false
+                }
+
+                extension ViewModel: SwiftCrossUI.ObservableObject {
+                }
+                """,
+            macroSpecs: testMacros,
+            failureHandler: { spec in
+                Issue.record(spec.issueComment)
+            }
+        )
+    }
+
+    @Test("The former ObservationIgnored spelling still blocks application")
+    func legacyObservationIgnoredBlocksApplication() {
+        // `@ObservableObjectIgnored` used to be called `@ObservationIgnored`.
+        // In a file that imports `Observation` the old spelling now resolves
+        // to the standard library's macro, which expands to nothing, so
+        // without this the rename would quietly start publishing properties
+        // that were deliberately excluded.
+        assertMacroExpansion(
+            """
+            @ObservableObject
+            class ViewModel {
+                @ObservationIgnored var skipMe = false
+                @Observation.ObservationIgnored var skipMeToo = false
+            }
+            """,
+            expandedSource: """
+                class ViewModel {
+                    @ObservationIgnored var skipMe = false
+                    @Observation.ObservationIgnored var skipMeToo = false
                 }
 
                 extension ViewModel: SwiftCrossUI.ObservableObject {

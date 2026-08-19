@@ -4,6 +4,27 @@ import SwiftSyntaxMacroExpansion
 import SwiftSyntaxMacros
 
 public struct ObservableObjectMacro: MemberAttributeMacro, ExtensionMacro {
+    /// The spellings of the marker macro that opts a member out of automatic
+    /// publishing.
+    ///
+    /// Both the bare and the module-qualified spelling have to be recognised,
+    /// because the marker is only ever seen as syntax here — a
+    /// member-attribute macro gets no name resolution.
+    ///
+    /// The `ObservationIgnored` spellings are the marker's former name, kept
+    /// so that the rename can't silently start publishing a property that
+    /// used to be excluded. In a file that imports `Observation`, the bare
+    /// `@ObservationIgnored` now resolves to the standard library's macro
+    /// (SwiftCrossUI's alias of that name is unavailable), which expands to
+    /// nothing and would otherwise leave the property looking eligible.
+    static let optOutMarkers = [
+        "ObservableObjectIgnored",
+        "SwiftCrossUI.ObservableObjectIgnored",
+        "ObservationIgnored",
+        "SwiftCrossUI.ObservationIgnored",
+        "Observation.ObservationIgnored",
+    ]
+
     public static func expansion(
         of node: AttributeSyntax,
         attachedTo declaration: some DeclGroupSyntax,
@@ -34,8 +55,9 @@ public struct ObservableObjectMacro: MemberAttributeMacro, ExtensionMacro {
                         "SwiftCrossUI.Published",
                     ].contains(attr.attribute?._syntax.trimmedDescription)
             }),
-            !variable.hasMacroApplication("ObservationIgnored"),
-            !variable.hasMacroApplication("SwiftCrossUI.ObservationIgnored"),
+            !Self.optOutMarkers.contains(where: { marker in
+                variable.hasMacroApplication(marker)
+            }),
             // Only include properties without accessors
             let binding = destructureSingle(variable.bindings),
             // Don't allow any accessors, because even when the property is
@@ -70,7 +92,11 @@ public struct ObservableObjectMacro: MemberAttributeMacro, ExtensionMacro {
     }
 }
 
-struct ObservationIgnoredMacro: AccessorMacro {
+/// Backs `@ObservableObjectIgnored`.
+///
+/// The macro is a pure marker for ``ObservableObjectMacro``, so it expands to
+/// no accessors at all and leaves the property exactly as written.
+struct ObservableObjectIgnoredMacro: AccessorMacro {
     static func expansion(
         of node: SwiftSyntax.AttributeSyntax,
         providingAccessorsOf declaration: some SwiftSyntax.DeclSyntaxProtocol,

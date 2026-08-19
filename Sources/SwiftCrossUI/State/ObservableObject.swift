@@ -114,11 +114,68 @@ public macro ObservableObject() =
         type: "ObservableObjectMacro"
     )
 
-/// Apply to a member inside your `@ObservableObject` class to opt out of observation
-// This macro is just used as a flag for `@ObservableObject` to ignore a specific property
-@attached(accessor)
+/// Applies to a member of an ``ObservableObject()`` class to opt the member
+/// out of automatic publishing.
+///
+/// ``ObservableObject()`` wraps every eligible stored property of a class in
+/// ``Published``. Mark a property with this macro to leave it alone, either
+/// because its changes shouldn't redraw anything or because it's storage that
+/// happens to be a `var` for reasons of its own.
+///
+/// ```swift
+/// @ObservableObject
+/// class CounterState {
+///     // Wrapped in `@Published`, so changes redraw views that read it.
+///     var count = 0
+///
+///     // Left alone, so changes redraw nothing.
+///     @ObservableObjectIgnored
+///     var lastInteraction = Date()
+/// }
+/// ```
+///
+/// The expansion is deliberately empty: the macro exists only as a marker
+/// that ``ObservableObject()`` looks for while walking a class's members.
+/// `names: named(willSet)` is what keeps the marked property stored — an
+/// accessor macro that declares no names is assumed to turn the property into
+/// a computed one, and the compiler then rejects the empty expansion with
+/// "did not produce a non-observing accessor". Declaring an observing
+/// accessor instead lets the property stay exactly as written, which is the
+/// same trick `Observation`'s own opt-out macro uses.
+///
+/// - Note: This macro used to be spelled `ObservationIgnored`, which clashed
+///   with the declaration of the same name in the standard library's
+///   `Observation` module and made that module's `@Observable` macro
+///   impossible to expand in any file that imported both. Use
+///   `Observation`'s `@ObservationIgnored` for `@Observable` classes and this
+///   macro for ``ObservableObject()`` classes.
+@attached(accessor, names: named(willSet))
+public macro ObservableObjectIgnored() =
+    #externalMacro(
+        module: "SwiftCrossUIMacrosPlugin",
+        type: "ObservableObjectIgnoredMacro"
+    )
+
+/// The former spelling of ``ObservableObjectIgnored()``.
+///
+/// This declaration exists only so that code written against the old name
+/// fails with "has been renamed to 'ObservableObjectIgnored'" and a fix-it,
+/// rather than with a bare "cannot find 'ObservationIgnored' in scope".
+///
+/// - Important: It is `unavailable` rather than `deprecated` on purpose. A
+///   deprecated declaration still takes part in name lookup, and having *any*
+///   usable `ObservationIgnored` in this module is exactly what used to break
+///   the standard library's `@Observable`: its expansion applies
+///   `@ObservationIgnored` unqualified, and two visible candidates make that
+///   expansion fail with "ambiguous use of 'ObservationIgnored()'" — an error
+///   inside generated code that the user cannot qualify their way out of.
+///   Unavailable declarations are dropped from that lookup, so this alias can
+///   guide migration without resurrecting the clash. Working `@Observable`
+///   matters more than a warning-only migration.
+@available(*, unavailable, renamed: "ObservableObjectIgnored")
+@attached(accessor, names: named(willSet))
 public macro ObservationIgnored() =
     #externalMacro(
         module: "SwiftCrossUIMacrosPlugin",
-        type: "ObservationIgnoredMacro"
+        type: "ObservableObjectIgnoredMacro"
     )

@@ -22,13 +22,17 @@ import Testing
 
     // MARK: - Models
 
-    // NB: These models spell out by hand exactly what the `@Observable` macro
-    // generates, because the macro can't be used here. SwiftCrossUI declares
-    // its own `ObservationIgnored` macro (a marker for its `@ObservableObject`
-    // macro), and `Observation` declares one too, so `@Observable`'s expansion
-    // fails with 'ambiguous use of ObservationIgnored()' in any file that
-    // imports both modules. Qualifying the macro as `@Observation.Observable`
-    // doesn't help, because the ambiguity is in the expanded code.
+    // NB: Every model below is declared with the standard library's
+    // `@Observable`, in a file that also imports SwiftCrossUI. That is itself
+    // a regression test. These models used to spell out the macro's expansion
+    // by hand, because SwiftCrossUI declared a macro named
+    // `ObservationIgnored` and so did `Observation`, which made
+    // `@Observable`'s expansion fail with 'ambiguous use of
+    // ObservationIgnored()' in any file that imported both modules
+    // (qualifying the macro as `@Observation.Observable` didn't help, because
+    // the ambiguity was in the expanded code). SwiftCrossUI's macro is now
+    // called `ObservableObjectIgnored`, so the standard library's macro can be
+    // used normally and these declarations compile.
     //
     // The generated code is what's under test either way: `access(_:keyPath:)`
     // on read and `withMutation(of:keyPath:)` on write is the entire contract
@@ -36,40 +40,13 @@ import Testing
 
     /// A model with one property that test views read and one that they don't.
     @available(macOS 14.0, iOS 17.0, tvOS 17.0, watchOS 10.0, *)
-    final class ObservedModel: Observation.Observable {
-        /// The registrar that publishes this model's mutations.
-        private let registrar = ObservationRegistrar()
-
-        /// Backing storage for ``title``.
-        private var storedTitle: String
-        /// Backing storage for ``unreadNote``.
-        private var storedUnreadNote: String
-
+    @Observable
+    final class ObservedModel {
         /// A property that the test views read from their bodies.
-        var title: String {
-            get {
-                registrar.access(self, keyPath: \.title)
-                return storedTitle
-            }
-            set {
-                registrar.withMutation(of: self, keyPath: \.title) {
-                    storedTitle = newValue
-                }
-            }
-        }
+        var title: String
 
         /// A property that no test view ever reads.
-        var unreadNote: String {
-            get {
-                registrar.access(self, keyPath: \.unreadNote)
-                return storedUnreadNote
-            }
-            set {
-                registrar.withMutation(of: self, keyPath: \.unreadNote) {
-                    storedUnreadNote = newValue
-                }
-            }
-        }
+        var unreadNote: String
 
         /// Creates a model.
         ///
@@ -77,69 +54,84 @@ import Testing
         ///   - title: The initial title.
         ///   - unreadNote: The initial note.
         init(title: String = "initial", unreadNote: String = "note") {
-            storedTitle = title
-            storedUnreadNote = unreadNote
+            self.title = title
+            self.unreadNote = unreadNote
         }
     }
 
     /// The inner object of a nested observable model.
     @available(macOS 14.0, iOS 17.0, tvOS 17.0, watchOS 10.0, *)
-    final class ObservedInnerModel: Observation.Observable {
-        /// The registrar that publishes this model's mutations.
-        private let registrar = ObservationRegistrar()
-
-        /// Backing storage for ``value``.
-        private var storedValue: String
-
+    @Observable
+    final class ObservedInnerModel {
         /// The value displayed by the nested model tests.
-        var value: String {
-            get {
-                registrar.access(self, keyPath: \.value)
-                return storedValue
-            }
-            set {
-                registrar.withMutation(of: self, keyPath: \.value) {
-                    storedValue = newValue
-                }
-            }
-        }
+        var value: String
 
         /// Creates an inner model.
         ///
         /// - Parameter value: The initial value.
         init(value: String) {
-            storedValue = value
+            self.value = value
         }
     }
 
     /// A model whose interesting state lives in a nested observable object.
     @available(macOS 14.0, iOS 17.0, tvOS 17.0, watchOS 10.0, *)
-    final class ObservedOuterModel: Observation.Observable {
-        /// The registrar that publishes this model's mutations.
-        private let registrar = ObservationRegistrar()
-
-        /// Backing storage for ``inner``.
-        private var storedInner: ObservedInnerModel
-
+    @Observable
+    final class ObservedOuterModel {
         /// The nested object.
-        var inner: ObservedInnerModel {
-            get {
-                registrar.access(self, keyPath: \.inner)
-                return storedInner
-            }
-            set {
-                registrar.withMutation(of: self, keyPath: \.inner) {
-                    storedInner = newValue
-                }
-            }
-        }
+        var inner: ObservedInnerModel
 
         /// Creates an outer model.
         ///
         /// - Parameter inner: The initial inner object.
         init(inner: ObservedInnerModel) {
-            storedInner = inner
+            self.inner = inner
         }
+    }
+
+    /// A model that mixes tracked storage with storage explicitly opted out of
+    /// tracking using `Observation`'s own `@ObservationIgnored`.
+    ///
+    /// Declaring this at all is the sharpest form of the regression test: the
+    /// opt-out marker is the exact name that SwiftCrossUI used to squat, so
+    /// this type could not be written in a file importing both modules until
+    /// SwiftCrossUI's macro was renamed.
+    @available(macOS 14.0, iOS 17.0, tvOS 17.0, watchOS 10.0, *)
+    @Observable
+    final class OptOutModel {
+        /// A tracked property that a test view reads.
+        var tracked: String
+
+        /// An untracked property that the same view reads.
+        ///
+        /// Mutating it must not redraw anything, because `@ObservationIgnored`
+        /// keeps it out of the registrar entirely.
+        @ObservationIgnored var untracked: String
+
+        /// Creates a model.
+        ///
+        /// - Parameters:
+        ///   - tracked: The initial tracked value.
+        ///   - untracked: The initial untracked value.
+        init(tracked: String = "tracked", untracked: String = "untracked") {
+            self.tracked = tracked
+            self.untracked = untracked
+        }
+    }
+
+    /// A model declared with SwiftCrossUI's ``ObservableObject()`` macro, one
+    /// of whose properties opts out with ``ObservableObjectIgnored()``.
+    ///
+    /// Its coexistence with the `@Observable` models above is what proves the
+    /// two opt-out markers no longer collide.
+    @SwiftCrossUI.ObservableObject
+    class MacroGeneratedModel {
+        /// A property the macro wraps in ``Published``.
+        var value = "macro"
+
+        /// A property the macro leaves alone.
+        @SwiftCrossUI.ObservableObjectIgnored
+        var ignored = "ignored"
     }
 
     /// A model using SwiftCrossUI's own observation mechanism, used to check
@@ -280,6 +272,36 @@ import Testing
             VStack {
                 Text(observed.title)
                 Text(published.value)
+            }
+        }
+    }
+
+    /// Displays both properties of an ``OptOutModel``.
+    ///
+    /// Reading both means the difference between them can only come from
+    /// `@ObservationIgnored`, not from what the body happened to touch.
+    @available(macOS 14.0, iOS 17.0, tvOS 17.0, watchOS 10.0, *)
+    struct OptOutView: View {
+        /// The model to display.
+        let model: OptOutModel
+
+        var body: some View {
+            VStack {
+                Text(model.tracked)
+                Text(model.untracked)
+            }
+        }
+    }
+
+    /// Displays both properties of a ``MacroGeneratedModel``.
+    struct MacroGeneratedModelView: View {
+        /// The model to display.
+        @State var model: MacroGeneratedModel
+
+        var body: some View {
+            VStack {
+                Text(model.value)
+                Text(model.ignored)
             }
         }
     }
@@ -705,6 +727,65 @@ import Testing
 
             await waitForUpdate { harness.renderedStrings == ["after"] }
             #expect(harness.renderedStrings == ["after"])
+        }
+
+        @Test("Observation's own @ObservationIgnored still opts a property out")
+        @MainActor
+        func testObservationIgnoredOptsPropertyOut() async {
+            guard
+                #available(macOS 14.0, iOS 17.0, tvOS 17.0, watchOS 10.0, *)
+            else {
+                return
+            }
+
+            // The declaration of `OptOutModel` is the real assertion here: it
+            // applies both `@Observable` and `@ObservationIgnored` in a file
+            // that imports SwiftCrossUI, which used to be impossible. These
+            // checks confirm the expansion also behaves.
+            let model = OptOutModel(tracked: "a", untracked: "b")
+            let harness = ObservationHarness(OptOutView(model: model))
+
+            #expect(harness.renderedStrings == ["a", "b"])
+
+            model.untracked = "changed"
+            await settle()
+            #expect(
+                harness.renderedStrings == ["a", "b"],
+                "Expected an @ObservationIgnored property not to redraw"
+            )
+
+            model.tracked = "changed"
+            await waitForUpdate {
+                harness.renderedStrings == ["changed", "changed"]
+            }
+            #expect(harness.renderedStrings == ["changed", "changed"])
+        }
+
+        @Test("@ObservableObjectIgnored keeps a property unpublished")
+        @MainActor
+        func testObservableObjectIgnoredKeepsPropertyUnpublished() async {
+            let model = MacroGeneratedModel()
+            let harness = ObservationHarness(
+                MacroGeneratedModelView(model: model)
+            )
+
+            #expect(harness.renderedStrings == ["macro", "ignored"])
+
+            model.ignored = "ignored-after"
+            await settle()
+            #expect(
+                harness.renderedStrings == ["macro", "ignored"],
+                "Expected an @ObservableObjectIgnored property not to publish"
+            )
+
+            model.value = "macro-after"
+            await waitForUpdate {
+                harness.renderedStrings == ["macro-after", "ignored-after"]
+            }
+            #expect(
+                harness.renderedStrings == ["macro-after", "ignored-after"],
+                "Expected the published property to still drive redraws"
+            )
         }
     }
 #endif
