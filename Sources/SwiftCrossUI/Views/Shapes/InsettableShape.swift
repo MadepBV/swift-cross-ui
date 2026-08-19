@@ -16,8 +16,10 @@ struct InsettableShapeImpl<Base: Shape>: InsettableShape {
     var base: Base
 
     nonisolated func path(in bounds: Path.Rect) -> Path {
+        // `Path.Rect` is spelled out because `Shape` also has a `path(in:)`
+        // overload taking a `CGRect`, which would make `.init` ambiguous.
         base.path(
-            in: .init(
+            in: Path.Rect(
                 x: bounds.x + inset,
                 y: bounds.y + inset,
                 width: bounds.width - 2 * inset,

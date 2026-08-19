@@ -1,8 +1,47 @@
+import Foundation // for CGRect
+
 /// A 2D shape that can be drawn as a view.
 ///
 /// If no stroke color or fill color is specified, the default is no stroke and
 /// a fill of the current foreground color.
+///
+/// ## Drawing a shape
+///
+/// Conform to this protocol and implement ``Shape/path(in:)-(CGRect)``, exactly
+/// as you would in SwiftUI:
+///
+/// ```swift
+/// struct Chevron: Shape {
+///     func path(in rect: CGRect) -> Path {
+///         var path = Path()
+///         path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+///         path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+///         path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+///         return path
+///     }
+/// }
+/// ```
+///
+/// SwiftCrossUI's own ``Path/Rect`` spelling,
+/// ``Shape/path(in:)-(Path.Rect)``, is equally valid and is what the built-in
+/// shapes use. Whichever one a shape implements, the other is derived from it,
+/// so callers may use either.
+///
+/// - Important: Every conforming type must implement at least one of the two
+///   `path(in:)` overloads. Implementing neither still compiles, because each
+///   one has a default that forwards to the other, but calling it recurses
+///   forever.
 public protocol Shape: View, Sendable, _RemoveGlobalActorIsolation where Content == EmptyView {
+    /// Draw the path for this shape.
+    ///
+    /// This is SwiftUI's spelling of ``Shape/path(in:)-(Path.Rect)``. The
+    /// default implementation converts `rect` and forwards to that overload,
+    /// so a shape only ever has to implement one of the two.
+    ///
+    /// - Parameter rect: The frame to draw this shape in.
+    /// - Returns: The shape's path.
+    func path(in rect: CGRect) -> Path
+
     /// Draw the path for this shape.
     ///
     /// The bounds passed to a shape that is immediately drawn as a view will
@@ -35,7 +74,12 @@ public protocol Shape: View, Sendable, _RemoveGlobalActorIsolation where Content
     /// }
     /// ```
     ///
+    /// The default implementation converts `bounds` and forwards to
+    /// ``Shape/path(in:)-(CGRect)``, so a shape only ever has to implement one
+    /// of the two.
+    ///
     /// - Parameter bounds: The bounds of this shape.
+    /// - Returns: The shape's path.
     func path(in bounds: Path.Rect) -> Path
 
     /// Determine the ideal size of this shape given the proposed bounds.
@@ -50,6 +94,22 @@ public protocol Shape: View, Sendable, _RemoveGlobalActorIsolation where Content
 
 extension Shape {
     public var body: EmptyView { return EmptyView() }
+
+    /// Draws the shape by forwarding to ``Shape/path(in:)-(Path.Rect)``.
+    ///
+    /// - Parameter rect: The frame to draw this shape in.
+    /// - Returns: The shape's path.
+    public func path(in rect: CGRect) -> Path {
+        path(in: Path.Rect(rect))
+    }
+
+    /// Draws the shape by forwarding to ``Shape/path(in:)-(CGRect)``.
+    ///
+    /// - Parameter bounds: The bounds of this shape.
+    /// - Returns: The shape's path.
+    public func path(in bounds: Path.Rect) -> Path {
+        path(in: bounds.cgRect)
+    }
 
     public func size(fitting proposal: ProposedViewSize) -> ViewSize {
         proposal.replacingUnspecifiedDimensions(by: ViewSize(10, 10))

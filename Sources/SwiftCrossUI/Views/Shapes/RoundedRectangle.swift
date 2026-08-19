@@ -485,9 +485,11 @@ extension RoundedRectangle.InsetShapeImpl: InsettableShape {
     private var actualCornerRadius: Double { max(0, initialCornerRadius - insetAmount) }
 
     func path(in bounds: Path.Rect) -> Path {
+        // `Path.Rect` is spelled out because `Shape` also has a `path(in:)`
+        // overload taking a `CGRect`, which would make `.init` ambiguous.
         RoundedRectangle(cornerRadius: actualCornerRadius)
             .path(
-                in: .init(
+                in: Path.Rect(
                     x: bounds.x + insetAmount,
                     y: bounds.y + insetAmount,
                     width: bounds.width - 2 * insetAmount,
