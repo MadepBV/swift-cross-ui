@@ -1,15 +1,59 @@
-/// A view that displays a selectable list of views.
-public struct List<SelectionValue: Hashable, RowView: View>: TypeSafeView, View {
-    typealias Children = ListViewChildren<PaddingModifierView<RowView>>
+/// A view that displays a scrolling column of rows.
+///
+/// A list is built either from a collection of values, in which case it renders
+/// one row per element and tracks which of them is selected:
+///
+/// ```swift
+/// List(placements, selection: $selectedPlacement) { placement in
+///     Text(placement.name)
+/// }
+/// ```
+///
+/// ...or from a view builder, in which case its rows are written out the same
+/// way the rows of a ``Form`` are:
+///
+/// ```swift
+/// List {
+///     Section("Drafting layers") {
+///         ForEach(layers) { layer in
+///             Toggle(layer.name, isOn: visibility(of: layer))
+///         }
+///     }
+/// }
+/// ```
+///
+/// The two forms are laid out differently. The collection form is backed by the
+/// platform's own selectable list widget, so its rows highlight and respond to
+/// the keyboard the way that platform expects. The view builder form stacks its
+/// rows in a ``ScrollView``, exactly like a form, because its rows are
+/// arbitrary views rather than a homogeneous collection.
+///
+/// - Note: The view builder form accepts a `selection` binding for source
+///   compatibility, but doesn't drive it. SwiftUI resolves the selection of a
+///   row-built list from `tag(_:)` and value-form ``NavigationLink``s attached
+///   to individual rows, which the row builder can't see.
+public struct List<SelectionValue: Hashable, RowView: View>: View {
+    /// How the list was built, which decides how it's laid out.
+    enum Storage {
+        /// A list of a collection's elements, backed by the platform's
+        /// selectable list widget.
+        case items(SelectableListView<SelectionValue, RowView>)
+        /// A list of arbitrary rows written out in a view builder.
+        case rows(RowView)
+    }
 
-    public let body = EmptyView()
+    /// How the list was built.
+    var storage: Storage
 
-    /// The current selection, if any.
-    var selection: Binding<SelectionValue?>
-    var rowContent: (Int) -> RowView
-    var associatedSelectionValue: (Int) -> SelectionValue
-    var find: (SelectionValue) -> Int?
-    var rowCount: Int
+    @ViewBuilder
+    public var body: some View {
+        switch storage {
+            case .items(let list):
+                list
+            case .rows(let rows):
+                ListRowsView(content: rows)
+        }
+    }
 
     /// Creates a list view.
     ///
@@ -103,7 +147,12 @@ public struct List<SelectionValue: Hashable, RowView: View>: TypeSafeView, View 
         selection: Binding<SelectionValue?>,
         @ViewBuilder rowContent: @escaping (Data.Element) -> RowView
     ) where Data.Index == Int {
-        self.init(data, id: { $0[keyPath: id] }, selection: selection, rowContent: rowContent)
+        self.init(
+            data,
+            id: { element in element[keyPath: id] },
+            selection: selection,
+            rowContent: rowContent
+        )
     }
 
     /// Creates a list view.
@@ -117,6 +166,75 @@ public struct List<SelectionValue: Hashable, RowView: View>: TypeSafeView, View 
     ///   - rowContent: A view builder that renders a single row of the list.
     ///     Receives an element of `data`.
     public init<Data: RandomAccessCollection>(
+        _ data: Data,
+        id: @escaping (Data.Element) -> SelectionValue,
+        selection: Binding<SelectionValue?>,
+        @ViewBuilder rowContent: @escaping (Data.Element) -> RowView
+    ) where Data.Index == Int {
+        storage = .items(
+            SelectableListView(
+                data,
+                id: id,
+                selection: selection,
+                rowContent: rowContent
+            )
+        )
+    }
+
+    /// Creates a list whose rows are written out in a view builder, tracking a
+    /// selection.
+    ///
+    /// - Parameters:
+    ///   - selection: A binding to the currently selected value. See the note
+    ///     on ``List`` for what a row-built list does with it.
+    ///   - content: The list's rows.
+    public init(
+        selection: Binding<SelectionValue?>,
+        @ViewBuilder content: () -> RowView
+    ) {
+        storage = .rows(content())
+    }
+}
+
+extension List where SelectionValue == Never {
+    /// Creates a list whose rows are written out in a view builder.
+    ///
+    /// - Parameter content: The list's rows.
+    public init(@ViewBuilder content: () -> RowView) {
+        storage = .rows(content())
+    }
+}
+
+/// A list of a collection's elements, backed by the platform's own selectable
+/// list widget.
+///
+/// This is the implementation of every collection-based ``List`` initializer.
+struct SelectableListView<SelectionValue: Hashable, RowView: View>: TypeSafeView, View {
+    typealias Children = ListViewChildren<PaddingModifierView<RowView>>
+
+    var body = EmptyView()
+
+    /// The current selection, if any.
+    var selection: Binding<SelectionValue?>
+    /// Renders the row at a given index.
+    var rowContent: (Int) -> RowView
+    /// The selection value identifying the row at a given index.
+    var associatedSelectionValue: (Int) -> SelectionValue
+    /// The index of the row with a given selection value, if any.
+    var find: (SelectionValue) -> Int?
+    /// How many rows the list has.
+    var rowCount: Int
+
+    /// Creates a selectable list over a collection.
+    ///
+    /// - Parameters:
+    ///   - data: A collection of values to construct the list from.
+    ///   - id: A closure that returns the ID to use for a given element of
+    ///     `data`.
+    ///   - selection: A binding to the ID of the value that is currently
+    ///     selected.
+    ///   - rowContent: A view builder that renders a single row of the list.
+    init<Data: RandomAccessCollection>(
         _ data: Data,
         id: @escaping (Data.Element) -> SelectionValue,
         selection: Binding<SelectionValue?>,
@@ -244,10 +362,10 @@ public struct List<SelectionValue: Hashable, RowView: View>: TypeSafeView, View 
         let baseRowPadding = backend.baseItemPadding(ofSelectableListView: widget)
         let verticalBasePadding = baseRowPadding.axisTotals.y
 
-        let childResults = children.nodes.map { $0.commit() }
+        let childResults = children.nodes.map { node in node.commit() }
         backend.setItems(
             ofSelectableListView: widget,
-            to: children.widgets.map { $0.into() },
+            to: children.widgets.map { widget in widget.into() },
             withRowHeights: childResults.map(\.size.height).map { height in
                 LayoutSystem.roundSize(height) + verticalBasePadding
             }
@@ -267,6 +385,35 @@ public struct List<SelectionValue: Hashable, RowView: View>: TypeSafeView, View 
 
         backend.updateSelectableListView(widget, environment: environment)
         backend.setSelectedItem(ofSelectableListView: widget, toItemAt: selectedIndex)
+    }
+}
+
+/// A list whose rows were written out in a view builder.
+///
+/// Its rows are arbitrary views rather than a homogeneous collection, so it
+/// stacks them in a ``ScrollView`` the way a ``Form`` does rather than handing
+/// them to the platform's selectable list widget.
+struct ListRowsView<Content: View>: View {
+    /// The vertical spacing between rows.
+    private static var rowSpacing: Int { 8 }
+
+    /// The padding above and below the list's rows.
+    private static var verticalPadding: Int { 6 }
+
+    /// The list's rows.
+    var content: Content
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Self.rowSpacing) {
+                content
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, Self.verticalPadding)
+        }
+        // Rows of a list fill their container's width, just like rows of a
+        // form, and `Section` reads this to know that.
+        .environment(\.isInsideForm, true)
     }
 }
 

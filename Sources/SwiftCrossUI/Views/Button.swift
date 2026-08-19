@@ -4,7 +4,7 @@ public struct Button<Label: View> {
     /// The label to show on the button.
     @_spi(Backends) public var label: () -> Label
     /// The action to be performed when the button is clicked.
-    @_spi(Backends) public var action: @MainActor @Sendable () -> Void
+    @_spi(Backends) public var action: @MainActor () -> Void
     /// The button's role, if it has one.
     ///
     /// See ``ButtonRole`` for what a role changes.
@@ -20,7 +20,7 @@ public struct Button<Label: View> {
     public init(
         _ label: String,
         role: ButtonRole? = nil,
-        action: @escaping @MainActor @Sendable () -> Void = {}
+        action: @escaping @MainActor () -> Void = {}
     ) where Label == TupleView1<Text> {
         self.label = { TupleView1(Text(label)) }
         self.action = action
@@ -37,8 +37,8 @@ public struct Button<Label: View> {
     @MainActor
     public init (
         role: ButtonRole? = nil,
-        action: @escaping @MainActor @Sendable () -> Void = {},
-        @ViewBuilder label: @escaping @MainActor @Sendable () -> Label
+        action: @escaping @MainActor () -> Void = {},
+        @ViewBuilder label: @escaping @MainActor () -> Label
     ) {
         self.label = label
         self.action = action
@@ -189,8 +189,24 @@ extension Button: TypeSafeView {
 }
 
 @MainActor
-extension Button where Label == TupleView1<Text> {
+extension Button {
+    /// Represents the button as a menu item.
+    ///
+    /// ``MenuItem/button(_:)`` can only hold a button whose label is a piece of
+    /// text, but this is deliberately unconstrained anyway: a protocol
+    /// requirement gets one witness for `Button<Label>` as a whole, so a
+    /// version constrained to `Label == TupleView1<Text>` would only ever be
+    /// found by static dispatch. A button reached through a generic container —
+    /// a ``TupleView``, which is what every view builder produces — would fall
+    /// back to ``View``'s default implementation and arrive as its label's
+    /// text, losing its action.
+    ///
+    /// A button with some other kind of label still falls back to that default,
+    /// because there's no menu item that can represent it.
     public var _asMenuItems: [MenuItem] {
-        [.button(self)]
+        guard let textButton = self as? Button<TupleView1<Text>> else {
+            return body._asMenuItems
+        }
+        return [.button(textButton)]
     }
 }
