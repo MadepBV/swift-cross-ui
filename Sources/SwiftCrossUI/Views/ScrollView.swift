@@ -8,6 +8,13 @@ public struct ScrollView<Content: View>: TypeSafeView, View {
     public var body: VStack<Content>
     public var axes: Axis.Set
 
+    /// Whether the scroll view is allowed to display scroll indicators.
+    ///
+    /// When this is `false` the scroll view never reserves room for a scroll
+    /// bar and never asks the backend to show one, but the content still
+    /// scrolls along ``ScrollView/axes``.
+    public var showsIndicators: Bool
+
     /// Wraps a view in a scrollable container.
     ///
     /// - Parameters:
@@ -16,6 +23,31 @@ public struct ScrollView<Content: View>: TypeSafeView, View {
     ///   - content: The content of the scroll view.
     public init(_ axes: Axis.Set = .vertical, @ViewBuilder _ content: () -> Content) {
         self.axes = axes
+        showsIndicators = true
+        body = VStack(content: content())
+    }
+
+    /// Wraps a view in a scrollable container, optionally hiding its scroll
+    /// indicators.
+    ///
+    /// This is SwiftUI's spelling. `showsIndicators` deliberately has no
+    /// default value: giving it one would make every trailing-closure call of
+    /// the form `ScrollView { ... }` ambiguous between this initializer and
+    /// ``ScrollView/init(_:_:)``.
+    ///
+    /// - Parameters:
+    ///   - axes: The axes of to enable scrolling on. Defaults to
+    ///     ``Axis/Set/vertical``.
+    ///   - showsIndicators: Whether to display scroll indicators when the
+    ///     content overflows.
+    ///   - content: The content of the scroll view.
+    public init(
+        _ axes: Axis.Set = .vertical,
+        showsIndicators: Bool,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.axes = axes
+        self.showsIndicators = showsIndicators
         body = VStack(content: content())
     }
 
@@ -88,7 +120,9 @@ public struct ScrollView<Content: View>: TypeSafeView, View {
         // child content size is bigger then the proposed size. If the proposed
         // size along the axis is nil then we don't have a scroll bar.
         let hasHorizontalScrollBar: Bool
-        if axes.contains(.horizontal), let proposedWidth = proposedSize.width {
+        if showsIndicators, axes.contains(.horizontal),
+           let proposedWidth = proposedSize.width
+        {
             hasHorizontalScrollBar = contentSize.width > proposedWidth
         } else {
             hasHorizontalScrollBar = false
@@ -96,7 +130,9 @@ public struct ScrollView<Content: View>: TypeSafeView, View {
         children.hasHorizontalScrollBar = hasHorizontalScrollBar
 
         let hasVerticalScrollBar: Bool
-        if axes.contains(.vertical), let proposedHeight = proposedSize.height {
+        if showsIndicators, axes.contains(.vertical),
+           let proposedHeight = proposedSize.height
+        {
             hasVerticalScrollBar = contentSize.height > proposedHeight
         } else {
             hasVerticalScrollBar = false

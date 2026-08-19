@@ -53,6 +53,28 @@ extension Shape {
     public func stroke(_ color: Color, style: StrokeStyle? = nil) -> some StyledShape {
         StyledShapeImpl(base: self, strokeColor: color, strokeStyle: style)
     }
+
+    /// Traces the outline of this shape with the given stroke style.
+    ///
+    /// This is SwiftUI's spelling. It picks no colour of its own: just as an
+    /// unstyled shape fills with the current foreground colour, a shape
+    /// stroked this way strokes with it, so the colour is chosen by
+    /// ``View/foregroundStyle(_:)`` or ``View/foregroundColor(_:)`` further
+    /// out.
+    ///
+    /// ```swift
+    /// Circle()
+    ///     .stroke(style: StrokeStyle(lineWidth: 2.0, lineCap: .round))
+    ///     .foregroundStyle(.red)
+    /// ```
+    ///
+    /// Use ``Shape/stroke(_:style:)`` instead to name the colour directly.
+    ///
+    /// - Parameter style: The pen to trace the shape's outline with.
+    /// - Returns: The shape, stroked with `style` and the foreground colour.
+    public func stroke(style: StrokeStyle) -> some StyledShape {
+        StyledShapeImpl(base: self, strokeStyle: style)
+    }
 }
 
 extension StyledShape {
@@ -98,11 +120,23 @@ extension StyledShape {
             environment: environment
         )
 
+        // A shape carrying a stroke style but no stroke colour and no fill
+        // colour came from `stroke(style:)`, which leaves the colour to the
+        // environment exactly as an unstyled shape's fill does.
+        let resolvedStrokeColor: Color
+        if let strokeColor {
+            resolvedStrokeColor = strokeColor
+        } else if strokeStyle != nil, fillColor == nil {
+            resolvedStrokeColor = environment.suggestedForegroundColor
+        } else {
+            resolvedStrokeColor = .clear
+        }
+
         backend.setSize(of: widget, to: layout.size.vector)
         backend.renderPath(
             backendPath,
             container: widget,
-            strokeColor: (strokeColor ?? .clear).resolve(in: environment),
+            strokeColor: resolvedStrokeColor.resolve(in: environment),
             fillColor: (fillColor ?? .clear).resolve(in: environment),
             overrideStrokeStyle: strokeStyle
         )

@@ -81,3 +81,67 @@ public struct ContentUnavailableView<Label: View, Description: View, Actions: Vi
         }
     }
 }
+
+/// SwiftUI's standard "no search results" presentations.
+///
+/// The constraints pin every generic argument to a concrete type, which is
+/// what lets a caller write `ContentUnavailableView.search(text:)` without
+/// naming any of them. ``ViewBuilder`` wraps even a single view in a
+/// ``TupleView1``, so these are the types the view's initializer infers for a
+/// label, a description and no actions.
+extension ContentUnavailableView
+    where
+    Label == TupleView1<Text>,
+    Description == TupleView1<Text>,
+    Actions == TupleView1<EmptyView>
+{
+    /// A view that indicates that a search returned no results.
+    ///
+    /// Use this when the search term isn't worth repeating back to the user,
+    /// or isn't available where the view is built. Use
+    /// ``ContentUnavailableView/search(text:)`` when it is, because quoting
+    /// the term makes it obvious which search came up empty.
+    ///
+    /// ```swift
+    /// if results.isEmpty {
+    ///     ContentUnavailableView.search
+    /// }
+    /// ```
+    public static var search: Self {
+        ContentUnavailableView {
+            Text("No Results")
+        } description: {
+            Text(Self.searchDescription)
+        } actions: {
+            EmptyView()
+        }
+    }
+
+    /// A view that indicates that a search for `text` returned no results.
+    ///
+    /// The search term is quoted in the label so that the user can see exactly
+    /// which search came up empty:
+    ///
+    /// ```swift
+    /// if results.isEmpty {
+    ///     ContentUnavailableView.search(text: query)
+    /// }
+    /// ```
+    ///
+    /// - Parameter text: The search term that returned no results.
+    /// - Returns: A standard "No Results" presentation naming `text`.
+    public static func search(text: String) -> Self {
+        ContentUnavailableView {
+            Text("No Results for \u{201C}\(text)\u{201D}")
+        } description: {
+            Text(Self.searchDescription)
+        } actions: {
+            EmptyView()
+        }
+    }
+
+    /// The description shown beneath both empty search presentations.
+    private static var searchDescription: String {
+        "Check the spelling or try a new search."
+    }
+}
