@@ -24,7 +24,8 @@
 /// The appearance of a section is controlled by the enclosing
 /// ``EnvironmentValues/formStyle``, which is set with ``View/formStyle(_:)``.
 /// Under ``FormStyle/grouped`` a section draws a subtle container behind its
-/// content; under ``FormStyle/automatic`` it just stacks its rows.
+/// content; under ``FormStyle/automatic`` it just stacks its rows. Beneath a
+/// form style that SwiftCrossUI doesn't ship, a section stacks its rows too.
 ///
 /// - Note: Unlike SwiftUI, sections don't currently collapse. Use
 ///   ``DisclosureGroup`` when you need collapsible content.
@@ -40,6 +41,17 @@ public struct Section<Parent: View, Content: View, Footer: View>: View {
     @Environment(\.formStyle) private var formStyle
     /// Whether this section is a row of a ``Form``.
     @Environment(\.isInsideForm) private var isInsideForm
+
+    /// The metrics to lay the section out with.
+    ///
+    /// A style that SwiftCrossUI doesn't ship has no metrics of its own, so
+    /// sections fall back to the plain layout beneath it.
+    private var metrics: FormMetrics {
+        guard let builtinStyle = formStyle as? any _BuiltinFormStyle else {
+            return .automatic
+        }
+        return builtinStyle.formMetrics
+    }
 
     /// Creates a section from its three constituent views.
     ///
@@ -185,21 +197,21 @@ public struct Section<Parent: View, Content: View, Footer: View>: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: formStyle.sectionHeaderSpacing) {
+        VStack(alignment: .leading, spacing: metrics.sectionHeaderSpacing) {
             header
                 .font(.headline)
 
-            VStack(alignment: .leading, spacing: formStyle.sectionRowSpacing) {
+            VStack(alignment: .leading, spacing: metrics.sectionRowSpacing) {
                 content
             }
             .if(isInsideForm) { rows in
                 rows.frame(maxWidth: .infinity, alignment: .leading)
             }
-            .if(formStyle.groupsSectionContent) { rows in
+            .if(metrics.groupsSectionContent) { rows in
                 rows
-                    .padding(formStyle.sectionContentPadding)
+                    .padding(metrics.sectionContentPadding)
                     .background(groupBackground)
-                    .cornerRadius(formStyle.sectionContentCornerRadius)
+                    .cornerRadius(metrics.sectionContentCornerRadius)
             }
 
             footer

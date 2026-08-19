@@ -17,10 +17,37 @@ private struct FormStyleProbe: View {
     var body: some View {
         Color.blue
             .frame(
-                width: formStyle == .grouped ? Self.groupedWidth : Self.ungroupedWidth,
+                width: formStyle is GroupedFormStyle
+                    ? Self.groupedWidth
+                    : Self.ungroupedWidth,
                 height: 10
             )
     }
+}
+
+/// A form style defined outside of SwiftCrossUI, standing in for one that an
+/// app would write.
+///
+/// Deliberately unlike every built-in style: it doesn't scroll, and it insets
+/// its rows by its own padding, so a form laid out with it is unmistakably
+/// laid out by this style.
+struct PaddedFormStyle: FormStyle {
+    /// The padding that this style leaves around a form's rows.
+    static let padding = 7
+
+    nonisolated init() {}
+
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            configuration.content
+        }
+        .padding(Self.padding)
+    }
+}
+
+extension FormStyle where Self == PaddedFormStyle {
+    /// A form style that insets its rows without scrolling them.
+    static var padded: Self { Self() }
 }
 
 @Suite("Testing for Form and Section")
@@ -50,6 +77,26 @@ struct FormTests {
             of: FormStyleProbe().formStyle(.automatic).formStyle(.grouped)
         )
         #expect(reverted.size.width == FormStyleProbe.ungroupedWidth)
+    }
+
+    @MainActor
+    @Test("The built-in accessors name the built-in styles")
+    func builtInStyleAccessors() {
+        // Each accessor has to keep vending its own type so that apps can name
+        // the styles they extend or match against.
+        let automatic: any FormStyle = .automatic
+        let columns: any FormStyle = .columns
+        let grouped: any FormStyle = .grouped
+
+        #expect(automatic is AutomaticFormStyle)
+        #expect(columns is ColumnsFormStyle)
+        #expect(grouped is GroupedFormStyle)
+    }
+
+    @MainActor
+    @Test("The default form style is automatic")
+    func defaultEnvironmentFormStyle() {
+        #expect(environment.formStyle is AutomaticFormStyle)
     }
 
     @MainActor
@@ -97,7 +144,7 @@ struct FormTests {
     @Test("Section stacks its rows vertically with spacing")
     func sectionStacksRowsVertically() {
         let proposedSize = ProposedViewSize(200, 400)
-        let style = FormStyle.automatic
+        let metrics = FormMetrics.automatic
 
         let oneRow = computeLayout(
             of: Section { Text("Row") },
@@ -113,7 +160,7 @@ struct FormTests {
 
         #expect(
             twoRows.size.height
-                == oneRow.size.height * 2 + Double(style.sectionRowSpacing)
+                == oneRow.size.height * 2 + Double(metrics.sectionRowSpacing)
         )
     }
 
@@ -143,7 +190,7 @@ struct FormTests {
         // instead of greedily filling the proposal, which is what lets us
         // measure the inset.
         let proposedSize = ProposedViewSize(300, nil)
-        let padding = Double(FormStyle.grouped.formPadding)
+        let padding = Double(FormMetrics.grouped.formPadding)
 
         let automatic = computeLayout(
             of: Form { Text("Row") },
@@ -154,7 +201,8 @@ struct FormTests {
             proposedSize: proposedSize
         )
 
-        #expect(FormStyle.automatic.formPadding == 0)
+        #expect(FormMetrics.automatic.formPadding == 0)
+        #expect(padding == 16)
         #expect(grouped.size.height == automatic.size.height + padding * 2)
     }
 
@@ -220,10 +268,10 @@ struct FormTests {
     @Test("Grouped sections draw a container around their content")
     func groupedSectionWrapsItsContentInAContainer() {
         let proposedSize = ProposedViewSize(300, 400)
-        let style = FormStyle.grouped
-        let containerPadding = Double(style.sectionContentPadding) * 2
+        let metrics = FormMetrics.grouped
+        let containerPadding = Double(metrics.sectionContentPadding) * 2
         let spacingDifference = Double(
-            style.sectionHeaderSpacing - FormStyle.automatic.sectionHeaderSpacing
+            metrics.sectionHeaderSpacing - FormMetrics.automatic.sectionHeaderSpacing
         )
 
         let automatic = computeLayout(
@@ -235,8 +283,8 @@ struct FormTests {
             proposedSize: proposedSize
         )
 
-        #expect(FormStyle.automatic.groupsSectionContent == false)
-        #expect(style.groupsSectionContent == true)
+        #expect(FormMetrics.automatic.groupsSectionContent == false)
+        #expect(metrics.groupsSectionContent == true)
         #expect(
             grouped.size.height
                 == automatic.size.height + containerPadding + spacingDifference
@@ -255,6 +303,44 @@ struct FormTests {
         let node = committedNode(for: form, proposedSize: ProposedViewSize(width, 400))
 
         #expect(node.widget.size.x == Int(width))
+    }
+
+    @MainActor
+    @Test("A form style defined outside SwiftCrossUI lays forms out")
+    func userDefinedFormStyleLaysOutTheForm() {
+        // The whole point of FormStyle being a protocol: an app can supply a
+        // style that SwiftCrossUI has never heard of.
+        let proposedSize = ProposedViewSize(300, nil)
+        let padding = Double(PaddedFormStyle.padding)
+
+        let row = computeLayout(of: Text("Row"), proposedSize: proposedSize)
+        let form = computeLayout(
+            of: Form { Text("Row") }.formStyle(.padded),
+            proposedSize: proposedSize
+        )
+
+        // The custom style neither scrolls nor uses the built-in padding, so
+        // the form is exactly one row plus the style's own inset tall.
+        #expect(form.size.height == row.size.height + padding * 2)
+    }
+
+    @MainActor
+    @Test("Sections stack plainly beneath a form style defined outside SwiftCrossUI")
+    func sectionsFallBackToPlainMetricsBeneathACustomStyle() {
+        let proposedSize = ProposedViewSize(300, 400)
+
+        let automatic = computeLayout(
+            of: Section("Title") { Text("Row") },
+            proposedSize: proposedSize
+        )
+        let custom = computeLayout(
+            of: Section("Title") { Text("Row") }.formStyle(.padded),
+            proposedSize: proposedSize
+        )
+
+        // A style SwiftCrossUI doesn't ship has no metrics of its own, so
+        // sections keep the plain layout rather than guessing.
+        #expect(custom.size.height == automatic.size.height)
     }
 
     @MainActor

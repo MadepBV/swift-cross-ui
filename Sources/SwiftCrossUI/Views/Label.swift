@@ -86,14 +86,8 @@ public struct Label<Title: View, Icon: View>: View {
     /// recorded, never rendered. See ``Label`` for the full explanation.
     package private(set) var imageName: String?
 
-    @Environment(\.labelStyle) var labelStyle
-
-    /// The amount of spacing between a label's icon and its title.
-    ///
-    /// Deliberately tighter than the default stack spacing so that an icon
-    /// and its title read as a single unit rather than as two adjacent
-    /// views.
-    private static var iconSpacing: Int { 5 }
+    /// The style to render with, taken from the environment.
+    @Environment(\.labelStyle) private var labelStyle
 
     /// Whether `Icon` is a stand-in for an icon that couldn't be resolved.
     ///
@@ -111,33 +105,18 @@ public struct Label<Title: View, Icon: View>: View {
         Title.self == EmptyView.self
     }
 
-    /// The style to render with, after resolving ``LabelStyle/automatic`` and
-    /// accounting for content that can't be rendered.
-    ///
-    /// A label always renders something as long as it has at least one
-    /// renderable part, no matter which style is in effect.
-    private var resolvedStyle: LabelStyle {
-        guard !iconIsUnavailable else {
-            return .titleOnly
-        }
-        guard !titleIsUnavailable else {
-            return .iconOnly
-        }
-        guard labelStyle != .automatic else {
-            return .titleAndIcon
-        }
-        return labelStyle
+    /// The label's parts, in the form that a ``LabelStyle`` consumes them.
+    private var configuration: LabelStyleConfiguration {
+        LabelStyleConfiguration(
+            title: LabelStyleConfiguration.Title(title),
+            icon: LabelStyleConfiguration.Icon(icon),
+            titleIsAvailable: !titleIsUnavailable,
+            iconIsAvailable: !iconIsUnavailable
+        )
     }
 
     public var body: some View {
-        HStack(spacing: Self.iconSpacing) {
-            if resolvedStyle.showsIcon {
-                icon
-            }
-            if resolvedStyle.showsTitle {
-                title
-            }
-        }
+        AnyView(labelStyle.makeBody(configuration: configuration))
     }
 
     /// Menus can only display text, so a label contributes its title and

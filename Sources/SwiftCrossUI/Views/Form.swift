@@ -16,6 +16,10 @@
 /// .formStyle(.grouped)
 /// ```
 ///
+/// The layout itself comes from the form style, so a custom ``FormStyle`` gets
+/// to arrange the rows however it likes. Everything below describes the
+/// built-in styles.
+///
 /// ## Scrolling
 ///
 /// Like SwiftUI's form, a form scrolls vertically when its content is taller
@@ -45,15 +49,16 @@ public struct Form<Content: View>: View {
         self.content = content()
     }
 
+    /// The form's rows, in the form that a ``FormStyle`` consumes them.
+    private var configuration: FormStyleConfiguration {
+        FormStyleConfiguration(
+            content: FormStyleConfiguration.Content(content)
+        )
+    }
+
     public var body: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: formStyle.formRowSpacing) {
-                content
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(formStyle.formPadding)
-        }
-        .environment(\.isInsideForm, true)
+        AnyView(formStyle.makeBody(configuration: configuration))
+            .environment(\.isInsideForm, true)
     }
 }
 

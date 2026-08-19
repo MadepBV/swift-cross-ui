@@ -20,7 +20,7 @@ extension View {
     ///
     /// - ``LabelStyle``
     /// - ``Label``
-    public func labelStyle(_ style: LabelStyle) -> some View {
+    public func labelStyle(_ style: any LabelStyle) -> some View {
         EnvironmentModifier(self) { environment in
             environment.with(\.labelStyle, style)
         }

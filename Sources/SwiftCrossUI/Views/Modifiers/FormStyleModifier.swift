@@ -20,7 +20,7 @@ extension View {
     /// ## See Also
     ///
     /// - ``FormStyle``
-    public func formStyle(_ style: FormStyle) -> some View {
+    public func formStyle(_ style: any FormStyle) -> some View {
         EnvironmentModifier(self) { environment in
             environment.with(\.formStyle, style)
         }
@@ -32,5 +32,5 @@ extension EnvironmentValues {
     ///
     /// Set this with ``View/formStyle(_:)`` rather than mutating the
     /// environment directly.
-    @Entry public var formStyle: FormStyle = .automatic
+    @Entry public var formStyle: any FormStyle = .automatic
 }

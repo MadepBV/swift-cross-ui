@@ -14,74 +14,50 @@
 /// .labelStyle(.iconOnly)
 /// ```
 ///
+/// ## Custom styles
+///
+/// Conform to this protocol to define your own style. The label hands its
+/// title and icon to ``LabelStyle/makeBody(configuration:)`` as a
+/// ``LabelStyleConfiguration``, leaving the style free to arrange them however
+/// it likes.
+///
+/// ```swift
+/// struct VerticalLabelStyle: LabelStyle {
+///     func makeBody(configuration: Configuration) -> some View {
+///         VStack(spacing: 4) {
+///             configuration.icon
+///             configuration.title
+///         }
+///     }
+/// }
+///
+/// extension LabelStyle where Self == VerticalLabelStyle {
+///     static var vertical: Self { Self() }
+/// }
+/// ```
+///
 /// ## See Also
 ///
 /// - ``Label``
 /// - ``View/labelStyle(_:)``
-public struct LabelStyle: Hashable, Sendable {
-    /// The set of label styles that SwiftCrossUI knows how to render.
-    package enum Kind: Hashable, Sendable {
-        /// Resolved by ``Label`` based on the context that it's used in.
-        case automatic
-        /// Displays both the title and the icon.
-        case titleAndIcon
-        /// Displays the icon and hides the title.
-        case iconOnly
-        /// Displays the title and hides the icon.
-        case titleOnly
-    }
+/// - ``LabelStyleConfiguration``
+@MainActor
+public protocol LabelStyle: Sendable {
+    /// A view that represents the body of a label.
+    associatedtype Body: View
 
-    /// The built-in style that this value represents.
-    package var kind: Kind
-
-    /// A label style that resolves its appearance based on the label's
-    /// context.
+    /// Creates a view that represents the body of a label.
     ///
-    /// SwiftCrossUI currently resolves this to ``LabelStyle/titleAndIcon`` in
-    /// every context, matching SwiftUI's behaviour outside of a handful of
-    /// Apple-specific containers.
-    public static let automatic = Self(kind: .automatic)
-
-    /// A label style that shows both the title and the icon, with the icon
-    /// leading the title.
-    public static let titleAndIcon = Self(kind: .titleAndIcon)
-
-    /// A label style that only shows the label's icon.
+    /// Called for every ``Label`` in the hierarchy that the style applies to.
     ///
-    /// If the label has no icon to show (which is the case for the asset names
-    /// passed to ``Label/init(_:image:)``, since SwiftCrossUI has no asset
-    /// catalog), the label falls back to showing its title so that it never
-    /// renders as nothing at all. See ``Label`` for details.
-    public static let iconOnly = Self(kind: .iconOnly)
+    /// - Parameter configuration: The title and icon of the label being
+    ///   styled.
+    /// - Returns: The label's rendered form.
+    @ViewBuilder
+    func makeBody(configuration: Configuration) -> Body
 
-    /// A label style that only shows the label's title.
-    public static let titleOnly = Self(kind: .titleOnly)
-
-    /// Whether labels using this style show their title.
-    ///
-    /// ``LabelStyle/automatic`` is treated as ``LabelStyle/titleAndIcon``.
-    package var showsTitle: Bool {
-        switch kind {
-            case .automatic, .titleAndIcon, .titleOnly: true
-            case .iconOnly: false
-        }
-    }
-
-    /// Whether labels using this style show their icon.
-    ///
-    /// ``LabelStyle/automatic`` is treated as ``LabelStyle/titleAndIcon``.
-    package var showsIcon: Bool {
-        switch kind {
-            case .automatic, .titleAndIcon, .iconOnly: true
-            case .titleOnly: false
-        }
-    }
-}
-
-extension LabelStyle: CustomStringConvertible {
-    public var description: String {
-        "\(kind)"
-    }
+    /// The properties of the label being styled.
+    typealias Configuration = LabelStyleConfiguration
 }
 
 extension EnvironmentValues {
@@ -89,5 +65,5 @@ extension EnvironmentValues {
     ///
     /// Set this with ``View/labelStyle(_:)`` rather than mutating the
     /// environment directly.
-    @Entry public var labelStyle: LabelStyle = .automatic
+    @Entry public var labelStyle: any LabelStyle = .automatic
 }

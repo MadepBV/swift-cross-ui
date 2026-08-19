@@ -3,6 +3,27 @@ import Testing
 import DummyBackend
 @testable @_spi(Backends) import SwiftCrossUI
 
+/// A label style defined outside of SwiftCrossUI, standing in for one that an
+/// app would write.
+///
+/// Places the title before the icon, which no built-in style does, so a label
+/// rendered with it is unmistakably laid out by this style.
+struct ReversedLabelStyle: LabelStyle {
+    nonisolated init() {}
+
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 4) {
+            configuration.title
+            configuration.icon
+        }
+    }
+}
+
+extension LabelStyle where Self == ReversedLabelStyle {
+    /// A label style that places the title before the icon.
+    static var reversed: Self { Self() }
+}
+
 @Suite("Testing for Label")
 @MainActor
 struct LabelTests {
@@ -118,6 +139,9 @@ struct LabelTests {
         #expect(rendered.text.isEmpty)
         #expect(rendered.size.x > 0)
         #expect(rendered.size.y > 0)
+        // The symbol is sized from the default font, which works out to the
+        // 16x16 that the toolbar call sites are laid out around.
+        #expect(rendered.size == SIMD2(16, 16))
     }
 
     @Test("Image resource labels fall back to their title under iconOnly")
@@ -154,31 +178,36 @@ struct LabelTests {
         }
     }
 
-    @Test("Label styles are distinct values")
-    func testLabelStylesAreDistinct() {
-        let styles: [LabelStyle] = [
-            .automatic,
-            .titleAndIcon,
-            .iconOnly,
-            .titleOnly,
-        ]
+    @Test("The built-in accessors name the built-in styles")
+    func testBuiltInStyleAccessors() {
+        // Each accessor has to keep vending its own type so that apps can
+        // name the styles they extend or match against.
+        let automatic: any LabelStyle = .automatic
+        let titleAndIcon: any LabelStyle = .titleAndIcon
+        let iconOnly: any LabelStyle = .iconOnly
+        let titleOnly: any LabelStyle = .titleOnly
 
-        #expect(Set(styles).count == styles.count)
+        #expect(automatic is DefaultLabelStyle)
+        #expect(titleAndIcon is TitleAndIconLabelStyle)
+        #expect(iconOnly is IconOnlyLabelStyle)
+        #expect(titleOnly is TitleOnlyLabelStyle)
     }
 
-    @Test("Label styles expose which parts they show")
-    func testLabelStyleVisibility() {
-        #expect(LabelStyle.automatic.showsTitle)
-        #expect(LabelStyle.automatic.showsIcon)
+    @Test("Each built-in style shows the parts it names")
+    func testBuiltInStyleVisibility() {
+        let label = Label {
+            Text("Title")
+        } icon: {
+            Text("Icon")
+        }
 
-        #expect(LabelStyle.titleAndIcon.showsTitle)
-        #expect(LabelStyle.titleAndIcon.showsIcon)
-
-        #expect(!LabelStyle.iconOnly.showsTitle)
-        #expect(LabelStyle.iconOnly.showsIcon)
-
-        #expect(LabelStyle.titleOnly.showsTitle)
-        #expect(!LabelStyle.titleOnly.showsIcon)
+        // The automatic style is deliberately indistinguishable from
+        // titleAndIcon; SwiftCrossUI has no context in which it resolves to
+        // anything else.
+        #expect(render(label, labelStyle: .automatic).text == ["Icon", "Title"])
+        #expect(render(label, labelStyle: .titleAndIcon).text == ["Icon", "Title"])
+        #expect(render(label, labelStyle: .iconOnly).text == ["Icon"])
+        #expect(render(label, labelStyle: .titleOnly).text == ["Title"])
     }
 
     @Test("The default label style is automatic")
@@ -186,7 +215,37 @@ struct LabelTests {
         let backend = DummyBackend()
         let environment = EnvironmentValues(backend: backend)
 
-        #expect(environment.labelStyle == .automatic)
+        #expect(environment.labelStyle is DefaultLabelStyle)
+    }
+
+    @Test("A label style defined outside SwiftCrossUI lays labels out")
+    func testUserDefinedLabelStyle() {
+        // The whole point of LabelStyle being a protocol: an app can supply a
+        // style that SwiftCrossUI has never heard of.
+        let label = Label {
+            Text("Title")
+        } icon: {
+            Text("Icon")
+        }
+
+        #expect(render(label, labelStyle: .reversed).text == ["Title", "Icon"])
+        #expect(
+            render(label, labelStyle: ReversedLabelStyle()).text == ["Title", "Icon"]
+        )
+    }
+
+    @Test("labelStyle(_:) accepts a style defined outside SwiftCrossUI")
+    func testUserDefinedLabelStylePropagates() {
+        let view = VStack {
+            Label {
+                Text("Title")
+            } icon: {
+                Text("Icon")
+            }
+        }
+        .labelStyle(.reversed)
+
+        #expect(render(view).text == ["Title", "Icon"])
     }
 }
 
@@ -198,6 +257,30 @@ private struct RenderResult {
     var size: SIMD2<Int>
 }
 
+/// Renders `view` with a ``DummyBackend``, leaving the environment's default
+/// label style in place.
+///
+/// - Parameter view: The view to render.
+/// - Returns: The rendered text and the view's laid out size.
+@MainActor
+private func render<Content: View>(_ view: Content) -> RenderResult {
+    renderView(view, labelStyle: nil)
+}
+
+/// Renders `view` with a ``DummyBackend`` and the given label style.
+///
+/// - Parameters:
+///   - view: The view to render.
+///   - labelStyle: The label style to seed the environment with.
+/// - Returns: The rendered text and the view's laid out size.
+@MainActor
+private func render<Content: View>(
+    _ view: Content,
+    labelStyle: any LabelStyle
+) -> RenderResult {
+    renderView(view, labelStyle: labelStyle)
+}
+
 /// Renders `view` with a ``DummyBackend`` and reports what it produced.
 ///
 /// - Parameters:
@@ -206,9 +289,9 @@ private struct RenderResult {
 ///     leave the environment's default in place.
 /// - Returns: The rendered text and the view's laid out size.
 @MainActor
-private func render<Content: View>(
+private func renderView<Content: View>(
     _ view: Content,
-    labelStyle: LabelStyle? = nil
+    labelStyle: (any LabelStyle)?
 ) -> RenderResult {
     let backend = DummyBackend()
     let window = backend.createWindow(withDefaultSize: nil, id: "window")
