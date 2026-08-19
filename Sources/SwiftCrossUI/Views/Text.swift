@@ -1,3 +1,5 @@
+import Foundation
+
 /// A view the displays text.
 ///
 /// ``Text`` truncates its content to fit within its proposed size. To wrap
@@ -53,6 +55,31 @@ public struct Text: Sendable {
     /// - Parameter string: The string to display.
     public init(_ string: String) {
         self.string = string
+    }
+
+    /// Creates a text view that displays a value formatted with a given
+    /// format style.
+    ///
+    /// The format style comes from Foundation, so all of the standard
+    /// styles work exactly as they do in SwiftUI.
+    ///
+    /// ```swift
+    /// Text(diameter, format: .number.precision(.fractionLength(2)))
+    /// Text(utilisation, format: .percent)
+    /// Text(placedAt, format: .dateTime)
+    /// ```
+    ///
+    /// The value is formatted eagerly, using the format style's own locale
+    /// (which is the current locale unless the style says otherwise);
+    /// SwiftCrossUI has no locale environment value to override it with.
+    ///
+    /// - Parameters:
+    ///   - input: The value to display.
+    ///   - format: The format style used to convert `input` into a string.
+    @available(macOS 12.0, iOS 15.0, tvOS 15.0, watchOS 8.0, macCatalyst 15.0, *)
+    public init<F: FormatStyle>(_ input: F.FormatInput, format: F)
+    where F.FormatInput: Equatable, F.FormatOutput == String {
+        self.string = format.format(input)
     }
 }
 
