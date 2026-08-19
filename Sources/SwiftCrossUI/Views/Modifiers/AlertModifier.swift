@@ -10,10 +10,10 @@ extension View {
     ///
     /// The `actions` block is a regular ``ViewBuilder``, so `if` statements and
     /// view modifiers work inside it. Only ``Button``s with text labels become
-    /// buttons of the alert; anything else in the block is ignored (see
-    /// ``View/alert(_:isPresented:actions:message:)`` for the caveat about
-    /// text-entry alerts). A block with no buttons produces a single "OK"
-    /// button.
+    /// buttons of the alert, and a single ``TextField`` becomes the alert's
+    /// line of text entry (see ``View/alert(_:isPresented:actions:message:)``);
+    /// anything else in the block is ignored. A block with no buttons produces
+    /// a single "OK" button.
     ///
     /// - Parameters:
     ///   - title: The alert's title.
@@ -27,12 +27,14 @@ extension View {
         isPresented: Binding<Bool>,
         @ViewBuilder actions: () -> Actions
     ) -> some View {
-        AlertModifierView(
+        let content = actions()
+        return AlertModifierView(
             child: self,
             title: title,
             message: nil,
             isPresented: isPresented,
-            actions: AlertActions.actions(from: actions()),
+            actions: AlertActions.actions(from: content),
+            textEntry: AlertActions.textEntry(in: content),
             actionsType: Actions.self
         )
     }
@@ -49,11 +51,11 @@ extension View {
     /// }
     /// ```
     ///
-    /// - Note: SwiftUI also allows a ``TextField`` in the `actions` block, to
-    ///   make a text-entry alert. No backend feature protocol can express one,
-    ///   so the field is dropped and a warning is logged; the alert's buttons
-    ///   still work. Present a ``View/sheet(isPresented:content:)`` with a text
-    ///   field in it when the entry itself matters.
+    /// - Note: A ``TextField`` in the `actions` block makes the alert a
+    ///   text-entry alert, as it does in SwiftUI. The field's binding receives
+    ///   what the user typed just before the chosen action runs, so an action
+    ///   can read it. Backends that can't put a field in an alert drop it with
+    ///   a warning; the alert's buttons still work.
     ///
     /// - Parameters:
     ///   - title: The alert's title.
@@ -70,12 +72,14 @@ extension View {
         @ViewBuilder actions: () -> Actions,
         @ViewBuilder message: () -> Message
     ) -> some View {
-        AlertModifierView(
+        let content = actions()
+        return AlertModifierView(
             child: self,
             title: title,
             message: ConfirmationDialogModifierView<Self>.string(ofMessage: message()),
             isPresented: isPresented,
-            actions: AlertActions.actions(from: actions()),
+            actions: AlertActions.actions(from: content),
+            textEntry: AlertActions.textEntry(in: content),
             actionsType: Actions.self
         )
     }
@@ -98,7 +102,8 @@ extension View {
         _ title: Binding<String?>,
         @ViewBuilder actions: () -> Actions
     ) -> some View {
-        AlertModifierView(
+        let content = actions()
+        return AlertModifierView(
             child: self,
             title: title.wrappedValue ?? "",
             message: nil,
@@ -109,7 +114,8 @@ extension View {
                     title.wrappedValue = nil
                 }
             },
-            actions: AlertActions.actions(from: actions()),
+            actions: AlertActions.actions(from: content),
+            textEntry: AlertActions.textEntry(in: content),
             actionsType: Actions.self
         )
     }
@@ -137,8 +143,10 @@ struct AlertModifierView<Child: View>: TypeSafeView {
     var isPresented: Binding<Bool>
     /// The alert's action buttons.
     var actions: [ConfirmationDialogAction]
-    /// The static type of the `actions` block, used to detect text-entry
-    /// alerts without walking the view at every update.
+    /// The alert's line of text entry, if the `actions` block declared one.
+    var textEntry: AlertActions.TextEntry?
+    /// The static type of the `actions` block, used to notice a text field that
+    /// ``textEntry`` couldn't reach.
     var actionsType: Any.Type
 
     func children<Backend: BaseAppBackend>(
@@ -205,19 +213,65 @@ struct AlertModifierView<Child: View>: TypeSafeView {
         }
     }
 
-    /// Warns about anything in the alert that the backend surface can't
-    /// express, once per alert presentation.
-    private func warnAboutUnpresentableContent() {
-        guard AlertActions.containsTextEntry(actionsType) else {
+    /// Gives the alert its text field, if it has one the backend can show.
+    ///
+    /// Anything that couldn't be presented is reported once, so that a dropped
+    /// field is never silent.
+    ///
+    /// - Parameters:
+    ///   - alert: The alert to add the field to.
+    ///   - backend: The app's backend.
+    /// - Returns: Whether the alert ended up with a text field.
+    func addTextField<Backend: BaseAppBackend & BackendFeatures.Alerts>(
+        to alert: Backend.Alert,
+        backend: Backend
+    ) -> Bool {
+        guard let textEntry else {
+            guard AlertActions.containsTextEntry(actionsType) else {
+                return false
+            }
+            logger.warnOnce(
+                """
+                an alert's text field couldn't be read out of its actions \
+                block, so it's being dropped. Present a sheet instead when the \
+                entry matters.
+                """
+            )
+            return false
+        }
+
+        guard backend.addTextField(textEntry.backendDescription, to: alert) else {
+            logger.warnOnce(
+                """
+                text-entry alerts are unsupported by the current backend, so \
+                the field is being dropped. The alert's buttons still work. \
+                Present a sheet instead when the entry matters.
+                """
+            )
+            return false
+        }
+        return true
+    }
+
+    /// Writes what the user typed back into the text field's binding.
+    ///
+    /// Called before the chosen action runs, so that an action which reads the
+    /// bound state sees the final contents of the field.
+    ///
+    /// - Parameters:
+    ///   - alert: The alert that was just dismissed.
+    ///   - backend: The app's backend.
+    func commitTextField<Backend: BaseAppBackend & BackendFeatures.Alerts>(
+        of alert: Backend.Alert,
+        backend: Backend
+    ) {
+        guard
+            let textEntry,
+            let contents = backend.textFieldContents(of: alert)
+        else {
             return
         }
-        logger.warnOnce(
-            """
-            text-entry alerts are unsupported: no backend feature protocol can \
-            put a text field in an alert, so the field is being dropped. \
-            Present a sheet instead when the entry matters.
-            """
-        )
+        textEntry.text.wrappedValue = contents
     }
 
     /// Presents or dismisses the alert using a backend that understands
@@ -237,8 +291,15 @@ struct AlertModifierView<Child: View>: TypeSafeView {
         let window = environment.window.flatMap { $0 as? Backend.Window }
 
         if isPresented.wrappedValue && children.alert == nil {
-            warnAboutUnpresentableContent()
-            let alert = backend.createConfirmationDialog()
+            // A text-entry alert is created as an alert rather than as a
+            // confirmation dialog, because a backend whose dialogs are a
+            // different kind of thing (UIKit's action sheets, for instance)
+            // can't put a text field in one. The dialog update is still used,
+            // so button roles survive either way.
+            let alert =
+                textEntry == nil
+                ? backend.createConfirmationDialog()
+                : backend.createAlert()
             backend.updateConfirmationDialog(
                 alert,
                 title: title,
@@ -247,10 +308,14 @@ struct AlertModifierView<Child: View>: TypeSafeView {
                 actions: actions,
                 environment: environment
             )
+            let hasTextField = addTextField(to: alert, backend: backend)
             let actions = actions
             let isPresented = isPresented
             backend.showAlert(alert, window: window) { response in
                 children.alert = nil
+                if hasTextField {
+                    commitTextField(of: alert, backend: backend)
+                }
                 isPresented.wrappedValue = false
 
                 guard
@@ -286,7 +351,6 @@ struct AlertModifierView<Child: View>: TypeSafeView {
         let window = environment.window.flatMap { $0 as? Backend.Window }
 
         if isPresented.wrappedValue && children.alert == nil {
-            warnAboutUnpresentableContent()
             let alert = backend.createAlert()
             backend.updateAlert(
                 alert,
@@ -294,10 +358,14 @@ struct AlertModifierView<Child: View>: TypeSafeView {
                 actionLabels: actions.map(\.label),
                 environment: environment
             )
+            let hasTextField = addTextField(to: alert, backend: backend)
             let actions = actions
             let isPresented = isPresented
             backend.showAlert(alert, window: window) { response in
                 children.alert = nil
+                if hasTextField {
+                    commitTextField(of: alert, backend: backend)
+                }
                 isPresented.wrappedValue = false
 
                 guard actions.indices.contains(response) else {

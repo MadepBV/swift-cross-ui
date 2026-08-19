@@ -156,9 +156,15 @@ extension BackendFeatures.ConfirmationDialogs {
 /// Unlike ``AlertAction``, actions carry a ``Role`` so that destructive and
 /// cancelling buttons can be rendered the way each platform expects.
 ///
+/// Like ``AlertAction``, the action isn't `@Sendable`. It's already confined to
+/// the main actor and it comes from a ``Button``, whose action isn't
+/// `@Sendable` either, so requiring it here would reject the plain
+/// `@escaping () -> Void` callbacks applications hand to buttons without buying
+/// any safety in return.
+///
 /// ## See Also
 /// - ``View/confirmationDialog(_:isPresented:titleVisibility:actions:message:)``
-public struct ConfirmationDialogAction: Sendable {
+public struct ConfirmationDialogAction {
     /// The semantic role of a confirmation dialog button.
     ///
     /// Roles change how a button looks and behaves. They don't change what it
@@ -176,20 +182,45 @@ public struct ConfirmationDialogAction: Sendable {
         /// Backends should make this button the dialog's escape route, so that
         /// dismissing the dialog with the keyboard runs this action.
         case cancel
+
+        /// Translates a ``Button``'s role into the equivalent dialog role.
+        ///
+        /// ``ButtonRole`` is the role that authors write, and it's a struct so
+        /// that it can gain new roles without breaking the backends that
+        /// switch over this enum exhaustively. This is the single place the
+        /// two vocabularies meet, so a new ``ButtonRole`` has to be given a
+        /// dialog meaning here rather than being quietly dropped.
+        ///
+        /// - Parameter role: The button's role, if it has one.
+        /// - Returns: The matching dialog role, or `nil` if the button has no
+        ///   role.
+        public init?(_ role: ButtonRole?) {
+            guard let role else {
+                return nil
+            }
+            switch role.kind {
+                case .destructive:
+                    self = .destructive
+                case .cancel:
+                    self = .cancel
+            }
+        }
     }
 
     /// The default confirmation dialog action.
     ///
     /// Consists of a button labeled "OK" with no action (other than dismissing
     /// the dialog, which is implicit).
-    public static let `default` = ConfirmationDialogAction(label: "OK")
+    public static var `default`: ConfirmationDialogAction {
+        ConfirmationDialogAction(label: "OK")
+    }
 
     /// The button's label.
     public var label: String
     /// The button's role, if it has one.
     public var role: Role?
     /// The button's action.
-    public var action: @MainActor @Sendable () -> Void
+    public var action: @MainActor () -> Void
 
     /// Creates a confirmation dialog action.
     ///
@@ -200,7 +231,7 @@ public struct ConfirmationDialogAction: Sendable {
     public init(
         label: String,
         role: Role? = nil,
-        action: @escaping @MainActor @Sendable () -> Void = {}
+        action: @escaping @MainActor () -> Void = {}
     ) {
         self.label = label
         self.role = role
@@ -215,7 +246,7 @@ public struct ConfirmationDialogAction: Sendable {
     /// - Returns: A destructive action.
     public static func destructive(
         _ label: String,
-        action: @escaping @MainActor @Sendable () -> Void = {}
+        action: @escaping @MainActor () -> Void = {}
     ) -> ConfirmationDialogAction {
         ConfirmationDialogAction(label: label, role: .destructive, action: action)
     }
@@ -228,7 +259,7 @@ public struct ConfirmationDialogAction: Sendable {
     /// - Returns: A cancelling action.
     public static func cancel(
         _ label: String = "Cancel",
-        action: @escaping @MainActor @Sendable () -> Void = {}
+        action: @escaping @MainActor () -> Void = {}
     ) -> ConfirmationDialogAction {
         ConfirmationDialogAction(label: label, role: .cancel, action: action)
     }

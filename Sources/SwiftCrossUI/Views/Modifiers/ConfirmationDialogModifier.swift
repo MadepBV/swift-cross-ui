@@ -101,8 +101,8 @@ extension Button where Label == TupleView1<Text> {
 
 /// A result builder for `[ConfirmationDialogAction]`.
 ///
-/// Accepts plain ``Button``s (which become role-less actions), and
-/// ``ConfirmationDialogAction``s, which carry a role.
+/// Accepts ``Button``s, whose ``ButtonRole`` carries across, and
+/// ``ConfirmationDialogAction``s, which carry a role of their own.
 @resultBuilder
 public struct ConfirmationDialogActionsBuilder {
     /// Called when no actions are provided.
@@ -112,7 +112,11 @@ public struct ConfirmationDialogActionsBuilder {
         [.default]
     }
 
-    /// Starts an action list with a role-less button.
+    /// Starts an action list with a button.
+    ///
+    /// The button's ``ButtonRole``, if it has one, becomes the action's role,
+    /// so that `Button("Delete", role: .destructive)` renders destructively
+    /// inside a dialog exactly as it does anywhere else.
     ///
     /// - Parameter first: The button.
     /// - Returns: The action list so far.
@@ -123,6 +127,7 @@ public struct ConfirmationDialogActionsBuilder {
         [
             ConfirmationDialogAction(
                 label: first.body.view0.view0.string,
+                role: ConfirmationDialogAction.Role(first.role),
                 action: first.action
             )
         ]
@@ -146,7 +151,9 @@ public struct ConfirmationDialogActionsBuilder {
         first.actions
     }
 
-    /// Appends a role-less button to an action list.
+    /// Appends a button to an action list.
+    ///
+    /// The button's ``ButtonRole``, if it has one, becomes the action's role.
     ///
     /// - Parameters:
     ///   - accumulated: The action list so far.
@@ -160,6 +167,7 @@ public struct ConfirmationDialogActionsBuilder {
         accumulated + [
             ConfirmationDialogAction(
                 label: next.body.view0.view0.string,
+                role: ConfirmationDialogAction.Role(next.role),
                 action: next.action
             )
         ]

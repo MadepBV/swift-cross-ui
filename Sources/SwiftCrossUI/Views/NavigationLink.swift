@@ -9,6 +9,14 @@
 /// NavigationLink("Science", value: SubjectArea.science, path: $path)
 /// ```
 ///
+/// ...with a label of its own, if a line of text isn't enough:
+///
+/// ```swift
+/// NavigationLink(value: SubjectArea.science, path: $path) {
+///     Label("Science", systemImage: "flask")
+/// }
+/// ```
+///
 /// ...or names its destination directly, in which case the destination is
 /// pushed onto the enclosing stack as-is:
 ///
@@ -27,8 +35,12 @@
 public struct NavigationLink: View {
     /// How the link was built, which decides what clicking it does.
     enum Storage {
-        /// A link that appends a value to a navigation path.
+        /// A link that appends a value to a navigation path, labelled with a
+        /// piece of text.
         case value(label: String, value: any Codable, path: Binding<NavigationPath>)
+        /// A link that appends a value to a navigation path, labelled with a
+        /// view of the author's choosing.
+        case labelledValue(label: AnyView, value: any Codable, path: Binding<NavigationPath>)
         /// A link that pushes a view onto the enclosing navigation stack.
         case destination(label: AnyView, destination: () -> AnyView)
     }
@@ -46,6 +58,12 @@ public struct NavigationLink: View {
             case .value(let label, let value, let path):
                 Button(label) {
                     path.wrappedValue.append(value)
+                }
+            case .labelledValue(let label, let value, let path):
+                Button {
+                    path.wrappedValue.append(value)
+                } label: {
+                    label
                 }
             case .destination(let label, let destination):
                 // Resolved here so that the button's action captures just the
@@ -80,6 +98,39 @@ public struct NavigationLink: View {
     ///   - path: The navigation path to append to when clicked.
     public init(_ label: String, value: some Codable, path: Binding<NavigationPath>) {
         storage = .value(label: label, value: value, path: path)
+    }
+
+    /// Creates a navigation link that presents the view corresponding to a
+    /// value, labelled with a view rather than a piece of text.
+    ///
+    /// This is the value counterpart of ``init(destination:label:)``: the label
+    /// can be any view, so a link can show an icon, a subtitle, or a whole row
+    /// instead of a single line of text.
+    ///
+    /// ```swift
+    /// NavigationLink(value: definition.id, path: $path) {
+    ///     definitionRow(definition)
+    /// }
+    /// ```
+    ///
+    /// The link is handled by whatever ``NavigationStack`` is sharing the same
+    /// navigation path.
+    ///
+    /// - Parameters:
+    ///   - value: The value to append to the navigation path when clicked.
+    ///   - path: The navigation path to append to when clicked.
+    ///   - label: The label to display on the link.
+    @MainActor
+    public init<Label: View>(
+        value: some Codable,
+        path: Binding<NavigationPath>,
+        @ViewBuilder label: () -> Label
+    ) {
+        storage = .labelledValue(
+            label: AnyView(label()),
+            value: value,
+            path: path
+        )
     }
 
     /// Creates a navigation link that presents a destination view.
