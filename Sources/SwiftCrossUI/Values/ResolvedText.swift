@@ -5,9 +5,10 @@ import Foundation
 ///
 /// Obtain a value of this type by calling
 /// ``GraphicsContext/resolve(_:)``. Resolving text captures the font and
-/// foreground style that were in effect at the moment of resolution, so a
-/// resolved value can be measured and drawn repeatedly without re-reading the
-/// environment.
+/// foreground style that were in effect at the moment of resolution — the
+/// ``Text``'s own attributes where it has them, and the context's otherwise —
+/// so a resolved value can be measured and drawn repeatedly without re-reading
+/// the environment.
 ///
 /// ```swift
 /// Canvas { context, size in
@@ -47,6 +48,11 @@ public struct ResolvedText {
     /// The font that the text was resolved with, if the context had one.
     ///
     /// `nil` means "whatever font the canvas inherited from its environment".
+    ///
+    /// Attributes set on the ``Text`` itself — ``Text/fontWeight(_:)``,
+    /// ``Text/bold(_:)``, ``Text/italic(_:)``, ``Text/monospaced(_:)`` — are
+    /// baked into this font's overlay by ``GraphicsContext/resolve(_:)``, so
+    /// this single value carries the whole of the text's typography.
     let font: Font?
 
     /// The measurement function captured at resolution time.

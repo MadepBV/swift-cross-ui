@@ -246,6 +246,75 @@ extension Button: TypeSafeView {
 }
 
 @MainActor
+extension Button where Label == SwiftCrossUI.Label<Text, Image> {
+    /// Creates a button that displays a title and a system image (an SF
+    /// Symbol) beside it.
+    ///
+    /// This is shorthand for building the button's label yourself:
+    ///
+    /// ```swift
+    /// Button {
+    ///     pickAxis()
+    /// } label: {
+    ///     Label("Pick axis", systemImage: "scope")
+    /// }
+    /// ```
+    ///
+    /// SF Symbols are an Apple-only font, so the name is resolved through the
+    /// environment's ``EnvironmentValues/symbolProvider``, which by default
+    /// draws an equivalent bundled Lucide icon on every platform. See
+    /// ``Image/init(systemName:)`` for the details, and
+    /// ``View/labelStyle(_:)`` for hiding either half of the label.
+    ///
+    /// - Parameters:
+    ///   - title: The title displayed beside the symbol.
+    ///   - systemImage: The name of the SF Symbol to use as the button's icon.
+    ///   - role: The button's role, describing what kind of action it
+    ///     performs. Defaults to `nil` (no particular role).
+    ///   - action: The action to be performed when the button is clicked.
+    public init(
+        _ title: String,
+        systemImage: String,
+        role: ButtonRole? = nil,
+        action: @escaping @MainActor () -> Void = {}
+    ) {
+        self.label = { SwiftCrossUI.Label(title, systemImage: systemImage) }
+        self.action = action
+        self.role = role
+    }
+}
+
+@MainActor
+extension Button where Label == SwiftCrossUI.Label<Text, EmptyView> {
+    /// Creates a button that displays a title and an image resource beside it.
+    ///
+    /// - Important: SwiftCrossUI has no asset catalog, so it can't resolve an
+    ///   image name into an image. Buttons created with this initializer show
+    ///   their title alone. The name is recorded on the underlying ``Label``
+    ///   so that a future asset mechanism can pick it up without any call site
+    ///   having to change. To show an icon today, load it yourself with
+    ///   ``Image/init(_:useFileExtension:)`` and use
+    ///   ``Button/init(role:action:label:)`` with a ``Label``.
+    ///
+    /// - Parameters:
+    ///   - title: The title displayed by the button.
+    ///   - image: The name of the image resource to use as the button's icon.
+    ///   - role: The button's role, describing what kind of action it
+    ///     performs. Defaults to `nil` (no particular role).
+    ///   - action: The action to be performed when the button is clicked.
+    public init(
+        _ title: String,
+        image: String,
+        role: ButtonRole? = nil,
+        action: @escaping @MainActor () -> Void = {}
+    ) {
+        self.label = { SwiftCrossUI.Label(title, image: image) }
+        self.action = action
+        self.role = role
+    }
+}
+
+@MainActor
 extension Button where Label == TupleView1<Text> {
     /// The text shown on the button.
     ///
@@ -272,12 +341,47 @@ extension Button {
     /// back to ``View``'s default implementation and arrive as its label's
     /// text, losing its action.
     ///
+    /// A button built by `init(_:systemImage:role:action:)` or
+    /// `init(_:image:role:action:)` is rebuilt as a text button carrying the
+    /// same action and role. Menus can't show its icon, but dropping to the
+    /// label's own menu representation would turn a working menu command into
+    /// an inert piece of text.
+    ///
     /// A button with some other kind of label still falls back to that default,
     /// because there's no menu item that can represent it.
     public var _asMenuItems: [MenuItem] {
-        guard let textButton = self as? Button<TupleView1<Text>> else {
-            return label()._asMenuItems
+        if let textButton = self as? Button<TupleView1<Text>> {
+            return [.button(textButton)]
         }
-        return [.button(textButton)]
+
+        let items = label()._asMenuItems
+        guard
+            hasTitleAndIconLabel,
+            items.count == 1,
+            case .text(let title) = items[0]
+        else {
+            return items
+        }
+        return [
+            .button(
+                Button<TupleView1<Text>>(
+                    title.string,
+                    role: role,
+                    action: action
+                )
+            )
+        ]
+    }
+
+    /// Whether the button's label is one of the ``Label``s that
+    /// `init(_:systemImage:role:action:)` and `init(_:image:role:action:)`
+    /// build.
+    ///
+    /// Those are the only labels whose menu representation is known to be the
+    /// button's title and nothing else, which is what makes it safe to swap
+    /// the action back in.
+    private var hasTitleAndIconLabel: Bool {
+        Label.self == SwiftCrossUI.Label<Text, Image>.self
+            || Label.self == SwiftCrossUI.Label<Text, EmptyView>.self
     }
 }

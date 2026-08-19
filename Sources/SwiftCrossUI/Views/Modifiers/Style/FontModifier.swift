@@ -4,10 +4,21 @@ extension View {
     /// modifiers such as ``View/fontWeight(_:)`` and ``View/emphasized()``
     /// which override the font properties of all contained text.
     ///
-    /// - Parameter font: The font to set.
-    public func font(_ font: Font) -> some View {
+    /// - Parameter font: The font to set. `nil` leaves the inherited font in
+    ///   place, matching SwiftUI, where `nil` means "use the inherited font".
+    ///
+    /// - Note: The parameter is optional so that it matches SwiftUI's, and so
+    ///   that ``Text/font(_:)`` (which is also optional, and which returns a
+    ///   ``Text`` rather than erasing to `some View`) is preferred over this
+    ///   modifier when the receiver is a ``Text``. Making this one
+    ///   non-optional would cost ``Text/font(_:)`` an optional injection and
+    ///   hand every `Text(…).font(…)` back to this modifier instead.
+    public func font(_ font: Font?) -> some View {
         EnvironmentModifier(self) { environment in
-            environment.with(\.font, font)
+            guard let font else {
+                return environment
+            }
+            return environment.with(\.font, font)
         }
     }
 

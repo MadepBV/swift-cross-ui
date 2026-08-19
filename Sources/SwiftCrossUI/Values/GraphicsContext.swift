@@ -168,6 +168,21 @@ extension GraphicsContext {
         )
     }
 
+    /// Fills the given path, choosing filled regions with a fill style.
+    ///
+    /// The style replaces the path's own ``Path/fillRule``. Omitting it, by
+    /// calling ``fill(_:with:)`` instead, keeps whatever rule the path already
+    /// carries.
+    ///
+    /// - Parameters:
+    ///   - path: The path to fill, in the context's current coordinate space.
+    ///   - shading: The shading to fill the path with.
+    ///   - style: The style that decides which regions of the path the fill
+    ///     covers.
+    public func fill(_ path: Path, with shading: Shading, style: FillStyle) {
+        fill(path.fillRule(style.fillRule), with: shading)
+    }
+
     /// Strokes the given path.
     ///
     /// - Parameters:
@@ -311,13 +326,27 @@ extension GraphicsContext {
 
     /// Resolves text against this context's environment.
     ///
+    /// The text's own attributes win over the context's. A ``Text`` styled
+    /// with ``Text/font(_:)``, ``Text/fontWeight(_:)`` or
+    /// ``Text/foregroundColor(_:)`` therefore keeps that styling when it is
+    /// drawn into a canvas; anything it leaves unset falls back to the font
+    /// and foreground color the canvas inherited from its environment.
+    ///
     /// - Parameter text: The text to resolve.
     /// - Returns: The resolved text, ready to be measured and drawn.
     public func resolve(_ text: Text) -> ResolvedText {
-        ResolvedText(
+        let attributes = text.attributes
+        let shading: Shading
+        if let color = attributes.foregroundColor {
+            shading = .color(color)
+        } else {
+            shading = .foreground
+        }
+
+        return ResolvedText(
             string: text.string,
-            shading: .foreground,
-            font: font,
+            shading: shading,
+            font: attributes.resolvedFont(basedOn: font),
             measurement: measurement
         )
     }

@@ -1,3 +1,5 @@
+import Foundation  // for CGFloat
+
 extension View {
     /// Adds padding to a view.
     ///
@@ -8,6 +10,37 @@ extension View {
     ///   backend-specific default value is used.
     public func padding(_ amount: Int? = nil) -> some View {
         return padding(.all, amount)
+    }
+
+    /// Adds an equal amount of padding to every edge of a view.
+    ///
+    /// SwiftUI's primary spelling, provided alongside the integral
+    /// `padding(_ amount: Int?)` so that a stored `CGFloat` metric can be
+    /// passed straight through.
+    ///
+    /// - Note: SwiftCrossUI lays out in whole points, so `length` is rounded
+    ///   to the nearest integer.
+    ///
+    /// - Parameter length: The amount of padding to use.
+    public func padding(_ length: CGFloat) -> some View {
+        return padding(.all, EdgeInsets.round(length))
+    }
+
+    /// Adds padding to the given edges of a view.
+    ///
+    /// SwiftUI's primary spelling, provided alongside the integral
+    /// `padding(_ edges: Edge.Set, _ amount: Int?)` so that a stored `CGFloat`
+    /// metric can be passed straight through.
+    ///
+    /// - Note: SwiftCrossUI lays out in whole points, so `length` is rounded
+    ///   to the nearest integer.
+    ///
+    /// - Parameters:
+    ///   - edges: The edges to apply the padding to.
+    ///   - length: The amount of padding to use. If `nil`, a backend-specific
+    ///     default value is used.
+    public func padding(_ edges: Edge.Set, _ length: CGFloat?) -> some View {
+        return padding(edges, length.map(EdgeInsets.round))
     }
 
     /// Adds padding to a view.
@@ -40,6 +73,15 @@ public struct EdgeInsets: Equatable {
     public var leading: Int
     /// The trailing inset.
     public var trailing: Int
+
+    /// Rounds a fractional length to the whole points SwiftCrossUI lays out
+    /// in.
+    ///
+    /// - Parameter length: The length to round.
+    /// - Returns: The nearest whole number of points.
+    static func round(_ length: CGFloat) -> Int {
+        Int(length.rounded())
+    }
 
     /// The total inset along each axis.
     var axisTotals: SIMD2<Int> {

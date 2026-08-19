@@ -9,6 +9,15 @@
 /// }
 /// ```
 ///
+/// ...or from a collection whose rows drive themselves, in which case the
+/// selection can be left out entirely:
+///
+/// ```swift
+/// List(definitions) { definition in
+///     Button(definition.name) { choose(definition) }
+/// }
+/// ```
+///
 /// ...or from a view builder, in which case its rows are written out the same
 /// way the rows of a ``Form`` are:
 ///
@@ -203,6 +212,68 @@ extension List where SelectionValue == Never {
     public init(@ViewBuilder content: () -> RowView) {
         storage = .rows(content())
     }
+
+    /// Creates a list of a collection's elements, without tracking a
+    /// selection.
+    ///
+    /// This is the form to reach for when the rows drive themselves — a row of
+    /// buttons, or of ``NavigationLink``s — and nothing outside the list needs
+    /// to know which of them is current:
+    ///
+    /// ```swift
+    /// List(definitions) { definition in
+    ///     Button(definition.name) { choose(definition) }
+    /// }
+    /// ```
+    ///
+    /// The list is still backed by the platform's own list widget, exactly as
+    /// ``init(_:selection:rowContent:)`` is; it simply never reports a
+    /// selection.
+    ///
+    /// - Parameters:
+    ///   - data: A collection of `Identifiable` values to construct the list
+    ///     from.
+    ///   - rowContent: A view builder that renders a single row of the list.
+    ///     Receives an element of `data`.
+    public init<Data: RandomAccessCollection>(
+        _ data: Data,
+        @ViewBuilder rowContent: @escaping (Data.Element) -> RowView
+    ) where Data.Element: Identifiable, Data.Index == Int {
+        storage = .items(
+            SelectableListView(unselectable: data, rowContent: rowContent)
+        )
+    }
+
+    /// Creates a list of a collection's elements identified by a key path,
+    /// without tracking a selection.
+    ///
+    /// ```swift
+    /// List(families, id: \.self) { family in
+    ///     familyRow(family)
+    /// }
+    /// ```
+    ///
+    /// - Note: `id` is accepted for source compatibility with SwiftUI, whose
+    ///   lists use it as the identity of each row. SwiftCrossUI's list matches
+    ///   rows up by position instead, so the identifier is not read. It's still
+    ///   required, because it's what distinguishes this initializer from
+    ///   ``init(_:rowContent:)`` for collections whose elements aren't
+    ///   `Identifiable`.
+    ///
+    /// - Parameters:
+    ///   - data: A collection of values to construct the list from.
+    ///   - id: A key path to the identity of an element of `data`.
+    ///   - rowContent: A view builder that renders a single row of the list.
+    ///     Receives an element of `data`.
+    public init<Data: RandomAccessCollection, ID: Hashable>(
+        _ data: Data,
+        id: KeyPath<Data.Element, ID>,
+        @ViewBuilder rowContent: @escaping (Data.Element) -> RowView
+    ) where Data.Index == Int {
+        storage = .items(
+            SelectableListView(unselectable: data, rowContent: rowContent)
+        )
+    }
 }
 
 /// A list of a collection's elements, backed by the platform's own selectable
@@ -216,10 +287,13 @@ struct SelectableListView<SelectionValue: Hashable, RowView: View>: TypeSafeView
 
     /// The current selection, if any.
     var selection: Binding<SelectionValue?>
+    /// The selection value identifying the row at a given index.
+    ///
+    /// `nil` for a list that doesn't track a selection, whose rows stand for no
+    /// selection value at all.
+    var associatedSelectionValue: (Int) -> SelectionValue?
     /// Renders the row at a given index.
     var rowContent: (Int) -> RowView
-    /// The selection value identifying the row at a given index.
-    var associatedSelectionValue: (Int) -> SelectionValue
     /// The index of the row with a given selection value, if any.
     var find: (SelectionValue) -> Int?
     /// How many rows the list has.
@@ -252,6 +326,28 @@ struct SelectableListView<SelectionValue: Hashable, RowView: View>: TypeSafeView
                 id(item) == selection
             }
         }
+        rowCount = data.count
+    }
+
+    /// Creates a list over a collection that doesn't track a selection.
+    ///
+    /// The selection binding reads as `nil` and swallows writes, and no row
+    /// stands for a selection value, so the platform's list widget is never
+    /// told to select anything and never reports a selection back.
+    ///
+    /// - Parameters:
+    ///   - data: A collection of values to construct the list from.
+    ///   - rowContent: A view builder that renders a single row of the list.
+    init<Data: RandomAccessCollection>(
+        unselectable data: Data,
+        @ViewBuilder rowContent: @escaping (Data.Element) -> RowView
+    ) where Data.Index == Int {
+        selection = Binding(get: { nil }, set: { _ in })
+        associatedSelectionValue = { _ in nil }
+        self.rowContent = { index in
+            rowContent(data[index])
+        }
+        find = { _ in nil }
         rowCount = data.count
     }
 
@@ -373,7 +469,10 @@ struct SelectableListView<SelectionValue: Hashable, RowView: View>: TypeSafeView
 
         backend.setSize(of: widget, to: layout.size.vector)
         backend.setSelectionHandler(forSelectableListView: widget) { selectedIndex in
-            selection.wrappedValue = associatedSelectionValue(selectedIndex)
+            guard let value = associatedSelectionValue(selectedIndex) else {
+                return
+            }
+            selection.wrappedValue = value
         }
 
         let selectedIndex: Int?

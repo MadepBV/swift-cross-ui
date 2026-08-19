@@ -1,5 +1,5 @@
 /// The visibility of a component.
-public enum Visibility: Sendable {
+public enum Visibility: Hashable, CaseIterable, Sendable {
     /// The component is automatically hidden or shown based on context.
     case automatic
     /// The component is hidden.

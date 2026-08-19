@@ -9,6 +9,12 @@ public struct TextField: ElementaryView, View {
     private var placeholder: String
     /// The field's content.
     @Binding private var text: String
+    /// The axis the field grows along.
+    ///
+    /// A horizontal field is a single line of text. A vertical one wraps and
+    /// grows downwards as the user types; see ``init(_:text:prompt:axis:)`` for
+    /// what that costs.
+    private var axis: Axis = .horizontal
     /// Whether a string that the user has typed already represents the bound
     /// value, in which case the field's content is left exactly as they typed
     /// it instead of being replaced with the formatted value.
@@ -20,14 +26,52 @@ public struct TextField: ElementaryView, View {
     /// `nil` for the initializers that bind straight to a string.
     private var representsBoundValue: ((String) -> Bool)? = nil
 
-    /// Creates an editable text field with a given placeholder.
+    /// Creates an editable text field.
+    ///
+    /// The title is what the field shows while it's empty, unless a `prompt` is
+    /// given, in which case the prompt is shown instead:
+    ///
+    /// ```swift
+    /// TextField("Description", text: $description, prompt: Text("Optional"))
+    /// ```
+    ///
+    /// A field with a `.vertical` axis wraps its content and grows downwards as
+    /// the user types, instead of scrolling a single line sideways:
+    ///
+    /// ```swift
+    /// TextField("Description", text: $description, axis: .vertical)
+    /// ```
+    ///
+    /// - Note: A vertical field is backed by the same multi-line text editor
+    ///   widget that ``TextEditor`` uses, which costs it two things that the
+    ///   single-line field has: no backend can show a placeholder in one, so
+    ///   `title` and `prompt` are not displayed, and none of them report
+    ///   submission, so ``SwiftCrossUI/View/onSubmit(_:)`` never fires for it.
+    ///   ``SwiftCrossUI/View/lineLimit(_:)-(ClosedRange<Int>)`` doesn't bound
+    ///   its height either; it grows to fit whatever it holds.
+    ///
+    /// - Important: The axis is fixed for as long as the field is on screen.
+    ///   SwiftCrossUI creates a view's widget once and updates it in place, and
+    ///   a single-line field and a multi-line editor are different widgets, so
+    ///   `axis` has to be a constant at each call site rather than something
+    ///   computed from state that changes.
     ///
     /// - Parameters:
-    ///   - placeholder: The label to show when the field is empty.
+    ///   - placeholder: The label to show when the field is empty, and the
+    ///     field's accessible name.
     ///   - text: The field's content.
-    public init(_ placeholder: String = "", text: Binding<String>) {
-        self.placeholder = placeholder
+    ///   - prompt: Guidance shown in place of `placeholder` while the field is
+    ///     empty.
+    ///   - axis: The axis the field grows along.
+    public init(
+        _ placeholder: String = "",
+        text: Binding<String>,
+        prompt: Text? = nil,
+        axis: Axis = .horizontal
+    ) {
+        self.placeholder = prompt?.string ?? placeholder
         self._text = text
+        self.axis = axis
     }
 
     /// Creates an editable text field with a given placeholder.
@@ -144,7 +188,12 @@ public struct TextField: ElementaryView, View {
     }
 
     func asWidget<Backend: BaseAppBackend>(backend: Backend) -> Backend.Widget {
-        return backend.createTextField()
+        switch axis {
+            case .horizontal:
+                return backend.createTextField()
+            case .vertical:
+                return backend.createTextEditor()
+        }
     }
 
     func computeLayout<Backend: BaseAppBackend>(
@@ -153,6 +202,15 @@ public struct TextField: ElementaryView, View {
         environment: EnvironmentValues,
         backend: Backend
     ) -> ViewLayoutResult {
+        guard axis == .horizontal else {
+            return growingLayout(
+                widget,
+                proposedSize: proposedSize,
+                environment: environment,
+                backend: backend
+            )
+        }
+
         let naturalHeight = backend.naturalSize(of: widget).y
         let size = ViewSize(
             proposedSize.width ?? Self.idealWidth,
@@ -163,12 +221,62 @@ public struct TextField: ElementaryView, View {
         return ViewLayoutResult.leafView(size: size)
     }
 
+    /// The layout of a field that grows along the vertical axis.
+    ///
+    /// The field takes the width it's offered and asks the backend how tall its
+    /// content is at that width, so that it grows a line at a time as the user
+    /// types. This mirrors ``TextEditor``'s layout, because it's the same
+    /// widget underneath.
+    ///
+    /// - Parameters:
+    ///   - widget: The field's underlying widget.
+    ///   - proposedSize: The size suggested by the parent container.
+    ///   - environment: The current environment.
+    ///   - backend: The app's backend.
+    /// - Returns: The field's computed layout.
+    private func growingLayout<Backend: BaseAppBackend>(
+        _ widget: Backend.Widget,
+        proposedSize: ProposedViewSize,
+        environment: EnvironmentValues,
+        backend: Backend
+    ) -> ViewLayoutResult {
+        // Resolved once so that the binding isn't read repeatedly.
+        let content = text
+        let width = proposedSize.width ?? Self.idealWidth
+
+        // An infinite proposal means the same thing to text as an unspecified
+        // one, and the width is clamped positive for the same reason ``Text``
+        // clamps it: backends measure a non-positive width poorly.
+        let contentSize = backend.size(
+            of: content,
+            whenDisplayedIn: widget,
+            proposedWidth: width == .infinity ? nil : max(1, LayoutSystem.roundSize(width)),
+            proposedHeight: nil,
+            environment: environment
+        )
+        let size = ViewSize(
+            max(width, Double(contentSize.x)),
+            max(Double(contentSize.y), Double(backend.naturalSize(of: widget).y))
+        )
+        return ViewLayoutResult.leafView(size: size)
+    }
+
     func commit<Backend: BaseAppBackend>(
         _ widget: Backend.Widget,
         layout: ViewLayoutResult,
         environment: EnvironmentValues,
         backend: Backend
     ) {
+        guard axis == .horizontal else {
+            commitGrowingField(
+                widget,
+                layout: layout,
+                environment: environment,
+                backend: backend
+            )
+            return
+        }
+
         backend.updateTextField(
             widget,
             placeholder: placeholder,
@@ -202,6 +310,49 @@ public struct TextField: ElementaryView, View {
         let contentIsUpToDate = representsBoundValue?(content) ?? false
         if text != content && !contentIsUpToDate {
             backend.setContent(ofTextField: widget, to: text)
+        }
+
+        backend.setSize(of: widget, to: layout.size.vector)
+    }
+
+    /// Commits the layout of a field that grows along the vertical axis.
+    ///
+    /// The placeholder and the submit handler are dropped here: the backends'
+    /// multi-line editors take neither. See ``init(_:text:prompt:axis:)``.
+    ///
+    /// - Parameters:
+    ///   - widget: The field's underlying widget.
+    ///   - layout: The layout to apply.
+    ///   - environment: The current environment.
+    ///   - backend: The app's backend.
+    private func commitGrowingField<Backend: BaseAppBackend>(
+        _ widget: Backend.Widget,
+        layout: ViewLayoutResult,
+        environment: EnvironmentValues,
+        backend: Backend
+    ) {
+        backend.updateTextEditor(widget, environment: environment) { newValue in
+            #if DEBUG
+                // Debug-only for the reason spelled out in `commit`.
+                if self.text == newValue {
+                    logger.warning(
+                        """
+                        Unnecessary write to text Binding of TextField detected, \
+                        please open an issue at \(Meta.issueReportingURL) \
+                        so we can fix it for \(type(of: backend)).
+                        """
+                    )
+                }
+            #endif
+
+            self.text = newValue
+        }
+
+        let text = text
+        let content = backend.getContent(ofTextEditor: widget)
+        let contentIsUpToDate = representsBoundValue?(content) ?? false
+        if text != content && !contentIsUpToDate {
+            backend.setContent(ofTextEditor: widget, to: text)
         }
 
         backend.setSize(of: widget, to: layout.size.vector)

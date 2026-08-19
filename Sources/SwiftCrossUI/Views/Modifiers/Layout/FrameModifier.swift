@@ -1,3 +1,5 @@
+import Foundation
+
 extension View {
     /// Positions this view within an invisible frame having the specified
     /// minimum size constraints.
@@ -16,21 +18,30 @@ extension View {
         alignment: Alignment = .center
     ) -> some View {
         return frame(
-            width: width.map(Double.init),
-            height: height.map(Double.init),
+            width: width.map { width in CGFloat(width) },
+            height: height.map { height in CGFloat(height) },
             alignment: alignment
         )
     }
 
+    /// Positions this view within an invisible frame of an exact size.
+    ///
+    /// - Parameters:
+    ///   - width: The frame's exact width. `nil` lets the view choose its own
+    ///     width instead.
+    ///   - height: The frame's exact height. `nil` lets the view choose its own
+    ///     height instead.
+    ///   - alignment: How to align the view within the frame.
+    /// - Returns: The view, wrapped in a frame.
     public func frame(
-        width: Double? = nil,
-        height: Double? = nil,
+        width: CGFloat? = nil,
+        height: CGFloat? = nil,
         alignment: Alignment = .center
     ) -> some View {
         return StrictFrameView(
             self,
-            width: width,
-            height: height,
+            width: width.map { width in Double(width) },
+            height: height.map { height in Double(height) },
             alignment: alignment
         )
     }
@@ -61,40 +72,58 @@ extension View {
     public func frame(
         minWidth: Int? = nil,
         idealWidth: Int? = nil,
-        maxWidth: Double? = nil,
+        maxWidth: CGFloat? = nil,
         minHeight: Int? = nil,
         idealHeight: Int? = nil,
-        maxHeight: Double? = nil,
+        maxHeight: CGFloat? = nil,
         alignment: Alignment = .center
     ) -> some View {
         return frame(
-            minWidth: minWidth.map(Double.init),
-            idealWidth: idealWidth.map(Double.init),
+            minWidth: minWidth.map { value in CGFloat(value) },
+            idealWidth: idealWidth.map { value in CGFloat(value) },
             maxWidth: maxWidth,
-            minHeight: minHeight.map(Double.init),
-            idealHeight: idealHeight.map(Double.init),
+            minHeight: minHeight.map { value in CGFloat(value) },
+            idealHeight: idealHeight.map { value in CGFloat(value) },
             maxHeight: maxHeight,
             alignment: alignment
         )
     }
 
+    /// Positions this view within an invisible frame having the specified size
+    /// constraints.
+    ///
+    /// - Parameters:
+    ///   - minWidth: The frame's minimum width. `nil` means the frame inherits
+    ///     the minimum width of its content.
+    ///   - idealWidth: The frame's ideal width. `nil` lets the frame choose its
+    ///     own ideal width instead.
+    ///   - maxWidth: The frame's maximum width. `nil` means the frame inherits
+    ///     the maximum width of its content.
+    ///   - minHeight: The frame's minimum height. `nil` means the frame
+    ///     inherits the minimum height of its content.
+    ///   - idealHeight: The frame's ideal height. `nil` lets the frame choose
+    ///     its own ideal height instead.
+    ///   - maxHeight: The frame's maximum height. `nil` means the frame
+    ///     inherits the maximum height of its content.
+    ///   - alignment: How to align the view within the frame.
+    /// - Returns: The view, wrapped in a frame.
     public func frame(
-        minWidth: Double? = nil,
-        idealWidth: Double? = nil,
-        maxWidth: Double? = nil,
-        minHeight: Double? = nil,
-        idealHeight: Double? = nil,
-        maxHeight: Double? = nil,
+        minWidth: CGFloat? = nil,
+        idealWidth: CGFloat? = nil,
+        maxWidth: CGFloat? = nil,
+        minHeight: CGFloat? = nil,
+        idealHeight: CGFloat? = nil,
+        maxHeight: CGFloat? = nil,
         alignment: Alignment = .center
     ) -> some View {
         return FlexibleFrameView(
             self,
-            minWidth: minWidth,
-            idealWidth: idealWidth,
-            maxWidth: maxWidth,
-            minHeight: minHeight,
-            idealHeight: idealHeight,
-            maxHeight: maxHeight,
+            minWidth: minWidth.map { value in Double(value) },
+            idealWidth: idealWidth.map { value in Double(value) },
+            maxWidth: maxWidth.map { value in Double(value) },
+            minHeight: minHeight.map { value in Double(value) },
+            idealHeight: idealHeight.map { value in Double(value) },
+            maxHeight: maxHeight.map { value in Double(value) },
             alignment: alignment
         )
     }

@@ -72,6 +72,29 @@ extension AppKitBackend {
         )
     }
 
+    /// Applies a path's fill rule to an `NSBezierPath`.
+    ///
+    /// Every other backend honours ``SwiftCrossUI/FillRule``, so AppKit does
+    /// too; without this an even-odd path would be filled with the non-zero
+    /// winding rule that `NSBezierPath` defaults to, and rings drawn as two
+    /// nested subpaths would come out solid.
+    ///
+    /// - Parameters:
+    ///   - fillRule: The fill rule to apply.
+    ///   - path: The path to apply the fill rule to.
+    func applyFillRule(
+        _ fillRule: SwiftCrossUI.FillRule,
+        to path: NSBezierPath
+    ) {
+        path.windingRule =
+            switch fillRule {
+                case .evenOdd:
+                    .evenOdd
+                case .winding:
+                    .nonZero
+            }
+    }
+
     public func updatePath(
         _ path: Path,
         _ source: SwiftCrossUI.Path,
@@ -80,6 +103,7 @@ extension AppKitBackend {
         environment: EnvironmentValues
     ) {
         applyStrokeStyle(source.strokeStyle, to: path)
+        applyFillRule(source.fillRule, to: path)
 
         if pointsChanged {
             path.removeAllPoints()

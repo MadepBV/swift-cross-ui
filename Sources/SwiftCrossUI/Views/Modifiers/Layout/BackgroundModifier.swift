@@ -22,6 +22,24 @@ extension View {
     }
 }
 
+extension View where Self == Color {
+    /// The colour a window or document draws behind its content.
+    ///
+    /// Exists so that ``View/background(_:)`` can be reached with SwiftUI's
+    /// leading-dot spelling, `.background(.background)`. SwiftUI resolves that
+    /// dot against `ShapeStyle`; SwiftCrossUI has no `ShapeStyle`, and
+    /// ``View/background(_:)`` takes a view, so the same name is offered here
+    /// instead. The call site is spelled identically either way.
+    ///
+    /// - Note: A flat adaptive colour. SwiftUI's `BackgroundStyle` resolves
+    ///   against the surrounding container (a sheet, a sidebar and a window
+    ///   each give it a different value); reproducing that needs a real
+    ///   `ShapeStyle` with an environment-aware `resolve` step.
+    public static var background: Color {
+        Color.adaptive(light: Color(white: 1.0), dark: Color(white: 0.12))
+    }
+}
+
 struct BackgroundModifier<Background: View, Foreground: View>: TypeSafeView {
     typealias Children = TupleView2<Background, Foreground>.Children
 

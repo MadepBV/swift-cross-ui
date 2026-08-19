@@ -56,7 +56,12 @@ public struct EnvironmentValues {
     var allowLayoutCaching: Bool = false
 
     /// Backing storage for observable subscript
-    private var observableObjects: [ObjectIdentifier: any ObservableObject]
+    ///
+    /// Typed as `AnyObject` rather than `any ObservableObject` so that classes
+    /// declared with the standard library's `@Observable` can live here too;
+    /// they're tracked through `Observation` instead of through
+    /// ``ObservableObject/didChange``. See the `observable` subscript below.
+    private var observableObjects: [ObjectIdentifier: AnyObject]
 
     /// Gets an environment value given an environment key's metatype.
     ///
@@ -72,7 +77,22 @@ public struct EnvironmentValues {
         }
     }
 
-    public subscript<T: ObservableObject>(observable key: T.Type) -> T? {
+    /// Gets or sets the object of a given type held in the environment.
+    ///
+    /// Objects are keyed by their exact type, which is how
+    /// ``Environment/init(_:)`` finds them again.
+    ///
+    /// The key is only required to be a class, not an ``ObservableObject``, so
+    /// that a class declared with the standard library's `@Observable` can be
+    /// put in the environment as well. Neither kind of object is subscribed to
+    /// here: an ``ObservableObject`` is observed by whichever view owns it,
+    /// and an `@Observable` object invalidates the views that read its
+    /// properties through ``ViewObservationTracking``.
+    ///
+    /// - Parameter key: The type of the object.
+    /// - Returns: The object of that type in the environment, or `nil` if
+    ///   there isn't one.
+    public subscript<T: AnyObject>(observable key: T.Type) -> T? {
         get {
             guard let value = observableObjects[ObjectIdentifier(T.self)] as? T? else {
                 let message =
@@ -85,6 +105,20 @@ public struct EnvironmentValues {
         set {
             observableObjects[ObjectIdentifier(T.self)] = newValue
         }
+    }
+
+    /// Looks an object up by its exact type without a generic constraint.
+    ///
+    /// ``Environment``'s `Value` is unconstrained (it's a key path's value
+    /// type in the common case), so an ``Environment`` holding an object can't
+    /// reach ``subscript(observable:)`` — which needs `Value: AnyObject` —
+    /// without first opening an existential metatype. This does the same
+    /// lookup with no constraint at all so that it can.
+    ///
+    /// - Parameter type: The type the object was stored under.
+    /// - Returns: The object stored under `type`, or `nil` if there isn't one.
+    func observableObject(ofType type: Any.Type) -> AnyObject? {
+        observableObjects[ObjectIdentifier(type)]
     }
 
     /// Brings the current window forward.

@@ -94,15 +94,22 @@ public struct NavigationStack<Detail: View>: View {
     }
 
     public var body: some View {
-        // Resolved once so that the environment value captures just the
-        // binding rather than the whole stack.
+        // Resolved once so that the environment values capture just the
+        // bindings rather than the whole stack.
         let destinations = $viewDestinations
+        let path = self.path
 
         visibleContent
             .environment(
                 \.pushNavigationDestination,
                 NavigationDestinationPusher { destination in
                     destinations.wrappedValue.append(destination)
+                }
+            )
+            .environment(
+                \.appendToNavigationPath,
+                NavigationPathAppender { value in
+                    path.wrappedValue.append(value)
                 }
             )
     }
@@ -255,10 +262,38 @@ struct NavigationDestinationPusher {
     }
 }
 
+/// Appends a value to the path of the ``NavigationStack`` that published it.
+///
+/// This is how a ``NavigationLink`` written without a `path:` argument finds
+/// the path to append to — SwiftUI's spelling, where the stack and the link
+/// agree through the view hierarchy rather than through a binding that the
+/// author threads between them. Wrapped in a type of its own for the same
+/// reason ``NavigationDestinationPusher`` is: the environment's values have to
+/// be `Sendable`, and a bare closure isn't.
+@MainActor
+struct NavigationPathAppender {
+    /// Appends a value to the stack's path.
+    var appendValue: (any Codable) -> Void
+
+    /// Appends a value to the stack's path.
+    ///
+    /// - Parameter value: The value to append.
+    func callAsFunction(_ value: any Codable) {
+        appendValue(value)
+    }
+}
+
 extension EnvironmentValues {
     /// Pushes a view onto the innermost enclosing ``NavigationStack``.
     ///
     /// `nil` when there's no enclosing stack, in which case a closure-form
     /// ``NavigationLink`` has nowhere to navigate to and says so.
     @Entry var pushNavigationDestination: NavigationDestinationPusher? = nil
+
+    /// Appends a value to the path of the innermost enclosing
+    /// ``NavigationStack``.
+    ///
+    /// `nil` when there's no enclosing stack, in which case a path-less
+    /// value-form ``NavigationLink`` has nowhere to navigate to and says so.
+    @Entry var appendToNavigationPath: NavigationPathAppender? = nil
 }

@@ -12,6 +12,45 @@ public enum FillRule: Sendable {
     case winding
 }
 
+/// The options that decide which regions of a path a fill covers.
+///
+/// This is SwiftUI's `FillStyle`, and it is what
+/// ``GraphicsContext/fill(_:with:style:)`` takes. It selects between the two
+/// ``FillRule`` cases and carries an antialiasing flag.
+///
+/// ```swift
+/// context.fill(ring, with: .color(.black), style: FillStyle(eoFill: true))
+/// ```
+public struct FillStyle: Equatable, Sendable {
+    /// Whether the even-odd rule decides which regions the fill covers.
+    ///
+    /// `false`, the default, means the non-zero winding rule, exactly as in
+    /// SwiftUI.
+    public var isEOFilled: Bool
+
+    /// Whether the fill is antialiased.
+    ///
+    /// - Note: No SwiftCrossUI backend exposes a per-fill antialiasing switch,
+    ///   so this is carried for source compatibility and otherwise ignored.
+    public var isAntialiased: Bool
+
+    /// Creates a fill style.
+    ///
+    /// - Parameters:
+    ///   - eoFill: Whether to fill using the even-odd rule rather than the
+    ///     non-zero winding rule.
+    ///   - antialiased: Whether the fill is antialiased.
+    public init(eoFill: Bool = false, antialiased: Bool = true) {
+        self.isEOFilled = eoFill
+        self.isAntialiased = antialiased
+    }
+
+    /// The fill rule that this style selects.
+    var fillRule: FillRule {
+        isEOFilled ? .evenOdd : .winding
+    }
+}
+
 /// A type representing an affine transformation on a 2-D point.
 ///
 /// Performing an affine transform consists of multiplying the matrix ``linearTransform``
@@ -494,6 +533,26 @@ extension Path.Rect {
             origin: CGPoint(x: x, y: y),
             size: CGSize(width: width, height: height)
         )
+    }
+}
+
+extension Path {
+    /// Creates a path that encloses the given rectangle.
+    ///
+    /// This is SwiftUI's rectangular initializer, and it is equivalent to
+    /// calling ``addRect(_:)`` on an empty path:
+    ///
+    /// ```swift
+    /// context.fill(Path(bounds), with: .color(.white))
+    /// ```
+    ///
+    /// The rectangle is standardized, so one with a negative width or height
+    /// encloses the same region as its positive-sized equivalent.
+    ///
+    /// - Parameter rect: The rectangle to enclose.
+    public init(_ rect: CGRect) {
+        self.init()
+        addRect(rect)
     }
 }
 

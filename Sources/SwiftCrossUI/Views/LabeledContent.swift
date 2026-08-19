@@ -1,3 +1,5 @@
+import Foundation
+
 /// A view that pairs a label with some associated content.
 ///
 /// ``LabeledContent`` lays its label out along the leading edge of the
@@ -72,7 +74,13 @@ public struct LabeledContent<Label: View, Content: View>: View {
     public var body: some View {
         HStack(alignment: .center, spacing: 0) {
             label
-                .frame(width: labelWidth, alignment: .leading)
+                // `frame(width:height:alignment:)` takes `CGFloat?` (as
+                // SwiftUI's does), and the implicit `Double`/`CGFloat`
+                // conversion doesn't reach inside an optional.
+                .frame(
+                    width: labelWidth.map { width in CGFloat(width) },
+                    alignment: .leading
+                )
             Spacer(minLength: Self.minimumSpacing)
             content
         }
