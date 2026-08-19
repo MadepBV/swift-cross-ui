@@ -41,12 +41,16 @@ public struct Group<Content: View>: View {
         var cache = (children as? TupleViewChildren)?.stackLayoutCache ?? StackLayoutCache.initial
         let result = LayoutSystem.computeStackLayout(
             container: widget,
-            children: layoutableChildren(backend: backend, children: children),
+            children: LayoutSystem.markingGroupingContainers(
+                layoutableChildren(backend: backend, children: children),
+                using: children
+            ),
             cache: &cache,
             proposedSize: proposedSize,
             environment: environment,
             backend: backend,
-            inheritStackLayoutParticipation: true
+            inheritStackLayoutParticipation: true,
+            participatesInParentLayout: true
         )
         (children as? TupleViewChildren)?.stackLayoutCache = cache
         return result
@@ -62,12 +66,20 @@ public struct Group<Content: View>: View {
         var cache = (children as? TupleViewChildren)?.stackLayoutCache ?? StackLayoutCache.initial
         LayoutSystem.commitStackLayout(
             container: widget,
-            children: layoutableChildren(backend: backend, children: children),
+            children: LayoutSystem.markingGroupingContainers(
+                layoutableChildren(backend: backend, children: children),
+                using: children
+            ),
             cache: &cache,
             layout: layout,
             environment: environment,
-            backend: backend
+            backend: backend,
+            participatesInParentLayout: true
         )
         (children as? TupleViewChildren)?.stackLayoutCache = cache
     }
 }
+
+/// ``Group`` exists purely to group views together, so an enclosing container
+/// may lay its contents out itself.
+extension Group: GroupingContainer {}

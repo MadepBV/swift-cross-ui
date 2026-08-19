@@ -10,6 +10,10 @@ public struct ForEach<Items: Collection, ID: Hashable, Child> {
     var idKeyPath: KeyPath<Items.Element, ID>?
 }
 
+/// ``ForEach`` groups its items together without imposing a layout of its own,
+/// so an enclosing container may lay the items out itself.
+extension ForEach: GroupingContainer {}
+
 extension ForEach: TypeSafeView, View where Child: View {
     typealias Children = ForEachViewChildren<Items, ID, Child>
 
@@ -193,13 +197,15 @@ extension ForEach: TypeSafeView, View where Child: View {
             }
         }
 
+        markGroupingContainers(in: children)
         return LayoutSystem.computeStackLayout(
             container: widget,
             children: children.layoutableChildren,
             cache: &children.stackLayoutCache,
             proposedSize: proposedSize,
             environment: environment,
-            backend: backend
+            backend: backend,
+            participatesInParentLayout: true
         )
     }
 
@@ -262,6 +268,7 @@ extension ForEach: TypeSafeView, View where Child: View {
         }
 
         children.layoutableChildren = layoutableChildren
+        markGroupingContainers(in: children)
 
         return LayoutSystem.computeStackLayout(
             container: widget,
@@ -269,8 +276,26 @@ extension ForEach: TypeSafeView, View where Child: View {
             cache: &children.stackLayoutCache,
             proposedSize: proposedSize,
             environment: environment,
-            backend: backend
+            backend: backend,
+            participatesInParentLayout: true
         )
+    }
+
+    /// Records whether the items are themselves grouping containers, so that
+    /// an enclosing ``ContainerChildLayout`` reaches them if they are.
+    ///
+    /// Every item has the same view type, so this is a single static check
+    /// rather than a per-item one.
+    ///
+    /// - Parameter children: The `ForEach`'s children.
+    @MainActor
+    func markGroupingContainers(in children: Children) {
+        guard Child.self is any GroupingContainer.Type else {
+            return
+        }
+        for index in children.layoutableChildren.indices {
+            children.layoutableChildren[index].isGroupingContainer = true
+        }
     }
 
     func commit<Backend: BaseAppBackend>(
@@ -298,7 +323,8 @@ extension ForEach: TypeSafeView, View where Child: View {
             cache: &children.stackLayoutCache,
             layout: layout,
             environment: environment,
-            backend: backend
+            backend: backend,
+            participatesInParentLayout: true
         )
 
         // Reset layoutable children cache so that we recompute them during the

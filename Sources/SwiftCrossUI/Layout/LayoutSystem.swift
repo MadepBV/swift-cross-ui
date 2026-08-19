@@ -57,16 +57,22 @@ public enum LayoutSystem {
             ) -> ViewLayoutResult
         private var _commit: @MainActor () -> ViewLayoutResult
         var tag: String?
+        /// Whether the child is a ``GroupingContainer`` (such as ``ForEach`` or
+        /// ``Group``), and may therefore be handed an enclosing
+        /// ``ContainerChildLayout``.
+        var isGroupingContainer: Bool
 
         public init(
             computeLayout: @escaping @MainActor (ProposedViewSize, EnvironmentValues)
                 -> ViewLayoutResult,
             commit: @escaping @MainActor () -> ViewLayoutResult,
-            tag: String? = nil
+            tag: String? = nil,
+            isGroupingContainer: Bool = false
         ) {
             self.computeLayout = computeLayout
             self._commit = commit
             self.tag = tag
+            self.isGroupingContainer = isGroupingContainer
         }
 
         init<Child: View>(
@@ -83,7 +89,8 @@ public enum LayoutSystem {
                 },
                 commit: {
                     node.commit()
-                }
+                },
+                isGroupingContainer: Child.self is any GroupingContainer.Type
             )
         }
 
@@ -101,11 +108,50 @@ public enum LayoutSystem {
         }
     }
 
+    /// Annotates layoutable children with whether they wrap a
+    /// ``GroupingContainer``, which is what decides whether an enclosing
+    /// ``ContainerChildLayout`` gets published to them.
+    ///
+    /// Layoutable children are built in generated code that doesn't know about
+    /// grouping containers, so containers that can publish a layout (or hand
+    /// one on) annotate their children themselves.
+    ///
+    /// - Parameters:
+    ///   - children: The layoutable children to annotate.
+    ///   - nodes: The children that `children` was derived from, in the same
+    ///     order.
+    /// - Returns: The annotated children, or `children` unchanged if the two
+    ///   collections don't line up.
+    @MainActor
+    static func markingGroupingContainers(
+        _ children: [LayoutableChild],
+        using nodes: any ViewGraphNodeChildren
+    ) -> [LayoutableChild] {
+        let erasedNodes = nodes.erasedNodes
+        guard erasedNodes.count == children.count else {
+            return children
+        }
+
+        var children = children
+        for index in children.indices {
+            children[index].isGroupingContainer =
+                erasedNodes[index].viewType is any GroupingContainer.Type
+        }
+        return children
+    }
+
     /// - Parameter inheritStackLayoutParticipation: If `true`, the stack layout
     ///   will have ``ViewSize/participateInStackLayoutsWhenEmpty`` set to `true`
     ///   if all of its children have it set to true. This allows views such as
     ///   ``Group`` to avoid changing stack layout participation (since ``Group``
     ///   is meant to appear completely invisible to the layout system).
+    /// - Parameter participatesInParentLayout: If `true`, and an enclosing
+    ///   container has published an ``EnvironmentValues/containerChildLayout``,
+    ///   the children are handed to that layout as individual participants
+    ///   instead of being laid out as a stack. Only grouping containers such as
+    ///   ``ForEach`` and ``Group`` should pass `true`; a container that imposes
+    ///   a layout of its own must keep the default so that its children stay
+    ///   its own.
     @MainActor
     static func computeStackLayout<Backend: BaseAppBackend>(
         container: Backend.Widget,
@@ -114,8 +160,24 @@ public enum LayoutSystem {
         proposedSize: ProposedViewSize,
         environment: EnvironmentValues,
         backend: Backend,
-        inheritStackLayoutParticipation: Bool = false
+        inheritStackLayoutParticipation: Bool = false,
+        participatesInParentLayout: Bool = false
     ) -> ViewLayoutResult {
+        if participatesInParentLayout, let parentLayout = environment.containerChildLayout {
+            return computeParticipantLayout(
+                children: children,
+                cache: &cache,
+                environment: environment,
+                parentLayout: parentLayout
+            )
+        }
+
+        // A container that lays its own children out must not let an enclosing
+        // participation layout reach past it, otherwise a `ForEach` nested
+        // inside one of that container's children would join the enclosing
+        // layout instead of this one.
+        let environment = environment.with(\.containerChildLayout, nil)
+
         let spacing = environment.layoutSpacing
         let orientation = environment.layoutOrientation
         let perpendicularOrientation = orientation.perpendicular
@@ -209,6 +271,71 @@ public enum LayoutSystem {
             participateInStackLayoutsWhenEmpty: renderedChildren
                 .contains(where: \.participateInStackLayoutsWhenEmpty)
         )
+    }
+
+    /// Hands a grouping container's children to the enclosing layout that has
+    /// claimed them, instead of laying them out as a stack.
+    ///
+    /// - Parameters:
+    ///   - children: The grouping container's children.
+    ///   - cache: The container's stack layout cache. Reset to a trivial value
+    ///     so that it stays consistent if the container later goes back to
+    ///     laying its own children out.
+    ///   - environment: The environment to lay the children out in.
+    ///   - parentLayout: The enclosing layout that has claimed the children.
+    /// - Returns: The layout that the grouping container should report.
+    @MainActor
+    static func computeParticipantLayout(
+        children: [LayoutableChild],
+        cache: inout StackLayoutCache,
+        environment: EnvironmentValues,
+        parentLayout: any ContainerChildLayout
+    ) -> ViewLayoutResult {
+        var results: [ViewLayoutResult] = []
+        results.reserveCapacity(children.count)
+        for child in children {
+            results.append(parentLayout.addParticipant(child, environment: environment))
+        }
+
+        cache = StackLayoutCache(
+            priorityGroups: [],
+            isHidden: [Bool](repeating: false, count: children.count),
+            totalSpacing: 0,
+            totalReservedSpace: 0,
+            minimumLengths: [Double](repeating: 0, count: children.count),
+            redistributeSpaceOnCommit: false
+        )
+
+        // The container adopts the whole participant area so that participant
+        // positions are valid inside it. Its own size is therefore meaningless
+        // to the enclosing layout, which sizes itself from the participants.
+        return ViewLayoutResult(
+            size: parentLayout.participantAreaSize,
+            childResults: results,
+            participateInStackLayoutsWhenEmpty: true
+        )
+    }
+
+    /// Commits a grouping container's children through the enclosing layout
+    /// that has claimed them.
+    ///
+    /// - Parameters:
+    ///   - container: The grouping container's widget.
+    ///   - children: The grouping container's children.
+    ///   - backend: The app's backend.
+    ///   - parentLayout: The enclosing layout that has claimed the children.
+    @MainActor
+    static func commitParticipantLayout<Backend: BaseAppBackend>(
+        container: Backend.Widget,
+        children: [LayoutableChild],
+        backend: Backend,
+        parentLayout: any ContainerChildLayout
+    ) {
+        backend.setSize(of: container, to: parentLayout.participantAreaSize.vector)
+        for (index, child) in children.enumerated() {
+            let placement = parentLayout.commitNextParticipant(child)
+            backend.setPosition(ofChildAt: index, in: container, to: placement.position)
+        }
     }
 
     /// Computes whether or not we have to redistribute space on commit. Returns true
@@ -321,6 +448,11 @@ public enum LayoutSystem {
         )
     }
 
+    /// - Parameter participatesInParentLayout: If `true`, and an enclosing
+    ///   container has published an ``EnvironmentValues/containerChildLayout``,
+    ///   the children are committed through that layout instead of being
+    ///   placed as a stack. Must match the value passed to the corresponding
+    ///   call to `computeStackLayout`.
     @MainActor
     static func commitStackLayout<Backend: BaseAppBackend>(
         container: Backend.Widget,
@@ -328,8 +460,22 @@ public enum LayoutSystem {
         cache: inout StackLayoutCache,
         layout: ViewLayoutResult,
         environment: EnvironmentValues,
-        backend: Backend
+        backend: Backend,
+        participatesInParentLayout: Bool = false
     ) {
+        if participatesInParentLayout, let parentLayout = environment.containerChildLayout {
+            commitParticipantLayout(
+                container: container,
+                children: children,
+                backend: backend,
+                parentLayout: parentLayout
+            )
+            return
+        }
+
+        // See the matching comment in `computeStackLayout`.
+        let environment = environment.with(\.containerChildLayout, nil)
+
         let size = layout.size
         backend.setSize(of: container, to: size.vector)
 
