@@ -180,7 +180,10 @@ struct DisclosureGroupTests {
         let node = committedNode(for: disclosureGroup(boundTo: source))
         let button = node.widget.firstWidget(ofType: DummyBackend.Button.self)
 
-        #expect(button?.buttonStyle == ButtonStyle.plain)
+        // `any ButtonStyle` isn't `Equatable`, so assert the style's identity
+        // and the chrome it asks the backend for instead.
+        #expect(button?.buttonStyle is PlainButtonStyle)
+        #expect(button?.buttonStyle.kind == .plain)
     }
 
     @MainActor

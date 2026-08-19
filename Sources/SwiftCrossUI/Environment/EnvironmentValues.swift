@@ -454,18 +454,28 @@ extension EnvironmentValues {
     @Entry public var isCircularScreen: Bool = false
 
     /// The display style used by ``Button``.
-    @Entry public var buttonStyle: ButtonStyle?
+    ///
+    /// Set this with ``View/buttonStyle(_:)`` rather than mutating the
+    /// environment directly.
+    @Entry public var buttonStyle: (any ButtonStyle)?
 
     /// The default button style as declared by the backend.
     @MainActor
-    public var defaultButtonStyle: ButtonStyle {
+    public var defaultButtonStyle: any ButtonStyle {
         backend.defaultButtonStyle()
     }
 
     /// The resolved ``ButtonStyle``. Either ``buttonStyle``, or ``defaultButtonStyle`` if nil.
+    ///
+    /// ``DefaultButtonStyle`` resolves to ``defaultButtonStyle`` too, since
+    /// asking for the automatic style is asking for whatever the backend
+    /// would have drawn anyway.
     @MainActor
-    public var resolvedButtonStyle: ButtonStyle {
-        buttonStyle ?? defaultButtonStyle
+    public var resolvedButtonStyle: any ButtonStyle {
+        guard let buttonStyle, !(buttonStyle is DefaultButtonStyle) else {
+            return defaultButtonStyle
+        }
+        return buttonStyle
     }
 
     /// The amount of padding that the current backend applies to the labels of buttons with the current ``ButtonStyle``.

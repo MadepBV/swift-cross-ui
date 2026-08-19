@@ -83,7 +83,7 @@ public final class DummyBackend:
     public class Button: Widget {
         public var label: Widget?
         public var action: (() -> Void)?
-        public var buttonStyle: ButtonStyle = .bordered
+        public var buttonStyle: any ButtonStyle = .bordered
     }
 
     public class ToggleButton: Widget {
@@ -643,7 +643,7 @@ public final class DummyBackend:
         SIMD2<Int>(0, 0)
     }
 
-    public func defaultButtonStyle() -> ButtonStyle {
+    public func defaultButtonStyle() -> any ButtonStyle {
         .bordered
     }
 

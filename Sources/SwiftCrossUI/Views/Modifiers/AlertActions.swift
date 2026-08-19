@@ -49,7 +49,7 @@ enum AlertActions {
             case .button(let button):
                 return [
                     ConfirmationDialogAction(
-                        label: button.body.view0.view0.string,
+                        label: button.title,
                         role: ConfirmationDialogAction.Role(button.role),
                         action: button.action
                     )

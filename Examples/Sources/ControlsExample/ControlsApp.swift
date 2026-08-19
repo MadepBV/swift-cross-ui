@@ -26,6 +26,32 @@ enum BuiltInPickerStyle: CaseIterable, Equatable {
     }
 }
 
+/// The button styles this example lets you flip between.
+///
+/// `ButtonStyle` is a protocol, exactly as it is in SwiftUI, so its concrete
+/// styles are all different types and can't be put in one array. An enum the
+/// example switches over is the idiomatic way to pick between them at
+/// runtime; it also gives the picker something `Hashable` to select.
+enum BuiltInButtonStyle: CaseIterable, Equatable {
+    case automatic
+    case bordered
+    case borderedProminent
+    case borderless
+    case plain
+    case link
+
+    var asButtonStyle: any ButtonStyle {
+        switch self {
+            case .automatic: .automatic
+            case .bordered: .bordered
+            case .borderedProminent: .borderedProminent
+            case .borderless: .borderless
+            case .plain: .plain
+            case .link: .link
+        }
+    }
+}
+
 @main
 @HotReloadable
 struct ControlsApp: App {
@@ -44,7 +70,7 @@ struct ControlsApp: App {
     @State var progressViewSize: Double = 10
     @State var isProgressViewResizable = true
     @State var pickerStyle: BuiltInPickerStyle? = .automatic
-    @State var buttonStyle: ButtonStyle? = nil
+    @State var buttonStyle: BuiltInButtonStyle? = nil
 
     @Environment(\.supportedDatePickerStyles) var supportedDatePickerStyles
     @Environment(\.isPickerStyleSupported) var isPickerStyleSupported
@@ -61,18 +87,17 @@ struct ControlsApp: App {
                                 Text("Default ButtonStyle: \(defaultButtonStyle)")
                                 #if !canImport(Gtk3Backend)
                                     Picker(
-                                        of: [
-                                            ButtonStyle.bordered,
-                                            ButtonStyle.plain,
-                                            ButtonStyle.borderless
-                                        ],
+                                        of: BuiltInButtonStyle.allCases,
                                         selection: $buttonStyle
                                     )
                                 #endif
                                 Button("Click me!") {
                                     count += 1
                                 }
-                                .buttonStyle(buttonStyle)
+                                .buttonStyle(
+                                    buttonStyle?.asButtonStyle
+                                        ?? DefaultButtonStyle()
+                                )
                             } else {
                                 Button("Click me!") {
                                     count += 1

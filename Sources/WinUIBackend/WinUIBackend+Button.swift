@@ -29,7 +29,7 @@ extension WinUIBackend {
         }
     }
 
-    public func defaultButtonStyle() -> ButtonStyle { .bordered }
+    public func defaultButtonStyle() -> any ButtonStyle { .bordered }
 
     func measureBorderedButtonPadding() -> SIMD2<Int> {
         if let borderedButtonPadding { return borderedButtonPadding }

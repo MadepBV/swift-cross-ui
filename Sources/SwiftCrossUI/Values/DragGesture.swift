@@ -177,3 +177,9 @@ public struct DragGesture: Gesture {
         return gesture
     }
 }
+
+extension DragGesture: _ResolvableGesture {
+    package var _resolved: ResolvedGesture {
+        .drag(self)
+    }
+}

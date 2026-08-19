@@ -20,6 +20,8 @@ Employ controls to receive user input.
 ### Related
 
 - ``ButtonStyle``
+- ``ButtonStyleConfiguration``
+- ``View/buttonStyle(_:)``
 - ``DatePickerStyle``
 - ``DatePickerComponents``
 - ``MenuItem``

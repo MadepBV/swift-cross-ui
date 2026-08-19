@@ -18,6 +18,19 @@
 
 - ``View/cornerRadius(_:)``
 
+### Button styles
+
+- ``ButtonStyle``
+- ``ButtonStyleConfiguration``
+- ``View/buttonStyle(_:)``
+- ``DefaultButtonStyle``
+- ``BorderedButtonStyle``
+- ``BorderedProminentButtonStyle``
+- ``BorderlessButtonStyle``
+- ``PlainButtonStyle``
+- ``LinkButtonStyle``
+- ``ButtonStyleKind``
+
 ### Picker styles
 
 - ``PickerStyle``

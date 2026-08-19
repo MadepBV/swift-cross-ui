@@ -92,7 +92,7 @@ extension Button where Label == TupleView1<Text> {
     @MainActor
     public func role(_ role: ConfirmationDialogAction.Role) -> ConfirmationDialogAction {
         ConfirmationDialogAction(
-            label: body.view0.view0.string,
+            label: title,
             role: role,
             action: action
         )
@@ -126,7 +126,7 @@ public struct ConfirmationDialogActionsBuilder {
     ) -> [ConfirmationDialogAction] {
         [
             ConfirmationDialogAction(
-                label: first.body.view0.view0.string,
+                label: first.title,
                 role: ConfirmationDialogAction.Role(first.role),
                 action: first.action
             )
@@ -166,7 +166,7 @@ public struct ConfirmationDialogActionsBuilder {
     ) -> [ConfirmationDialogAction] {
         accumulated + [
             ConfirmationDialogAction(
-                label: next.body.view0.view0.string,
+                label: next.title,
                 role: ConfirmationDialogAction.Role(next.role),
                 action: next.action
             )

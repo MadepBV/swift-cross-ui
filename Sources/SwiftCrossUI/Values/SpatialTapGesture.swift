@@ -112,3 +112,9 @@ public struct SpatialTapGesture: Gesture {
         return gesture
     }
 }
+
+extension SpatialTapGesture: _ResolvableGesture {
+    package var _resolved: ResolvedGesture {
+        .spatialTap(self)
+    }
+}

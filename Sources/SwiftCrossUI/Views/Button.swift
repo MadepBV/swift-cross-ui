@@ -1,6 +1,57 @@
 /// A control that initiates an action.
 public struct Button<Label: View> {
-    public typealias Content = TupleView1<Label>
+    /// A button's label with the environment's ``ButtonStyle`` applied to it.
+    ///
+    /// A built-in style is drawn by the backend, so this renders the label
+    /// untouched and lets the backend put its chrome around it. A style
+    /// defined outside of SwiftCrossUI has no backend counterpart, so this
+    /// renders ``ButtonStyle/makeBody(configuration:)`` instead and the
+    /// backend is asked for ``ButtonStyleKind/plain`` — no chrome — leaving
+    /// the style in sole charge of the button's appearance, exactly as
+    /// SwiftUI does it.
+    public struct StyledLabel: View {
+        /// The style to apply, taken from the environment.
+        @Environment(\.buttonStyle) private var buttonStyle
+
+        /// The button's label.
+        var label: @MainActor () -> Label
+
+        /// The button's role, if it has one.
+        var role: ButtonRole?
+
+        /// Creates a label that applies the environment's button style.
+        ///
+        /// - Parameters:
+        ///   - label: The button's label.
+        ///   - role: The button's role, if it has one.
+        init(label: @escaping @MainActor () -> Label, role: ButtonRole?) {
+            self.label = label
+            self.role = role
+        }
+
+        /// The label with the style applied, if the style is a custom one.
+        private var styledLabel: any View {
+            guard
+                let buttonStyle,
+                !(buttonStyle is any _BuiltinButtonStyle)
+            else {
+                return label()
+            }
+            return buttonStyle.makeBody(
+                configuration: ButtonStyleConfiguration(
+                    label: ButtonStyleConfiguration.Label(label()),
+                    role: role,
+                    isPressed: false
+                )
+            )
+        }
+
+        public var body: some View {
+            AnyView(styledLabel)
+        }
+    }
+
+    public typealias Content = TupleView1<StyledLabel>
     /// The label to show on the button.
     @_spi(Backends) public var label: () -> Label
     /// The action to be performed when the button is clicked.
@@ -65,28 +116,34 @@ public struct Button<Label: View> {
         message: "Use @ViewBuilder init of Button instead and apply a frame modifier to the label."
     )
     public func _buttonWidth(_ width: Int?) -> Button<some View> {
-        return Button<TupleView1<ConstrainedButtonLabel<TupleView1<Label>>>>(
+        let label = self.label
+        return Button<TupleView1<ConstrainedButtonLabel<Label>>>(
             role: role,
             action: action,
-            label: { ConstrainedButtonLabel(content: body, width: width) }
+            label: { ConstrainedButtonLabel(content: label(), width: width) }
         )
     }
 }
 
 @MainActor
 extension Button: TypeSafeView {
-    public var body: TupleView1<Label> {
-        label()
+    public var body: TupleView1<StyledLabel> {
+        StyledLabel(label: label, role: role)
     }
 
-    typealias Children = TupleViewChildren1<Label>
+    typealias Children = TupleViewChildren1<StyledLabel>
 
     func children<Backend: BaseAppBackend>(
         backend: Backend,
         snapshots: [ViewGraphSnapshotter.NodeSnapshot]?,
         environment: EnvironmentValues
     ) -> Children {
-        Children(label(), backend: backend, snapshots: snapshots, environment: environment)
+        Children(
+            body.view0,
+            backend: backend,
+            snapshots: snapshots,
+            environment: environment
+        )
     }
 
     func asWidget<Backend: BaseAppBackend>(
@@ -189,6 +246,20 @@ extension Button: TypeSafeView {
 }
 
 @MainActor
+extension Button where Label == TupleView1<Text> {
+    /// The text shown on the button.
+    ///
+    /// Menus, alerts and confirmation dialogs can only present a button as a
+    /// string, so they read its title back through this. Reaching into
+    /// ``Button/body`` for it isn't supported: the body is where the
+    /// environment's ``ButtonStyle`` gets applied, so its shape depends on
+    /// which style is in effect.
+    @_spi(Backends) public var title: String {
+        label().view0.string
+    }
+}
+
+@MainActor
 extension Button {
     /// Represents the button as a menu item.
     ///
@@ -205,7 +276,7 @@ extension Button {
     /// because there's no menu item that can represent it.
     public var _asMenuItems: [MenuItem] {
         guard let textButton = self as? Button<TupleView1<Text>> else {
-            return body._asMenuItems
+            return label()._asMenuItems
         }
         return [.button(textButton)]
     }

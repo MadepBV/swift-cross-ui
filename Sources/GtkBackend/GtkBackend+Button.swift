@@ -52,7 +52,7 @@ extension GtkBackend {
         }
     }
 
-    public func defaultButtonStyle() -> ButtonStyle {
+    public func defaultButtonStyle() -> any ButtonStyle {
         .bordered
     }
 
