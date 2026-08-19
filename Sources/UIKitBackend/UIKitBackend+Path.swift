@@ -44,6 +44,55 @@ extension UIKitBackend {
             case .bevel:
                 path.lineJoinStyle = .bevel
         }
+
+        applyDash(strokeStyle, to: path)
+    }
+
+    /// Applies a stroke style's dash pattern to a `UIBezierPath`.
+    ///
+    /// - Parameters:
+    ///   - strokeStyle: The stroke style to take the dash pattern from.
+    ///   - path: The path to apply the dash pattern to.
+    func applyDash(_ strokeStyle: StrokeStyle, to path: UIBezierPath) {
+        guard let dash = strokeStyle.resolvedDash else {
+            // `nil` clears any dash pattern the path already had, which
+            // matters because paths are reused across updates.
+            path.setLineDash(nil, count: 0, phase: 0.0)
+            return
+        }
+
+        var pattern = dash.map { length in CGFloat(length) }
+        path.setLineDash(
+            &pattern,
+            count: pattern.count,
+            phase: CGFloat(strokeStyle.dashPhase)
+        )
+    }
+
+    /// Copies a path's dash pattern onto the layer that draws it.
+    ///
+    /// `CAShapeLayer` keeps its own copy of the dash pattern rather than
+    /// reading it off the `CGPath`, so it has to be told separately.
+    ///
+    /// - Parameters:
+    ///   - path: The path holding the dash pattern.
+    ///   - shapeLayer: The layer to copy the dash pattern onto.
+    func copyDash(from path: UIBezierPath, to shapeLayer: CAShapeLayer) {
+        var count = 0
+        path.getLineDash(nil, count: &count, phase: nil)
+        guard count > 0 else {
+            shapeLayer.lineDashPattern = nil
+            shapeLayer.lineDashPhase = 0.0
+            return
+        }
+
+        var pattern = [CGFloat](repeating: 0.0, count: count)
+        var phase: CGFloat = 0.0
+        path.getLineDash(&pattern, count: &count, phase: &phase)
+        shapeLayer.lineDashPattern = pattern.map { length in
+            NSNumber(value: Double(length))
+        }
+        shapeLayer.lineDashPhase = phase
     }
 
     public func updatePath(
@@ -164,6 +213,8 @@ extension UIKitBackend {
                 )
                 shapeLayer.lineCap = .butt
         }
+
+        copyDash(from: path, to: shapeLayer)
 
         shapeLayer.strokeColor = strokeColor.cgColor
         shapeLayer.fillColor = fillColor.cgColor

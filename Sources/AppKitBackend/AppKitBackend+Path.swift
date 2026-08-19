@@ -47,6 +47,29 @@ extension AppKitBackend {
             case .bevel:
                 path.lineJoinStyle = .bevel
         }
+
+        applyDash(strokeStyle, to: path)
+    }
+
+    /// Applies a stroke style's dash pattern to an `NSBezierPath`.
+    ///
+    /// - Parameters:
+    ///   - strokeStyle: The stroke style to take the dash pattern from.
+    ///   - path: The path to apply the dash pattern to.
+    func applyDash(_ strokeStyle: StrokeStyle, to path: NSBezierPath) {
+        guard let dash = strokeStyle.resolvedDash else {
+            // `nil` clears any dash pattern the path already had, which
+            // matters because paths are reused across updates.
+            path.setLineDash(nil, count: 0, phase: 0.0)
+            return
+        }
+
+        var pattern = dash.map { length in CGFloat(length) }
+        path.setLineDash(
+            &pattern,
+            count: pattern.count,
+            phase: CGFloat(strokeStyle.dashPhase)
+        )
     }
 
     public func updatePath(

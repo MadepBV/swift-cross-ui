@@ -1,35 +1,6 @@
 import Foundation // for sin and cos
 
-public enum StrokeCap: Sendable {
-    /// The stroke ends square exactly at the last point.
-    case butt
-    /// The stroke ends with a semicircle.
-    case round
-    /// The stroke ends square half of the stroke width past the last point.
-    case square
-}
-
-public enum StrokeJoin: Sendable {
-    /// Corners are sharp, unless they are longer than `limit` times half the stroke width,
-    /// in which case they are beveled.
-    case miter(limit: Double)
-    /// Corners are rounded.
-    case round
-    /// Corners are beveled.
-    case bevel
-}
-
-public struct StrokeStyle: Sendable {
-    public var width: Double
-    public var cap: StrokeCap
-    public var join: StrokeJoin
-
-    public init(width: Double, cap: StrokeCap = .butt, join: StrokeJoin = .miter(limit: 10.0)) {
-        self.width = width
-        self.cap = cap
-        self.join = join
-    }
-}
+// ``StrokeCap``, ``StrokeJoin`` and ``StrokeStyle`` live in `StrokeStyle.swift`.
 
 /// An enum describing how a path is shaded.
 public enum FillRule: Sendable {
@@ -297,6 +268,10 @@ public struct Path: Sendable {
     ///
     /// - Parameter point: The point to move to.
     /// - Returns: The updated path.
+    ///
+    /// - SeeAlso: `move(to: CGPoint)`, the mutating spelling that SwiftUI
+    ///   uses.
+    @_disfavoredOverload
     public consuming func move(to point: SIMD2<Double>) -> Path {
         actions.append(.moveTo(point))
         return self
@@ -309,6 +284,10 @@ public struct Path: Sendable {
     ///
     /// - Parameter point: The point to draw the line to.
     /// - Returns: The updated path.
+    ///
+    /// - SeeAlso: `addLine(to: CGPoint)`, the mutating spelling that SwiftUI
+    ///   uses.
+    @_disfavoredOverload
     public consuming func addLine(to point: SIMD2<Double>) -> Path {
         actions.append(.lineTo(point))
         return self
@@ -481,5 +460,344 @@ extension Path {
         } else {
             try ifFalse(self)
         }
+    }
+}
+
+// MARK: - Core Graphics bridging
+
+extension Path.Rect {
+    /// Creates a rectangle from a Core Graphics rectangle.
+    ///
+    /// The rectangle is standardized first, so a `CGRect` with a negative
+    /// width or height becomes an equivalent rectangle with a positive one.
+    ///
+    /// - Parameter rect: The Core Graphics rectangle to convert.
+    public init(_ rect: CGRect) {
+        // `CGRect.standardized` comes from the Core Graphics overlay, which is
+        // not available on the platforms that get `CGRect` from Foundation, so
+        // the flip is done by hand here.
+        let x = Double(rect.origin.x)
+        let y = Double(rect.origin.y)
+        let width = Double(rect.size.width)
+        let height = Double(rect.size.height)
+        self.init(
+            x: width < 0.0 ? x + width : x,
+            y: height < 0.0 ? y + height : y,
+            width: abs(width),
+            height: abs(height)
+        )
+    }
+
+    /// This rectangle as a Core Graphics rectangle.
+    public var cgRect: CGRect {
+        CGRect(
+            origin: CGPoint(x: x, y: y),
+            size: CGSize(width: width, height: height)
+        )
+    }
+}
+
+// MARK: - SwiftUI's mutating builder spelling
+
+// SwiftUI's `Path` builders mutate in place, return `Void`, and speak Core
+// Graphics:
+//
+//     path.move(to: CGPoint(x: 1.0, y: 2.0))
+//     path.addLine(to: point)
+//
+// SwiftCrossUI's original builders instead consume the path and return the
+// updated value, so that they can be chained off a temporary. Both spellings
+// are supported, and for most builders the two are told apart by their
+// parameter types alone: the SwiftUI spelling takes `CGPoint`, `CGRect` and
+// ``Angle``, the chaining spelling takes `SIMD2<Double>`, ``Path/Rect`` and
+// `Double`.
+//
+// Three builders — `addPath(_:)`, `closeSubpath()` and `trim(from:to:)` —
+// take identical parameters in both spellings, so parameter types cannot
+// separate them and a bare `path.closeSubpath()` would be ambiguous. Their
+// chaining overloads are therefore marked `@_disfavoredOverload`, which sorts
+// the two call shapes out exactly as each caller wants:
+//
+// - `path.closeSubpath()` in statement position, where both overloads are
+//   viable, picks the mutating one, so the path really is modified.
+// - `Path().move(to: start).closeSubpath()` picks the chaining one, because a
+//   mutating method cannot be called on a temporary at all.
+//
+// `move(to:)` and `addLine(to:)` carry the same attribute for a different
+// reason: it makes `path.move(to: .zero)` resolve to `CGPoint.zero` rather
+// than being ambiguous with `SIMD2<Double>.zero`.
+
+extension Path {
+    /// Converts a Core Graphics point into the vector the path model uses.
+    ///
+    /// - Parameter point: The point to convert.
+    /// - Returns: The point as an x/y vector.
+    private static func vector(_ point: CGPoint) -> SIMD2<Double> {
+        SIMD2(x: Double(point.x), y: Double(point.y))
+    }
+
+    /// Wraps an angle into the 0 to 2π range that ``Action/arc`` requires.
+    ///
+    /// - Parameter radians: The angle to wrap, in radians.
+    /// - Returns: The equivalent angle between 0 and 2π.
+    private static func wrappedAngle(_ radians: Double) -> Double {
+        let turn = 2.0 * Double.pi
+        let remainder = radians.truncatingRemainder(dividingBy: turn)
+        return remainder < 0.0 ? remainder + turn : remainder
+    }
+
+    /// Moves the path's current point to the given point.
+    ///
+    /// This is SwiftUI's spelling: it mutates the path in place rather than
+    /// returning a new one.
+    ///
+    /// - Parameter point: The point to move to.
+    public mutating func move(to point: CGPoint) {
+        actions.append(.moveTo(Path.vector(point)))
+    }
+
+    /// Adds a line segment from the current point to the given point.
+    ///
+    /// This is SwiftUI's spelling: it mutates the path in place rather than
+    /// returning a new one.
+    ///
+    /// - Parameter point: The point to draw the line to.
+    public mutating func addLine(to point: CGPoint) {
+        actions.append(.lineTo(Path.vector(point)))
+    }
+
+    /// Adds a quadratic Bézier curve to the path.
+    ///
+    /// This is SwiftUI's spelling of ``addQuadCurve(control:to:)``, with
+    /// SwiftUI's argument order.
+    ///
+    /// - Parameters:
+    ///   - end: The point the curve ends at.
+    ///   - control: The control point the curve bends towards.
+    public mutating func addQuadCurve(to end: CGPoint, control: CGPoint) {
+        actions.append(
+            .quadCurve(control: Path.vector(control), end: Path.vector(end))
+        )
+    }
+
+    /// Adds a cubic Bézier curve to the path.
+    ///
+    /// This is SwiftUI's spelling of
+    /// ``addCubicCurve(control1:control2:to:)``, with SwiftUI's argument
+    /// order.
+    ///
+    /// - Parameters:
+    ///   - end: The point the curve ends at.
+    ///   - control1: The first control point.
+    ///   - control2: The second control point.
+    public mutating func addCurve(
+        to end: CGPoint,
+        control1: CGPoint,
+        control2: CGPoint
+    ) {
+        actions.append(
+            .cubicCurve(
+                control1: Path.vector(control1),
+                control2: Path.vector(control2),
+                end: Path.vector(end)
+            )
+        )
+    }
+
+    /// Adds a rectangle to the path.
+    ///
+    /// This is SwiftUI's spelling of ``addRectangle(_:)``.
+    ///
+    /// - Parameter rect: The rectangle to add.
+    public mutating func addRect(_ rect: CGRect) {
+        actions.append(.rectangle(Rect(rect)))
+    }
+
+    /// Adds an ellipse that fills the given rectangle.
+    ///
+    /// This is SwiftUI's spelling; it mutates the path in place.
+    ///
+    /// - Parameter rect: The rectangle to inscribe the ellipse in.
+    public mutating func addEllipse(in rect: CGRect) {
+        appendEllipse(in: Rect(rect))
+    }
+
+    /// Appends an ellipse inscribed in the given rectangle.
+    ///
+    /// Both spellings of `addEllipse(in:)` funnel through this so that neither
+    /// has to call the other and rely on overload resolution to pick right.
+    ///
+    /// - Parameter rect: The rectangle to inscribe the ellipse in.
+    private mutating func appendEllipse(in rect: Rect) {
+        guard rect.width != 0.0 && rect.height != 0.0 else {
+            return
+        }
+        actions.append(.subpath(Ellipse().path(in: rect).actions))
+    }
+
+    /// Adds an arc segment to the path.
+    ///
+    /// This is SwiftUI's spelling; it mutates the path in place and takes
+    /// ``Angle`` values rather than raw radians.
+    ///
+    /// - Important: SwiftCrossUI's path model stores arcs as a start and end
+    ///   angle between 0 and 2π, so angles are wrapped into that range. An arc
+    ///   that sweeps more than one full turn cannot be represented and is
+    ///   drawn as the equivalent sub-turn arc.
+    ///
+    /// - Parameters:
+    ///   - center: The location of the center of the circle.
+    ///   - radius: The radius of the circle.
+    ///   - startAngle: The angle of the start of the arc, measured clockwise
+    ///     from the trailing direction.
+    ///   - endAngle: The angle of the end of the arc, measured clockwise from
+    ///     the trailing direction.
+    ///   - clockwise: `true` if the arc is to be drawn clockwise, `false` if
+    ///     it is to be drawn counter-clockwise.
+    public mutating func addArc(
+        center: CGPoint,
+        radius: CGFloat,
+        startAngle: Angle,
+        endAngle: Angle,
+        clockwise: Bool
+    ) {
+        actions.append(
+            .arc(
+                center: Path.vector(center),
+                radius: Double(radius),
+                startAngle: Path.wrappedAngle(startAngle.radians),
+                endAngle: Path.wrappedAngle(endAngle.radians),
+                clockwise: clockwise
+            )
+        )
+    }
+
+    /// Adds the entirety of another path as part of this path.
+    ///
+    /// This is SwiftUI's spelling of ``addSubpath(_:)``; it mutates the path
+    /// in place.
+    ///
+    /// The fill rule and preferred stroke style of `path` are ignored.
+    ///
+    /// - Parameter path: The path to add.
+    public mutating func addPath(_ path: Path) {
+        actions.append(.subpath(path.actions))
+    }
+
+    /// Closes the current subpath by drawing a line back to its start point.
+    ///
+    /// This is SwiftUI's spelling; it mutates the path in place.
+    ///
+    /// - Important: SwiftCrossUI's path model has no dedicated "close" action,
+    ///   so this appends a line segment instead. The rendered result differs
+    ///   from a true close in one respect: the join at the start point is
+    ///   drawn as two line caps rather than as a corner join.
+    public mutating func closeSubpath() {
+        appendClosingLine()
+    }
+
+    /// Appends the line segment that closes the current subpath, if any.
+    ///
+    /// Both spellings of `closeSubpath()` funnel through this so that neither
+    /// has to call the other and rely on overload resolution to pick right.
+    private mutating func appendClosingLine() {
+        guard let start = startOfCurrentSubpath else {
+            return
+        }
+        actions.append(.lineTo(start))
+    }
+
+    /// Trims the path to the portion between two fractions of its length.
+    ///
+    /// This is the mutating spelling of ``trim(from:to:)``. See that method
+    /// for the approximation this performs.
+    ///
+    /// - Parameters:
+    ///   - start: The fraction of the path's length to start at, from 0 to 1.
+    ///   - end: The fraction of the path's length to end at, from 0 to 1.
+    public mutating func trim(from start: Double, to end: Double) {
+        self = Path.trimmed(actions, from: start, to: end)
+    }
+
+    /// The start point of the subpath currently being drawn.
+    ///
+    /// Returns `nil` when the current subpath is empty, which is the case both
+    /// for an empty path and for one whose last action was a move.
+    private var startOfCurrentSubpath: SIMD2<Double>? {
+        var start = SIMD2<Double>.zero
+        var actionsSinceStart = 0
+        for action in actions.reversed() {
+            if case .moveTo(let point) = action {
+                start = point
+                break
+            }
+            actionsSinceStart += 1
+        }
+        guard actionsSinceStart > 0 else {
+            return nil
+        }
+        return start
+    }
+}
+
+// MARK: - Chaining spellings of the SwiftUI builders
+
+extension Path {
+    /// Adds an ellipse that fills the given rectangle.
+    ///
+    /// - Parameter rect: The rectangle to inscribe the ellipse in.
+    /// - Returns: The updated path.
+    public consuming func addEllipse(in rect: Rect) -> Path {
+        var path = self
+        path.appendEllipse(in: rect)
+        return path
+    }
+
+    /// Adds the entirety of another path as part of this path.
+    ///
+    /// This is the chaining spelling of ``addPath(_:)``, and is identical to
+    /// ``addSubpath(_:)``.
+    ///
+    /// - Parameter path: The path to add.
+    /// - Returns: The updated path.
+    @_disfavoredOverload
+    public consuming func addPath(_ path: Path) -> Path {
+        addSubpath(path)
+    }
+
+    /// Closes the current subpath by drawing a line back to its start point.
+    ///
+    /// This is the chaining spelling of ``closeSubpath()``.
+    ///
+    /// - Important: SwiftCrossUI's path model has no dedicated "close" action,
+    ///   so this appends a line segment instead. The rendered result differs
+    ///   from a true close in one respect: the join at the start point is
+    ///   drawn as two line caps rather than as a corner join.
+    ///
+    /// - Returns: The updated path.
+    @_disfavoredOverload
+    public consuming func closeSubpath() -> Path {
+        var path = self
+        path.appendClosingLine()
+        return path
+    }
+
+    /// Returns the portion of the path between two fractions of its length.
+    ///
+    /// If `start` is greater than `end`, the returned path wraps around the
+    /// end of the path, matching SwiftUI.
+    ///
+    /// - Important: The result is a polyline approximation. Curves and arcs in
+    ///   the source path are flattened before trimming because SwiftCrossUI's
+    ///   path model has no way to express a partial curve segment. The fill
+    ///   rule and stroke style of the source path are not carried over.
+    ///
+    /// - Parameters:
+    ///   - start: The fraction of the path's length to start at, from 0 to 1.
+    ///   - end: The fraction of the path's length to end at, from 0 to 1.
+    /// - Returns: The trimmed path.
+    @_disfavoredOverload
+    public consuming func trim(from start: Double, to end: Double) -> Path {
+        Path.trimmed(actions, from: start, to: end)
     }
 }

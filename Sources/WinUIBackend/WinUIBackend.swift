@@ -1991,6 +1991,23 @@ public final class WinUIBackend:
                 winUiPath.strokeLineJoin = .bevel
         }
 
+        // WinUI measures dash lengths and the dash offset in multiples of the
+        // stroke thickness rather than in points, so both have to be divided
+        // by the thickness on the way in. An empty collection means "solid",
+        // and has to be assigned so that a path that stops being dashed stops
+        // rendering its old pattern.
+        let dashes = WinUI.DoubleCollection()
+        if let pattern = strokeStyle.resolvedDash, strokeStyle.width > 0.0 {
+            for length in pattern {
+                dashes.append(length / strokeStyle.width)
+            }
+            winUiPath.strokeDashOffset =
+                Double(strokeStyle.dashPhase) / strokeStyle.width
+        } else {
+            winUiPath.strokeDashOffset = 0.0
+        }
+        winUiPath.strokeDashArray = dashes
+
         winUiPath.data = path.group
     }
 

@@ -1672,6 +1672,19 @@ public final class GtkBackend:
 
             cairo_set_line_width(cairo, strokeStyle.width)
 
+            if var dashes = strokeStyle.resolvedDash {
+                cairo_set_dash(
+                    cairo,
+                    &dashes,
+                    Int32(dashes.count),
+                    Double(strokeStyle.dashPhase)
+                )
+            } else {
+                // Passing a zero-length pattern restores a solid stroke, which
+                // matters because the drawing state is reused across draws.
+                cairo_set_dash(cairo, nil, 0, 0.0)
+            }
+
             self.renderPathActions(path.actions, to: cairo)
 
             let fillPattern = cairo_pattern_create_rgba(
