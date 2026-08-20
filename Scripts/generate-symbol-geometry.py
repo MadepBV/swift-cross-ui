@@ -317,7 +317,7 @@ SYMBOL_MAP: dict[str, tuple[str, str | None]] = {
         "triangle-right",
         "Lucide has no angle glyph; a right triangle is the closest shape.",
     ),
-    # -- Extra names referenced by Barform's design-approved glyph catalog --
+    # -- Extra names commonly referenced by desktop application catalogs --
     # These do not appear in the current call-site census but the catalog
     # pairs them with a Lucide icon, so covering them costs nothing and stops
     # near-miss names from falling through to the placeholder.
@@ -334,8 +334,8 @@ SYMBOL_MAP: dict[str, tuple[str, str | None]] = {
     "eye.slash": ("eye-off", None),
     "i.square": (
         "square",
-        "Lucide has no lettered square; a plain square is used. Barform draws "
-        "its own steel-member glyph for this on other hosts.",
+        "Lucide has no lettered square; a plain square is used. An "
+        "application needing the letter should supply its own glyph.",
     ),
     "lock.open": ("lock-open", None),
     "plus.square": ("square-plus", None),
@@ -400,7 +400,7 @@ PERFORMANCE OF THIS SOFTWARE.\
 # --------------------------------------------------------------------------
 
 CANDIDATE_DIRS = [
-    "../rebar/apps/BarformTauri/node_modules/lucide-react/dist/esm/icons",
+    "node_modules/lucide-react/dist/esm/icons",
     "node_modules/lucide-react/dist/esm/icons",
     "../lucide/icons",
 ]

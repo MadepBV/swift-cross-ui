@@ -168,7 +168,7 @@ enum SFSymbolLucideMapping {
         "hammer": "hammer",
         // hand.draw.fill: Lucide has no filled variants; the outline icon is used.
         "hand.draw.fill": "hand",
-        // i.square: Lucide has no lettered square; a plain square is used. Barform draws its own steel-member glyph for this on other hosts.
+        // i.square: Lucide has no lettered square; a plain square is used. An application needing the letter should supply its own glyph.
         "i.square": "square",
         "info.circle": "info",
         "keyboard": "keyboard",
