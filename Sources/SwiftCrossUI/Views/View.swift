@@ -252,7 +252,12 @@ extension View {
         )
     }
 
-    public var _asMenuItems: [MenuItem] { body._asMenuItems }
+    public var _asMenuItems: [MenuItem] {
+        // Menu collection happens outside the view graph; give the body's
+        // `@Environment` reads something to read (see `MenuItemCollection`).
+        MenuItemCollection.prepare(self)
+        return body._asMenuItems
+    }
 
     /// Resolves this view's menu content to the representation used by backends.
     ///

@@ -99,9 +99,12 @@ struct ContextMenuModifierView<Content: View, MenuItems: View>: TypeSafeView {
             return
         }
 
+        let content = MenuItemCollection.withEnvironment(environment) {
+            Menu.resolve(items: menuItems._asMenuItems)
+        }
         Self.updateTarget(
             widget,
-            content: Menu.resolve(items: menuItems._asMenuItems),
+            content: content,
             environment: environment,
             backend: menuBackend
         )

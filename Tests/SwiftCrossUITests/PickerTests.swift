@@ -182,6 +182,138 @@ struct PickerTests {
         )
     }
 
+    // MARK: Menus
+
+    /// Describes resolved menu items compactly.
+    private static func describe(_ menu: ResolvedMenu) -> [String] {
+        menu.items.map { item in
+            switch item {
+                case .button(let label, let action):
+                    action == nil ? "title \(label)" : "button \(label)"
+                case .toggle(let label, let value, _):
+                    "toggle \(label) \(value)"
+                case .separator:
+                    "separator"
+                case .submenu(let submenu):
+                    "submenu \(submenu.label)"
+                case .modifiedEnvironment:
+                    "modified"
+            }
+        }
+    }
+
+    @Test("A Menu holding a Section and a Picker of Labels resolves without a view graph")
+    func testMenuWithSectionAndPickerResolves() {
+        var selected = Flavor.chocolate
+        let selection = Binding<Flavor> { selected } set: { selected = $0 }
+        let menu = Menu("Hatch") {
+            Button("Reset") {}
+            Section("Pattern") {
+                Picker("Style", selection: selection) {
+                    ForEach(Flavor.allCases, id: \.self) { flavor in
+                        Label(flavor.title, systemImage: "circle").tag(flavor)
+                    }
+                }
+            }
+        }
+
+        let environment = EnvironmentValues(backend: DummyBackend())
+        let resolved = MenuItemCollection.withEnvironment(environment) {
+            menu.resolve().content
+        }
+
+        #expect(
+            Self.describe(resolved) == [
+                "button Reset",
+                "separator",
+                "title Pattern",
+                "submenu Style",
+            ]
+        )
+
+        guard case .submenu(let styles) = resolved.items[3] else {
+            Issue.record("expected the picker to become a submenu")
+            return
+        }
+        #expect(
+            Self.describe(styles.content) == [
+                "toggle Vanilla false",
+                "toggle Chocolate true",
+                "toggle Strawberry false",
+            ]
+        )
+
+        // Ticking an option selects it.
+        if case .toggle(_, _, let onChange) = styles.content.items[0] {
+            onChange(true)
+        }
+        #expect(selected == .vanilla)
+    }
+
+    @Test("A Picker without a label lists its options inline in a menu")
+    func testUnlabelledPickerIsInlineInMenu() {
+        var selected: Flavor? = .vanilla
+        let selection = Binding<Flavor?> { selected } set: { selected = $0 }
+        let menu = Menu("Hatch") {
+            Picker(of: Flavor.allCases, selection: selection)
+        }
+
+        let environment = EnvironmentValues(backend: DummyBackend())
+        let resolved = MenuItemCollection.withEnvironment(environment) {
+            menu.resolve().content
+        }
+        #expect(
+            Self.describe(resolved) == [
+                "toggle vanilla true",
+                "toggle chocolate false",
+                "toggle strawberry false",
+            ]
+        )
+    }
+
+    @Test("Menu content whose body reads the environment resolves under one")
+    func testMenuContentReadingEnvironmentResolves() {
+        let menu = Menu("Options") {
+            EnvironmentTitledOption()
+        }
+        let environment = EnvironmentValues(backend: DummyBackend())
+
+        let enabled = MenuItemCollection.withEnvironment(environment) {
+            menu.resolve().content
+        }
+        let disabled = MenuItemCollection.withEnvironment(environment.with(\.isEnabled, false)) {
+            menu.resolve().content
+        }
+
+        #expect(Self.describe(enabled) == ["title Enabled"])
+        #expect(Self.describe(disabled) == ["title Disabled"])
+    }
+
+    @Test("A Section resolves its header and content without an environment")
+    func testSectionResolvesWithoutEnvironment() {
+        let menu = Menu("Layers") {
+            Section("Drafting") {
+                Button("Show") {}
+                Divider()
+                Button("Hide") {}
+            }
+            Section {
+                Button("Other") {}
+            }
+        }
+
+        #expect(
+            Self.describe(menu.resolve().content) == [
+                "title Drafting",
+                "button Show",
+                "separator",
+                "button Hide",
+                "separator",
+                "button Other",
+            ]
+        )
+    }
+
     @Test("A view that factors the options out contributes them all")
     func testCustomViewContributesItsOptions() {
         let options = PickerOptionCollector.options(of: FlavorOptions())

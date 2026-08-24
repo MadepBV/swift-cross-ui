@@ -67,6 +67,21 @@ public struct Section<Parent: View, Content: View, Footer: View>: View {
         self.footer = footer
     }
 
+    /// In a menu a section is its content, set off by separators and headed
+    /// by its title, as SwiftUI renders it.
+    ///
+    /// Spelled out so that the section's `body`, which reads the form style
+    /// from the environment, is never evaluated for menu content. Redundant
+    /// separators (at the menu's edges, or between adjacent sections) are
+    /// removed when the menu is resolved.
+    public var _asMenuItems: [MenuItem] {
+        var items: [MenuItem] = [.separator(Divider())]
+        items += header._asMenuItems
+        items += content._asMenuItems
+        items.append(.separator(Divider()))
+        return items
+    }
+
     /// Creates a section with no header and no footer.
     ///
     /// - Parameter content: The section's rows.

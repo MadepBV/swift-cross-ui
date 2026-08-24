@@ -31,7 +31,7 @@ public struct Commands {
             }
             menus[i] = CommandMenu(
                 name: menu.name,
-                content: menu.content + newCommands.menus[newMenuIndex].content
+                merging: [menu, newCommands.menus[newMenuIndex]]
             )
         }
 

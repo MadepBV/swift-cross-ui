@@ -138,12 +138,70 @@ public struct Picker<Label: View, SelectedValue: Hashable, Content: View>: View 
 
     /// The options that the picker offers.
     private var resolvedOptions: [PickerOption] {
+        options(in: environment)
+    }
+
+    /// The options that the picker offers, collected under a given
+    /// environment.
+    ///
+    /// - Parameter environment: The environment to collect under, or `nil`
+    ///   when none is available (outside the view graph).
+    /// - Returns: The picker's options.
+    private func options(in environment: EnvironmentValues?) -> [PickerOption] {
         guard let directOptions else {
             return PickerOptionCollector.options(of: content, environment: environment)
         }
         return directOptions.enumerated().map { index, value in
             PickerOption(title: "\(value)", tag: AnyHashable(value), index: index)
         }
+    }
+
+    /// In a menu a picker is its options, shown as checkable items with the
+    /// selected one ticked, as SwiftUI renders it. With a visible label the
+    /// options sit in a submenu named after it; with the label hidden they
+    /// sit inline.
+    ///
+    /// Spelled out so that the picker's `body`, which reads the environment,
+    /// is never evaluated for menu content. The options are collected under
+    /// the environment of the menu being built, if it has one.
+    public var _asMenuItems: [MenuItem] {
+        let items = optionMenuItems(in: MenuItemCollection.environment)
+        guard showsLabel else {
+            return items
+        }
+
+        let title = label._asMenuItems.compactMap { item -> String? in
+            if case .text(let text) = item {
+                return text.string
+            }
+            return nil
+        }.first
+        guard let title else {
+            return items
+        }
+        return [.submenu(Menu(label: title, items: items))]
+    }
+
+    /// One checkable item per option, with the selected one ticked.
+    ///
+    /// - Parameter environment: The environment to collect options under.
+    /// - Returns: The items.
+    private func optionMenuItems(in environment: EnvironmentValues?) -> [MenuItem] {
+        let options = options(in: environment)
+        let selectedOption = optionBinding(for: options)
+
+        var items: [MenuItem] = []
+        for option in options {
+            let isSelected = Binding<Bool> {
+                selectedOption.wrappedValue?.index == option.index
+            } set: { isOn in
+                if isOn {
+                    selectedOption.wrappedValue = option
+                }
+            }
+            items.append(.toggle(Toggle(option.title, isOn: isSelected)))
+        }
+        return items
     }
 
     /// Bridges the picker's selection to the option that it corresponds to.

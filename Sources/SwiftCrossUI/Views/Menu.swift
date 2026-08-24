@@ -5,8 +5,32 @@
 public struct Menu {
     /// The menu's label.
     public var label: String
+
+    /// Where the menu's items come from.
+    ///
+    /// A view is kept rather than collected in `init`, because collecting
+    /// menu items reads view bodies, and a body may read `@Environment`
+    /// (``Section``, ``Picker``): the items are collected when the menu is
+    /// laid out or shown, with the environment in force (see
+    /// ``MenuItemCollection``).
+    private enum Source {
+        case view(any View)
+        case items([MenuItem])
+    }
+
+    private var source: Source
+
     /// The menu's items.
-    public var items: [MenuItem]
+    ///
+    /// Collected on demand under whatever environment the current menu
+    /// collection installed.
+    @MainActor
+    public var items: [MenuItem] {
+        switch source {
+            case .view(let view): view._asMenuItems
+            case .items(let items): items
+        }
+    }
 
     var buttonWidth: Int?
 
@@ -18,7 +42,17 @@ public struct Menu {
     @MainActor
     public init(_ label: String, @ViewBuilder items: () -> some View) {
         self.label = label
-        self.items = items()._asMenuItems
+        self.source = .view(items())
+    }
+
+    /// Creates a menu from items that have already been collected.
+    ///
+    /// - Parameters:
+    ///   - label: The menu's label.
+    ///   - items: The menu's items.
+    init(label: String, items: [MenuItem]) {
+        self.label = label
+        self.source = .items(items)
     }
 
     /// Resolves the menu to a representation used by backends.
@@ -55,7 +89,34 @@ public struct Menu {
     /// Resolves the menu's items to a representation used by backends.
     @MainActor
     static func resolve(items: [MenuItem]) -> ResolvedMenu {
-        ResolvedMenu(items: items.map(resolve(item:)))
+        ResolvedMenu(items: Self.tidyingSeparators(items.map(resolve(item:))))
+    }
+
+    /// Drops separators that would draw as a bare line: at either end of a
+    /// menu, or two in a row.
+    ///
+    /// ``Section`` brackets its content with separators so that adjacent
+    /// sections divide correctly, which leaves stray ones at the edges.
+    ///
+    /// - Parameter items: The resolved items.
+    /// - Returns: The items with redundant separators removed.
+    private static func tidyingSeparators(_ items: [ResolvedMenu.Item]) -> [ResolvedMenu.Item] {
+        var result: [ResolvedMenu.Item] = []
+        for item in items {
+            if case .separator = item {
+                guard let last = result.last else {
+                    continue
+                }
+                if case .separator = last {
+                    continue
+                }
+            }
+            result.append(item)
+        }
+        if let last = result.last, case .separator = last {
+            result.removeLast()
+        }
+        return result
     }
 }
 
@@ -147,7 +208,9 @@ extension Menu: TypeSafeView {
                     label: label,
                     environment: environment,
                     action: {
-                        let content = resolve().content
+                        let content = MenuItemCollection.withEnvironment(environment) {
+                            resolve().content
+                        }
                         let menu = backend.createPopoverMenu()
                         children.menu = menu
                         backend.updatePopoverMenu(
@@ -166,7 +229,9 @@ extension Menu: TypeSafeView {
                 )
 
                 if let menu = children.menu {
-                    let content = resolve().content
+                    let content = MenuItemCollection.withEnvironment(environment) {
+                        resolve().content
+                    }
                     backend.updatePopoverMenu(
                         menu as! NewBackend.Menu,
                         content: content,
@@ -176,7 +241,9 @@ extension Menu: TypeSafeView {
             case .menuButton(let backend):
                 // We can assume that computeLayout has already run, so children.menu
                 // will already be correctly initialized.
-                let content = resolve().content
+                let content = MenuItemCollection.withEnvironment(environment) {
+                    resolve().content
+                }
                 let menu = children.menu! as! NewBackend.Menu
                 backend.updatePopoverMenu(
                     menu,
