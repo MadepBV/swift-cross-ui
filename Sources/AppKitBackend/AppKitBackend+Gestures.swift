@@ -250,7 +250,8 @@ extension AppKitBackend: BackendFeatures.PointerGestures {
         onDragEnded: (@MainActor (PointerGestureEvent) -> Void)?,
         onTap: (@MainActor (PointerGestureEvent) -> Void)?,
         onScroll: (@MainActor (PointerScrollEvent) -> Void)?,
-        onMagnify: (@MainActor (PointerMagnifyEvent) -> Void)?
+        onMagnify: (@MainActor (PointerMagnifyEvent) -> Void)?,
+        onMove: (@MainActor (PointerMoveEvent) -> Void)?
     ) {
         let target = container.subviews[1] as! NSCustomPointerGestureTarget
         target.minimumDragDistance = minimumDragDistance
@@ -262,6 +263,7 @@ extension AppKitBackend: BackendFeatures.PointerGestures {
             target.tapHandler = nil
             target.scrollHandler = nil
             target.magnifyHandler = nil
+            target.moveHandler = nil
             return
         }
 
@@ -271,11 +273,12 @@ extension AppKitBackend: BackendFeatures.PointerGestures {
         target.tapCount = tapCount
         target.scrollHandler = onScroll
         target.magnifyHandler = onMagnify
+        target.moveHandler = onMove
     }
 }
 
 /// The view that `AppKitBackend` recognizes drags, spatial taps, scroll
-/// wheel scrolling and pinches on.
+/// wheel scrolling, pinches and button-less pointer movement on.
 ///
 /// It is flipped so that `location(in:)` hands back SwiftCrossUI's
 /// top-leading-origin coordinates rather than AppKit's bottom-leading ones.
@@ -350,9 +353,30 @@ final class NSCustomPointerGestureTarget: NSView {
         }
     }
 
+    /// The action to run for each mouse move with no button held, and once
+    /// with ``HoverPhase/ended`` when the mouse leaves.
+    ///
+    /// Moves are only delivered while a tracking area is installed, which
+    /// is the case exactly while this is non-`nil`.
+    var moveHandler: (@MainActor (PointerMoveEvent) -> Void)? {
+        didSet {
+            if moveHandler != nil, trackingArea == nil {
+                installTrackingArea()
+            } else if moveHandler == nil, let trackingArea {
+                removeTrackingArea(trackingArea)
+                self.trackingArea = nil
+            }
+        }
+    }
+
     private var panRecognizer: NSPanGestureRecognizer?
     private var clickRecognizer: NSClickGestureRecognizer?
     private var magnificationRecognizer: NSMagnificationGestureRecognizer?
+    private var trackingArea: NSTrackingArea?
+
+    /// Whether the last move reported the pointer as inside, so that leaving
+    /// is reported exactly once.
+    private var pointerIsInside = false
 
     /// Where the pointer was when the current drag began.
     private var dragStartLocation: CGPoint?
@@ -370,11 +394,67 @@ final class NSCustomPointerGestureTarget: NSView {
         guard
             dragChangedHandler != nil || dragEndedHandler != nil
                 || tapHandler != nil || scrollHandler != nil
-                || magnifyHandler != nil
+                || magnifyHandler != nil || moveHandler != nil
         else {
             return nil
         }
         return super.hitTest(point)
+    }
+
+    /// Installs the tracking area that turns mouse movement into events.
+    ///
+    /// `inVisibleRect` keeps the area in step with the view's bounds, so it
+    /// doesn't have to be rebuilt when the view resizes.
+    private func installTrackingArea() {
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        reportMove(of: event)
+    }
+
+    /// Delivers a button-less move to ``moveHandler``. Not private so that
+    /// tests can replay a move without a running event loop.
+    override func mouseMoved(with event: NSEvent) {
+        reportMove(of: event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        guard let moveHandler, pointerIsInside else {
+            return
+        }
+        pointerIsInside = false
+        moveHandler(
+            PointerMoveEvent(
+                phase: .ended,
+                modifiers: PointerModifiers(event.modifierFlags),
+                time: Date()
+            )
+        )
+    }
+
+    /// Reports where a mouse event puts the pointer.
+    ///
+    /// - Parameter event: The move or enter event.
+    private func reportMove(of event: NSEvent) {
+        guard let moveHandler else {
+            return
+        }
+        pointerIsInside = true
+        moveHandler(
+            PointerMoveEvent(
+                phase: .active(reported(convert(event.locationInWindow, from: nil))),
+                modifiers: PointerModifiers(event.modifierFlags),
+                time: Date()
+            )
+        )
     }
 
     /// Delivers a scroll wheel or trackpad scroll to ``scrollHandler``, or

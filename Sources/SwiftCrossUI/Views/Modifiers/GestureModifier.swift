@@ -1,7 +1,8 @@
 /// A view with gestures attached to it.
 ///
-/// Created by ``View/gesture(_:)``, ``View/onScrollWheel(perform:)`` and
-/// ``View/onMagnify(perform:)``. It is returned concretely rather than as
+/// Created by ``View/gesture(_:)``, ``View/onScrollWheel(perform:)``,
+/// ``View/onMagnify(perform:)``, ``View/onContinuousHover(coordinateSpace:perform:)``
+/// and ``View/onPointerMove(perform:)``. It is returned concretely rather than as
 /// `some View` so that ``GestureModifier/simultaneousGesture(_:)`` (and the
 /// scroll and magnify modifiers) can add to an existing target instead of
 /// nesting a second one — nested targets would mean only the outermost ever
@@ -24,10 +25,71 @@ public struct GestureModifier<Content: View>: TypeSafeView {
     /// The actions to run for each pinch-to-zoom step.
     var magnifyHandlers: [@MainActor (PointerMagnifyEvent) -> Void] = []
 
+    /// The actions to run for each button-less pointer move (and the exit).
+    var moveHandlers: [@MainActor (PointerMoveEvent) -> Void] = []
+
+    /// The coordinate space asked for by a hover, when no gesture picked one.
+    var moveCoordinateSpace: CoordinateSpace = .local
+
     /// Whether anything at all is attached, and so whether a pointer gesture
     /// target is needed.
     private var hasHandlers: Bool {
         !gestures.isEmpty || !scrollHandlers.isEmpty || !magnifyHandlers.isEmpty
+            || !moveHandlers.isEmpty
+    }
+
+    /// Adds a pointer move handler to this view, alongside whatever is
+    /// already attached.
+    ///
+    /// - Parameter action: The action to run for each move.
+    /// - Returns: A view that also reports pointer movement.
+    public func onPointerMove(
+        perform action: @escaping @MainActor (PointerMoveEvent) -> Void
+    ) -> GestureModifier<Content> {
+        var modified = self
+        modified.moveHandlers.append(action)
+        return modified
+    }
+
+    /// Adds a continuous hover handler to this view, alongside whatever is
+    /// already attached.
+    ///
+    /// - Parameters:
+    ///   - coordinateSpace: The space to report locations in.
+    ///   - action: The action to run for each hover phase.
+    /// - Returns: A view that also reports hovering.
+    public func onContinuousHover(
+        coordinateSpace: CoordinateSpace = .local,
+        perform action: @escaping @MainActor (HoverPhase) -> Void
+    ) -> GestureModifier<Content> {
+        guard let space = GestureModifier.resolveCoordinateSpace(coordinateSpace) else {
+            return self
+        }
+        var modified = self
+        modified.moveCoordinateSpace = space
+        modified.moveHandlers.append { event in
+            action(event.phase)
+        }
+        return modified
+    }
+
+    /// Refuses a named coordinate space, which SwiftCrossUI can't resolve.
+    ///
+    /// - Parameter coordinateSpace: The requested space.
+    /// - Returns: The space, or `nil` (having warned) if it can't be honoured.
+    @MainActor
+    static func resolveCoordinateSpace(_ coordinateSpace: CoordinateSpace) -> CoordinateSpace? {
+        guard case .named(let name) = coordinateSpace else {
+            return coordinateSpace
+        }
+        logger.warnOnce(
+            """
+            A hover asked for the named coordinate space '\(name)', which \
+            SwiftCrossUI can't resolve yet, so its handler will never run. \
+            Use '.local' or '.global' instead.
+            """
+        )
+        return nil
     }
 
     /// Adds a scroll wheel handler to this view, alongside whatever is
@@ -240,6 +302,16 @@ public struct GestureModifier<Content: View>: TypeSafeView {
             }
         }
 
+        let moveHandlers = moveHandlers
+        var onMove: (@MainActor (PointerMoveEvent) -> Void)?
+        if !moveHandlers.isEmpty {
+            onMove = { event in
+                for handler in moveHandlers {
+                    handler(event)
+                }
+            }
+        }
+
         func updateTarget<
             PointerBackend: BaseAppBackend & BackendFeatures.PointerGestures
         >(_ backend: PointerBackend) {
@@ -247,15 +319,16 @@ public struct GestureModifier<Content: View>: TypeSafeView {
                 widget as! PointerBackend.Widget,
                 minimumDragDistance: dragDistances.min() ?? 0.0,
                 tapCount: tapCount ?? 1,
-                // Scroll and magnify events are always reported in the
-                // target's own space unless a gesture asked for the window's.
-                coordinateSpace: gestures.first?.coordinateSpace ?? .local,
+                // One target reports every event in one space: the first
+                // gesture's, else the hover's, else the target's own.
+                coordinateSpace: gestures.first?.coordinateSpace ?? moveCoordinateSpace,
                 environment: environment,
                 onDragChanged: onDragChanged,
                 onDragEnded: onDragEnded,
                 onTap: onTap,
                 onScroll: onScroll,
-                onMagnify: onMagnify
+                onMagnify: onMagnify,
+                onMove: onMove
             )
         }
 
@@ -420,6 +493,81 @@ extension View {
             body: TupleView1(self),
             gestures: [],
             magnifyHandlers: [action]
+        )
+    }
+
+    /// Runs an action as the pointer moves over this view with no button
+    /// held, and once more when it leaves.
+    ///
+    /// This is SwiftUI's `onContinuousHover`. A snap echo that follows the
+    /// mouse, say:
+    ///
+    /// ```swift
+    /// SheetCanvas()
+    ///     .onContinuousHover { phase in
+    ///         switch phase {
+    ///             case .active(let location): snapEcho = snap(near: location)
+    ///             case .ended: snapEcho = nil
+    ///         }
+    ///     }
+    /// ```
+    ///
+    /// Moves with a button held are drags, delivered through ``DragGesture``
+    /// rather than here. Use ``View/onPointerMove(perform:)`` to also learn
+    /// which modifier keys were held during the move.
+    ///
+    /// Carries the same backend requirements and coordinate-space limits as
+    /// ``View/gesture(_:)``: a backend without
+    /// ``BackendFeatures/PointerGestures`` never calls the action, and
+    /// ``CoordinateSpace/named(_:)`` is refused with a warning. When a
+    /// gesture on the same view asks for a different space, the gesture's
+    /// space wins for every event on the view.
+    ///
+    /// - Parameters:
+    ///   - coordinateSpace: The space to report locations in.
+    ///   - action: The action to run for each hover phase.
+    /// - Returns: A view that reports hovering.
+    ///
+    /// ## See Also
+    ///
+    /// - ``HoverPhase``
+    /// - ``View/onPointerMove(perform:)``
+    /// - ``View/onHover(perform:)``
+    public func onContinuousHover(
+        coordinateSpace: CoordinateSpace = .local,
+        perform action: @escaping @MainActor (HoverPhase) -> Void
+    ) -> GestureModifier<Self> {
+        GestureModifier(body: TupleView1(self), gestures: [])
+            .onContinuousHover(coordinateSpace: coordinateSpace, perform: action)
+    }
+
+    /// Runs an action as the pointer moves over this view with no button
+    /// held, and once more when it leaves, with the modifier keys.
+    ///
+    /// SwiftUI's ``View/onContinuousHover(coordinateSpace:perform:)`` reports
+    /// only a location; this is SwiftCrossUI vocabulary for the cases that
+    /// need to know whether Shift or Command was held during the move (a
+    /// constrained draft preview, say). ``PointerMoveEvent/phase`` is the
+    /// same ``HoverPhase`` the SwiftUI spelling delivers.
+    ///
+    /// Locations are reported in the view's own space, or in the window's
+    /// when a gesture or hover on the same view asked for
+    /// ``CoordinateSpace/global``.
+    ///
+    /// - Parameter action: The action to run for each move.
+    /// - Returns: A view that reports pointer movement.
+    ///
+    /// ## See Also
+    ///
+    /// - ``PointerMoveEvent``
+    /// - ``View/onContinuousHover(coordinateSpace:perform:)``
+    public func onPointerMove(
+        perform action: @escaping @MainActor (PointerMoveEvent) -> Void
+    ) -> GestureModifier<Self> {
+        GestureModifier(
+            body: TupleView1(self),
+            gestures: [],
+            moveHandlers: [action]
         )
     }
 }

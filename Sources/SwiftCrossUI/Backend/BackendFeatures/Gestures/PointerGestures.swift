@@ -8,7 +8,9 @@ extension BackendFeatures {
     ///
     /// The same target also delivers scroll wheel/trackpad scrolling and
     /// pinch-to-zoom, which back ``View/onScrollWheel(perform:)`` and
-    /// ``View/onMagnify(perform:)``, and every event carries the modifier
+    /// ``View/onMagnify(perform:)``, and button-less pointer movement, which
+    /// backs ``View/onContinuousHover(coordinateSpace:perform:)`` and
+    /// ``View/onPointerMove(perform:)``. Every event carries the modifier
     /// keys held down (``PointerModifiers``).
     ///
     /// This is deliberately **not** part of ``BackendFeatures/Gestures`` or
@@ -66,6 +68,10 @@ extension BackendFeatures {
         ///   - onMagnify: The action to perform for each step of a pinch
         ///     over the target. Backends whose platform has no pinch
         ///     gesture for the pointer in use never call it.
+        ///   - onMove: The action to perform each time the pointer moves
+        ///     over the target with no button held, and once with
+        ///     ``HoverPhase/ended`` when it leaves. Moves with a button held
+        ///     are drags and must not be reported here.
         func updatePointerGestureTarget(
             _ target: Widget,
             minimumDragDistance: Double,
@@ -76,7 +82,8 @@ extension BackendFeatures {
             onDragEnded: (@MainActor (PointerGestureEvent) -> Void)?,
             onTap: (@MainActor (PointerGestureEvent) -> Void)?,
             onScroll: (@MainActor (PointerScrollEvent) -> Void)?,
-            onMagnify: (@MainActor (PointerMagnifyEvent) -> Void)?
+            onMagnify: (@MainActor (PointerMagnifyEvent) -> Void)?,
+            onMove: (@MainActor (PointerMoveEvent) -> Void)?
         )
     }
 }

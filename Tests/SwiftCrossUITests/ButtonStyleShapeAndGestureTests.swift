@@ -150,6 +150,8 @@ struct LegacyChevron: Shape {
     final class AppKitShapeHarness<Content: View> {
         /// The backend under test.
         let backend: AppKitBackend
+        /// The window the view lives in.
+        let window: NSCustomWindow
         /// The view graph holding the shape.
         let viewGraph: ViewGraph<Content>
         /// The environment that layout runs in.
@@ -169,6 +171,7 @@ struct LegacyChevron: Shape {
                 withDefaultSize: SIMD2(200, 200),
                 id: "window"
             )
+            self.window = window
             environment = EnvironmentValues(backend: backend)
                 .with(\.window, window)
             viewGraph = ViewGraph(
@@ -618,6 +621,40 @@ struct ButtonStyleShapeAndGestureTests {
         #expect(finite.size.width.isFinite)
     }
 
+    @Test("Hover phases compare by location")
+    func hoverPhasesCompare() {
+        #expect(HoverPhase.active(CGPoint(x: 1.0, y: 2.0)) == .active(CGPoint(x: 1.0, y: 2.0)))
+        #expect(HoverPhase.active(CGPoint(x: 1.0, y: 2.0)) != .active(CGPoint(x: 1.0, y: 3.0)))
+        #expect(HoverPhase.ended == .ended)
+        #expect(HoverPhase.ended != .active(.zero))
+
+        let event = PointerMoveEvent(phase: .ended)
+        #expect(event.phase == .ended)
+        #expect(event.modifiers.isEmpty)
+    }
+
+    @MainActor
+    @Test("Hover modifiers leave the view's layout untouched")
+    func hoverModifiersAreLayoutTransparent() {
+        let plain = computeLayout(of: Text("Snap"))
+        let withHover = computeLayout(
+            of: Text("Snap").onContinuousHover { _ in }
+        )
+        let withMove = computeLayout(
+            of: Text("Snap").onPointerMove { _ in }
+        )
+        let chained = computeLayout(
+            of: Text("Snap")
+                .gesture(DragGesture(minimumDistance: 0.0))
+                .onContinuousHover(coordinateSpace: .global) { _ in }
+                .onPointerMove { _ in }
+        )
+
+        #expect(withHover.size == plain.size)
+        #expect(withMove.size == plain.size)
+        #expect(chained.size == plain.size)
+    }
+
     @Test("Pointer modifiers are an option set with readable names")
     func pointerModifiersAreAnOptionSet() {
         let modifiers: PointerModifiers = [.shift, .command]
@@ -887,6 +924,73 @@ struct ButtonStyleShapeAndGestureTests {
             #expect(
                 window.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua
             )
+        }
+
+        @MainActor
+        @Test("Mouse movement delivers hover phases through AppKitBackend")
+        func continuousHoverDeliversPhasesThroughAppKit() {
+            let log = HandlerLog()
+            let harness = AppKitShapeHarness(
+                Color.blue.frame(width: 40.0, height: 20.0)
+                    .onContinuousHover { phase in
+                        switch phase {
+                            case .active(let location):
+                                log.record("active \(Self.describe(location))")
+                            case .ended:
+                                log.record("ended")
+                        }
+                    }
+                    .onPointerMove { event in
+                        if case .active = event.phase {
+                            log.record("move \(event.modifiers)")
+                        }
+                    }
+            )
+            harness.render()
+
+            guard let target = Self.pointerTarget(in: harness.widget) else {
+                Issue.record("expected a pointer gesture target")
+                return
+            }
+
+            // Mouse events carry window coordinates; the target converts
+            // them into its own flipped space, so start from the point the
+            // handler should see and convert it the other way.
+            let windowPoint = target.convert(CGPoint(x: 7.0, y: 3.0), to: nil)
+            guard
+                let move = NSEvent.mouseEvent(
+                    with: .mouseMoved,
+                    location: windowPoint,
+                    modifierFlags: [.shift],
+                    timestamp: 0.0,
+                    windowNumber: harness.window.windowNumber,
+                    context: nil,
+                    eventNumber: 0,
+                    clickCount: 0,
+                    pressure: 0.0
+                ),
+                let exit = NSEvent.enterExitEvent(
+                    with: .mouseExited,
+                    location: CGPoint(x: -1.0, y: -1.0),
+                    modifierFlags: [],
+                    timestamp: 0.0,
+                    windowNumber: harness.window.windowNumber,
+                    context: nil,
+                    eventNumber: 0,
+                    trackingNumber: 0,
+                    userData: nil
+                )
+            else {
+                Issue.record("could not synthesise mouse events")
+                return
+            }
+
+            target.mouseMoved(with: move)
+            target.mouseExited(with: exit)
+            // Leaving twice reports once.
+            target.mouseExited(with: exit)
+
+            #expect(log.entries == ["active (7, 3)", "move shift", "ended"])
         }
 
         @Test("AppKit modifier flags map onto pointer modifiers")

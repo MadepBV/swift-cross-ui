@@ -18,6 +18,13 @@
 - ``View/simultaneousGesture(_:)``
 - ``GestureModifier``
 
+### Pointer movement
+
+- ``View/onContinuousHover(coordinateSpace:perform:)``
+- ``View/onPointerMove(perform:)``
+- ``HoverPhase``
+- ``PointerMoveEvent``
+
 ### Scrolling and zooming
 
 - ``View/onScrollWheel(perform:)``
