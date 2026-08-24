@@ -292,7 +292,8 @@ extension WinUIBackend: BackendFeatures.PointerGestures {
         onDragEnded: (@MainActor (PointerGestureEvent) -> Void)?,
         onTap: (@MainActor (PointerGestureEvent) -> Void)?,
         onScroll: (@MainActor (PointerScrollEvent) -> Void)?,
-        onMagnify: (@MainActor (PointerMagnifyEvent) -> Void)?
+        onMagnify: (@MainActor (PointerMagnifyEvent) -> Void)?,
+        onMove: (@MainActor (PointerMoveEvent) -> Void)?
     ) {
         let target = container as! PointerGestureTarget
         target.minimumDragDistance = minimumDragDistance
@@ -305,6 +306,7 @@ extension WinUIBackend: BackendFeatures.PointerGestures {
             target.tapHandler = nil
             target.scrollHandler = nil
             target.magnifyHandler = nil
+            target.moveHandler = nil
             return
         }
 
@@ -313,6 +315,7 @@ extension WinUIBackend: BackendFeatures.PointerGestures {
         target.tapHandler = onTap
         target.scrollHandler = onScroll
         target.magnifyHandler = onMagnify
+        target.moveHandler = onMove
     }
 }
 
@@ -404,6 +407,19 @@ final class PointerGestureTarget: WinUI.Canvas {
         }
     }
 
+    /// The action to run for each pointer move with no button held (a mouse
+    /// or a hovering pen), and once with ``HoverPhase/ended`` when the
+    /// pointer leaves. Touch never hovers, so it never reports here.
+    var moveHandler: (@MainActor (PointerMoveEvent) -> Void)? {
+        didSet {
+            updateHitTesting()
+        }
+    }
+
+    /// Whether the last move reported the pointer as inside, so that leaving
+    /// is reported exactly once.
+    private var pointerIsInside = false
+
     /// The modifier keys reported by the most recent pointer event.
     private var lastModifiers: PointerModifiers = []
 
@@ -458,6 +474,10 @@ final class PointerGestureTarget: WinUI.Canvas {
         pointerCanceled.addHandler { [weak self] _, _ in
             self?.resetDrag()
         }
+        pointerExited.addHandler { [weak self] _, args in
+            guard let self, let args else { return }
+            self.handlePointerExited(args)
+        }
         tapped.addHandler { [weak self] _, args in
             guard let self, let args, self.tapCount == 1 else { return }
             let relativeTo: WinUI.UIElement? = self.reportsWindowCoordinates ? nil : self
@@ -507,7 +527,7 @@ final class PointerGestureTarget: WinUI.Canvas {
         let wantsEvents =
             dragChangedHandler != nil || dragEndedHandler != nil
             || tapHandler != nil || scrollHandler != nil
-            || magnifyHandler != nil
+            || magnifyHandler != nil || moveHandler != nil
         if wantsEvents {
             let brush = SolidColorBrush()
             brush.color = UWP.Color(a: 0, r: 0, g: 0, b: 0)
@@ -615,7 +635,28 @@ final class PointerGestureTarget: WinUI.Canvas {
     }
 
     private func handlePointerMoved(_ args: WinUI.PointerRoutedEventArgs) {
-        lastModifiers = PointerModifiers(virtualKeyModifiers: args.keyModifiers)
+        let modifiers = PointerModifiers(virtualKeyModifiers: args.keyModifiers)
+        lastModifiers = modifiers
+
+        // A move with nothing pressed is a hover. `isInContact` is false for
+        // a mouse with no button down and for a pen hovering above the
+        // screen; a drag in progress is reported through the drag handlers
+        // below instead.
+        if let moveHandler,
+            pressedPointerId == nil,
+            let point = try? args.getCurrentPoint(self),
+            !point.isInContact,
+            let location = location(of: args)
+        {
+            pointerIsInside = true
+            moveHandler(
+                PointerMoveEvent(
+                    phase: .active(location),
+                    modifiers: modifiers,
+                    time: Date()
+                )
+            )
+        }
 
         guard
             let pressedPointerId,
@@ -638,6 +679,17 @@ final class PointerGestureTarget: WinUI.Canvas {
         }
 
         dragChangedHandler?(dragEvent(start: start, location: current))
+    }
+
+    private func handlePointerExited(_ args: WinUI.PointerRoutedEventArgs) {
+        let modifiers = PointerModifiers(virtualKeyModifiers: args.keyModifiers)
+        lastModifiers = modifiers
+
+        guard let moveHandler, pointerIsInside else {
+            return
+        }
+        pointerIsInside = false
+        moveHandler(PointerMoveEvent(phase: .ended, modifiers: modifiers, time: Date()))
     }
 
     private func handlePointerReleased(_ args: WinUI.PointerRoutedEventArgs) {
