@@ -1303,7 +1303,12 @@ public final class WinUIBackend:
     }
 
     public func createImageView() -> Widget {
-        WinUI.Image()
+        let imageView = WinUI.Image()
+        // SwiftCrossUI has already decided the size the image should be
+        // displayed at, so fill it exactly rather than letting WinUI fit the
+        // bitmap's aspect ratio inside it a second time.
+        imageView.stretch = .fill
+        return imageView
     }
 
     public func updateImageView(
@@ -1317,15 +1322,37 @@ public final class WinUIBackend:
         environment: EnvironmentValues
     ) {
         let imageView = imageView as! WinUI.Image
-        let bitmap = WriteableBitmap(Int32(width), Int32(height))
-        let buffer = try! bitmap.pixelBuffer.buffer!
-        memcpy(buffer, rgbaData, min(Int(bitmap.pixelBuffer.length), rgbaData.count))
+
+        // Resizing is handled entirely by `stretch`, so unless the pixels
+        // changed (or there's no bitmap yet) there's nothing to redraw. A
+        // canvas that replaces a large frame every update reuses the same
+        // `WriteableBitmap` for as long as its dimensions stay the same.
+        let (bitmap, bitmapIsNew) = ImageBitmapRegistry.shared.bitmap(
+            for: imageView,
+            width: width,
+            height: height
+        )
+        guard dataHasChanged || bitmapIsNew else {
+            return
+        }
+
+        guard let pixelBuffer = bitmap.pixelBuffer, let buffer = try? pixelBuffer.buffer else {
+            logger.warning("failed to access the pixel buffer of a WriteableBitmap")
+            return
+        }
+        let byteCount = min(Int(pixelBuffer.length), rgbaData.count)
+        rgbaData.withUnsafeBytes { source in
+            guard let base = source.baseAddress else {
+                return
+            }
+            memcpy(buffer, base, byteCount)
+        }
 
         // Convert RGBA to BGRA in-place, and apply janky transparency fix until we
         // figure out how to fix WinUI image blending (non-black transparent pixels
         // just don't seem to get blended at all, or at least pixels that are white
         // enough, haven't tested many colours).
-        for i in 0..<(width * height) {
+        for i in 0..<(byteCount / 4) {
             let offset = i * 4
             if buffer[offset + 3] == 0 {
                 // If transparent, make the pixel black (this is the janky blending fix).
@@ -1340,7 +1367,12 @@ public final class WinUIBackend:
             }
         }
 
-        imageView.source = bitmap
+        // Tells WinUI that the pixel buffer changed so that it redraws.
+        try? bitmap.invalidate()
+
+        if bitmapIsNew {
+            imageView.source = bitmap
+        }
     }
 
     public func createSplitView(leadingChild: Widget, trailingChild: Widget) -> Widget {
@@ -1514,45 +1546,101 @@ public final class WinUIBackend:
         window: Window?,
         resultHandler handleResult: @escaping (DialogResult<[URL]>) -> Void
     ) {
+        guard let hwnd = (window ?? windows.first)?.getHWND() else {
+            logger.warning("WinUI can't show a file dialog without a window")
+            handleResult(.cancelled)
+            return
+        }
+
+        // WinRT's pickers can't show files and folders in one dialog, so a
+        // dialog that only accepts folders uses the folder picker and one that
+        // accepts files (or both) uses the file picker.
+        if openDialogOptions.allowSelectingDirectories && !openDialogOptions.allowSelectingFiles {
+            let picker = FolderPicker()
+            do {
+                let interface: SwiftIInitializeWithWindow = try picker.thisPtr.QueryInterface()
+                try interface.initialize(with: hwnd)
+                // The folder picker requires at least one filter entry.
+                picker.fileTypeFilter.append("*")
+                if !fileDialogOptions.defaultButtonLabel.isEmpty {
+                    picker.commitButtonText = fileDialogOptions.defaultButtonLabel
+                }
+
+                guard let promise = try picker.pickSingleFolderAsync() else {
+                    handleResult(.cancelled)
+                    return
+                }
+                promise.completed = { operation, status in
+                    let result: DialogResult<[URL]> = Self.handleAsyncOperationCompletion(
+                        operation,
+                        status
+                    ) { result in
+                        let folder = URL(fileURLWithPath: result.path, isDirectory: true)
+                        return .success([folder])
+                    } onFailure: {
+                        return .cancelled
+                    }
+                    handleResult(result)
+                }
+            } catch {
+                logger.error("failed to show folder picker", metadata: ["error": "\(error)"])
+                handleResult(.cancelled)
+            }
+            return
+        }
+
         let picker = FileOpenPicker()
+        do {
+            let interface: SwiftIInitializeWithWindow = try picker.thisPtr.QueryInterface()
+            try interface.initialize(with: hwnd)
 
-        let window = window ?? windows[0]
-        let hwnd = window.getHWND()!
-        let interface: SwiftIInitializeWithWindow = try! picker.thisPtr.QueryInterface()
-        try! interface.initialize(with: hwnd)
-
-        picker.fileTypeFilter.append("*")
-
-        if openDialogOptions.allowMultipleSelections {
-            let promise = try! picker.pickMultipleFilesAsync()!
-            promise.completed = { operation, status in
-                let result: DialogResult<[URL]> = Self.handleAsyncOperationCompletion(
-                    operation,
-                    status
-                ) { result in
-                    let files = Array(result).compactMap { $0 }
-                        .map(\.path)
-                        .map(URL.init(fileURLWithPath:))
-                    return .success(files)
-                } onFailure: {
-                    return .cancelled
-                }
-                handleResult(result)
+            for filter in Self.fileTypeFilters(for: fileDialogOptions) {
+                picker.fileTypeFilter.append(filter)
             }
-        } else {
-            let promise = try! picker.pickSingleFileAsync()!
-            promise.completed = { operation, status in
-                let result: DialogResult<[URL]> = Self.handleAsyncOperationCompletion(
-                    operation,
-                    status
-                ) { result in
-                    let file = URL(fileURLWithPath: result.path)
-                    return .success([file])
-                } onFailure: {
-                    return .cancelled
-                }
-                handleResult(result)
+            if !fileDialogOptions.defaultButtonLabel.isEmpty {
+                picker.commitButtonText = fileDialogOptions.defaultButtonLabel
             }
+
+            if openDialogOptions.allowMultipleSelections {
+                guard let promise = try picker.pickMultipleFilesAsync() else {
+                    handleResult(.cancelled)
+                    return
+                }
+                promise.completed = { operation, status in
+                    let result: DialogResult<[URL]> = Self.handleAsyncOperationCompletion(
+                        operation,
+                        status
+                    ) { result in
+                        let files = Array(result).compactMap { $0 }
+                            .map(\.path)
+                            .map(URL.init(fileURLWithPath:))
+                        return .success(files)
+                    } onFailure: {
+                        return .cancelled
+                    }
+                    handleResult(result)
+                }
+            } else {
+                guard let promise = try picker.pickSingleFileAsync() else {
+                    handleResult(.cancelled)
+                    return
+                }
+                promise.completed = { operation, status in
+                    let result: DialogResult<[URL]> = Self.handleAsyncOperationCompletion(
+                        operation,
+                        status
+                    ) { result in
+                        let file = URL(fileURLWithPath: result.path)
+                        return .success([file])
+                    } onFailure: {
+                        return .cancelled
+                    }
+                    handleResult(result)
+                }
+            }
+        } catch {
+            logger.error("failed to show file picker", metadata: ["error": "\(error)"])
+            handleResult(.cancelled)
         }
     }
 
@@ -1562,27 +1650,90 @@ public final class WinUIBackend:
         window: Window?,
         resultHandler handleResult: @escaping (DialogResult<URL>) -> Void
     ) {
-        let picker = FileSavePicker()
-
-        let window = window ?? windows[0]
-        let hwnd = window.getHWND()!
-        let interface: SwiftIInitializeWithWindow = try! picker.thisPtr.QueryInterface()
-        try! interface.initialize(with: hwnd)
-
-        _ = picker.fileTypeChoices.insert("Text", [".txt"].toVector())
-        let promise = try! picker.pickSaveFileAsync()!
-        promise.completed = { operation, status in
-            let result: DialogResult<URL> = Self.handleAsyncOperationCompletion(
-                operation,
-                status
-            ) { result in
-                let file = URL(fileURLWithPath: result.path)
-                return .success(file)
-            } onFailure: {
-                return .cancelled
-            }
-            handleResult(result)
+        guard let hwnd = (window ?? windows.first)?.getHWND() else {
+            logger.warning("WinUI can't show a file dialog without a window")
+            handleResult(.cancelled)
+            return
         }
+
+        let picker = FileSavePicker()
+        do {
+            let interface: SwiftIInitializeWithWindow = try picker.thisPtr.QueryInterface()
+            try interface.initialize(with: hwnd)
+
+            // The save picker requires at least one file type choice. "." is
+            // the documented way of allowing any extension.
+            var hasChoices = false
+            for contentType in fileDialogOptions.allowedContentTypes {
+                let extensions = contentType.fileExtensions.map(Self.pickerExtension)
+                guard !extensions.isEmpty else {
+                    continue
+                }
+                _ = picker.fileTypeChoices.insert(contentType.name, extensions.toVector())
+                hasChoices = true
+            }
+            if !hasChoices || fileDialogOptions.allowOtherContentTypes {
+                _ = picker.fileTypeChoices.insert("All files", ["."].toVector())
+            }
+
+            if let defaultFileName = saveDialogOptions.defaultFileName {
+                picker.suggestedFileName = defaultFileName
+            }
+            if !fileDialogOptions.defaultButtonLabel.isEmpty {
+                picker.commitButtonText = fileDialogOptions.defaultButtonLabel
+            }
+
+            guard let promise = try picker.pickSaveFileAsync() else {
+                handleResult(.cancelled)
+                return
+            }
+            promise.completed = { operation, status in
+                let result: DialogResult<URL> = Self.handleAsyncOperationCompletion(
+                    operation,
+                    status
+                ) { result in
+                    let file = URL(fileURLWithPath: result.path)
+                    return .success(file)
+                } onFailure: {
+                    return .cancelled
+                }
+                handleResult(result)
+            }
+        } catch {
+            logger.error("failed to show save picker", metadata: ["error": "\(error)"])
+            handleResult(.cancelled)
+        }
+    }
+
+    /// The file type filters for an open dialog.
+    ///
+    /// WinRT spells extensions with a leading dot and requires at least one
+    /// entry, with `"*"` meaning any file.
+    ///
+    /// - Parameter options: The dialog's options.
+    /// - Returns: The filters to install.
+    private static func fileTypeFilters(for options: FileDialogOptions) -> [String] {
+        var filters: [String] = []
+        for contentType in options.allowedContentTypes {
+            for fileExtension in contentType.fileExtensions {
+                let filter = pickerExtension(fileExtension)
+                if !filters.contains(filter) {
+                    filters.append(filter)
+                }
+            }
+        }
+        if filters.isEmpty || options.allowOtherContentTypes {
+            filters.append("*")
+        }
+        return filters
+    }
+
+    /// Spells a file extension the way WinRT's pickers expect it.
+    ///
+    /// - Parameter fileExtension: The extension, with or without a leading dot.
+    /// - Returns: The extension with a leading dot.
+    private static func pickerExtension(_ fileExtension: String) -> String {
+        fileExtension.hasPrefix(".") ? fileExtension : "." + fileExtension
     }
 
     /// A helper method that abstracts out the common failure case handling code
@@ -1629,74 +1780,6 @@ public final class WinUIBackend:
         }
 
         return handleSuccess(result)
-    }
-
-    public func createTapGestureTarget(wrapping child: Widget, gesture: TapGesture) -> Widget {
-        if gesture != .primary {
-            fatalError("Unsupported gesture type \(gesture)")
-        }
-        let tapGestureTarget = TapGestureTarget()
-        insert(child, into: tapGestureTarget, at: 0)
-        tapGestureTarget.child = child
-
-        // Set a background so that the click target's entire area gets hit
-        // tested. The background we set is transparent so that it doesn't
-        // change the visual appearance of the view.
-        let brush = SolidColorBrush()
-        brush.color = UWP.Color(a: 0, r: 0, g: 0, b: 0)
-        tapGestureTarget.background = brush
-
-        tapGestureTarget.pointerPressed.addHandler { [weak tapGestureTarget] _, _ in
-            guard let tapGestureTarget else { return }
-            tapGestureTarget.clickHandler?()
-        }
-        return tapGestureTarget
-    }
-
-    public func updateTapGestureTarget(
-        _ tapGestureTarget: Widget,
-        gesture: TapGesture,
-        environment: EnvironmentValues,
-        action: @escaping () -> Void
-    ) {
-        if gesture != .primary {
-            fatalError("Unsupported gesture type \(gesture)")
-        }
-        let tapGestureTarget = tapGestureTarget as! TapGestureTarget
-        tapGestureTarget.clickHandler = environment.isEnabled ? action : {}
-    }
-
-    public func createHoverTarget(wrapping child: Widget) -> Widget {
-        let hoverTarget = HoverGestureTarget()
-        insert(child, into: hoverTarget, at: 0)
-        hoverTarget.child = child
-
-        // Ensure the hover target covers the full area of the child.
-        // Use a transparent background so the visual appearance doesn't change but
-        // the hit-testing covers the whole region.
-        let brush = SolidColorBrush()
-        brush.color = UWP.Color(a: 0, r: 0, g: 0, b: 0)
-        hoverTarget.background = brush
-
-        hoverTarget.pointerEntered.addHandler { [weak hoverTarget] _, _ in
-            guard let hoverTarget else { return }
-            hoverTarget.enterHandler?()
-        }
-        hoverTarget.pointerExited.addHandler { [weak hoverTarget] _, _ in
-            guard let hoverTarget else { return }
-            hoverTarget.exitHandler?()
-        }
-        return hoverTarget
-    }
-
-    public func updateHoverTarget(
-        _ hoverTarget: Widget,
-        environment: EnvironmentValues,
-        action: @escaping (Bool) -> Void
-    ) {
-        let hoverTarget = hoverTarget as! HoverGestureTarget
-        hoverTarget.enterHandler = environment.isEnabled ? { action(true) } : {}
-        hoverTarget.exitHandler = environment.isEnabled ? { action(false) } : {}
     }
 
     public func createProgressSpinner() -> Widget {
@@ -2187,17 +2270,6 @@ final class CustomSplitView: SplitView {
     var sidebarResizeHandler: (() -> Void)?
 }
 
-final class TapGestureTarget: WinUI.Canvas {
-    var clickHandler: (() -> Void)?
-    var child: WinUI.FrameworkElement?
-}
-
-final class HoverGestureTarget: WinUI.Canvas {
-    var enterHandler: (() -> Void)?
-    var exitHandler: (() -> Void)?
-    var child: WinUI.FrameworkElement?
-}
-
 final class TooltipContainer: WinUI.Canvas {
     var child: WinUI.FrameworkElement
     var tooltip: ToolTip
@@ -2331,6 +2403,67 @@ public class CustomWindow: WinUI.Window {
 public final class GeometryGroupHolder {
     var group = GeometryGroup()
     var strokeStyle: StrokeStyle?
+}
+
+/// Keeps the `WriteableBitmap` behind each image view so that an image whose
+/// pixels change every update rewrites one pixel buffer instead of allocating
+/// a new bitmap each time.
+///
+/// `WinUI.Image` is a final class, so the bitmap can't live on a subclass.
+/// Entries hold the image view weakly and are checked for identity on every
+/// lookup, so a recycled `ObjectIdentifier` can never hand a new image view
+/// another view's bitmap.
+@MainActor
+final class ImageBitmapRegistry {
+    static let shared = ImageBitmapRegistry()
+
+    private struct Entry {
+        weak var imageView: WinUI.Image?
+        let bitmap: WriteableBitmap
+        let width: Int
+        let height: Int
+    }
+
+    private var entries: [ObjectIdentifier: Entry] = [:]
+
+    private init() {}
+
+    /// Returns a bitmap of the given size for an image view, reusing the
+    /// view's existing bitmap when the size hasn't changed.
+    ///
+    /// - Parameters:
+    ///   - imageView: The image view the bitmap is for.
+    ///   - width: The bitmap's width in pixels.
+    ///   - height: The bitmap's height in pixels.
+    /// - Returns: The bitmap, and whether it was newly created (in which case
+    ///   it still has to be assigned as the view's source).
+    func bitmap(
+        for imageView: WinUI.Image,
+        width: Int,
+        height: Int
+    ) -> (bitmap: WriteableBitmap, isNew: Bool) {
+        let key = ObjectIdentifier(imageView)
+        if let entry = entries[key],
+            entry.imageView === imageView,
+            entry.width == width,
+            entry.height == height
+        {
+            return (entry.bitmap, false)
+        }
+
+        // Drop entries whose image views have gone away so the registry
+        // doesn't grow without bound in a long-lived app.
+        entries = entries.filter { _, entry in entry.imageView != nil }
+
+        let bitmap = WriteableBitmap(Int32(max(width, 1)), Int32(max(height, 1)))
+        entries[key] = Entry(
+            imageView: imageView,
+            bitmap: bitmap,
+            width: width,
+            height: height
+        )
+        return (bitmap, true)
+    }
 }
 
 @MainActor
