@@ -100,7 +100,7 @@ extension AppKitBackend: BackendFeatures.Accessibility {
     /// Whether a view is one of the plain containers created by
     /// ``AppKitBackend/createContainer()`` rather than a real control.
     private static func isBareContainer(_ widget: Widget) -> Bool {
-        type(of: widget) == NSView.self
+        type(of: widget) == NSView.self || widget is NSLayoutContainerView
     }
 
     /// Turns a view into a single accessibility element.

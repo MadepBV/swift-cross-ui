@@ -906,6 +906,50 @@ struct ButtonStyleShapeAndGestureTests {
         }
 
         @MainActor
+        @Test("Layout containers let clicks through to the view beneath")
+        func layoutContainersArePassThrough() {
+            let harness = AppKitShapeHarness(
+                Color.blue.frame(width: 40.0, height: 20.0)
+                    .onTapGesture {}
+                    .overlay {
+                        GeometryReader { _ in
+                            VStack {
+                                Text("")
+                            }
+                        }
+                    }
+            )
+            harness.render()
+            // The gesture target is sized by Auto Layout constraints, which
+            // only resolve once layout runs.
+            harness.widget.layoutSubtreeIfNeeded()
+
+            guard let target = Self.firstView(ofType: NSCustomTapGestureTarget.self, in: harness.widget)
+            else {
+                Issue.record("expected a tap gesture target")
+                return
+            }
+            #expect(target.bounds.width > 0.0 && target.bounds.height > 0.0)
+
+            // `hitTest(_:)` takes a point in the receiver's superview's
+            // coordinates, so convert the target's centre up to there.
+            let centre = target.convert(
+                CGPoint(x: target.bounds.midX, y: target.bounds.midY),
+                to: harness.widget.superview
+            )
+
+            let hit = harness.widget.hitTest(centre)
+            #expect(
+                hit === target,
+                """
+                Expected the overlay's containers to be transparent, got \
+                \(String(describing: hit)); target frame \(target.frame), \
+                root frame \(harness.widget.frame), centre \(centre)
+                """
+            )
+        }
+
+        @MainActor
         @Test("Updating a window for a colour scheme sets its appearance")
         func windowAppearanceFollowsColorScheme() {
             let backend = AppKitBackend()
@@ -1212,6 +1256,22 @@ struct ButtonStyleShapeAndGestureTests {
         }
         return result
     }
+
+    /// Finds the first view of a type in a hierarchy, depth first.
+    #if canImport(AppKitBackend)
+        @MainActor
+        static func firstView<T: NSView>(ofType type: T.Type, in view: NSView) -> T? {
+            if let match = view as? T {
+                return match
+            }
+            for subview in view.subviews {
+                if let match = firstView(ofType: type, in: subview) {
+                    return match
+                }
+            }
+            return nil
+        }
+    #endif
 
     @MainActor
     func computeLayout<V: View>(

@@ -3,7 +3,7 @@ import AppKit
 
 extension AppKitBackend {
     public func createTapGestureTarget(wrapping child: Widget, gesture _: TapGesture) -> Widget {
-        let container = NSView()
+        let container = NSLayoutContainerView()
 
         container.addSubview(child)
         child.leadingAnchor.constraint(equalTo: container.leadingAnchor)
@@ -55,7 +55,7 @@ extension AppKitBackend {
     }
 
     public func createHoverTarget(wrapping child: Widget) -> Widget {
-        let container = NSView()
+        let container = NSLayoutContainerView()
 
         container.addSubview(child)
         child.leadingAnchor.constraint(equalTo: container.leadingAnchor)
@@ -216,7 +216,7 @@ final class NSCustomHoverTarget: NSView {
 
 extension AppKitBackend: BackendFeatures.PointerGestures {
     public func createPointerGestureTarget(wrapping child: Widget) -> Widget {
-        let container = NSView()
+        let container = NSLayoutContainerView()
 
         container.addSubview(child)
         child.leadingAnchor.constraint(equalTo: container.leadingAnchor)
