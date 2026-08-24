@@ -1,9 +1,11 @@
 /// A view with gestures attached to it.
 ///
-/// Created by ``View/gesture(_:)``. It is returned concretely rather than as
-/// `some View` so that ``GestureModifier/simultaneousGesture(_:)`` can add a
-/// gesture to an existing target instead of nesting a second one — nested
-/// targets would mean only the outermost ever saw a pointer event.
+/// Created by ``View/gesture(_:)``, ``View/onScrollWheel(perform:)`` and
+/// ``View/onMagnify(perform:)``. It is returned concretely rather than as
+/// `some View` so that ``GestureModifier/simultaneousGesture(_:)`` (and the
+/// scroll and magnify modifiers) can add to an existing target instead of
+/// nesting a second one — nested targets would mean only the outermost ever
+/// saw a pointer event.
 public struct GestureModifier<Content: View>: TypeSafeView {
     typealias Children = TupleView1<Content>.Children
 
@@ -15,6 +17,44 @@ public struct GestureModifier<Content: View>: TypeSafeView {
     /// Empty when every gesture handed to this view was one that no backend
     /// can recognize, in which case this modifier is a pass-through.
     var gestures: [ResolvedGesture]
+
+    /// The actions to run for each scroll wheel or trackpad scroll step.
+    var scrollHandlers: [@MainActor (PointerScrollEvent) -> Void] = []
+
+    /// The actions to run for each pinch-to-zoom step.
+    var magnifyHandlers: [@MainActor (PointerMagnifyEvent) -> Void] = []
+
+    /// Whether anything at all is attached, and so whether a pointer gesture
+    /// target is needed.
+    private var hasHandlers: Bool {
+        !gestures.isEmpty || !scrollHandlers.isEmpty || !magnifyHandlers.isEmpty
+    }
+
+    /// Adds a scroll wheel handler to this view, alongside whatever is
+    /// already attached.
+    ///
+    /// - Parameter action: The action to run for each scroll step.
+    /// - Returns: A view that also reports scrolling.
+    public func onScrollWheel(
+        perform action: @escaping @MainActor (PointerScrollEvent) -> Void
+    ) -> GestureModifier<Content> {
+        var modified = self
+        modified.scrollHandlers.append(action)
+        return modified
+    }
+
+    /// Adds a pinch-to-zoom handler to this view, alongside whatever is
+    /// already attached.
+    ///
+    /// - Parameter action: The action to run for each pinch step.
+    /// - Returns: A view that also reports pinching.
+    public func onMagnify(
+        perform action: @escaping @MainActor (PointerMagnifyEvent) -> Void
+    ) -> GestureModifier<Content> {
+        var modified = self
+        modified.magnifyHandlers.append(action)
+        return modified
+    }
 
     /// Adds another gesture to this view.
     ///
@@ -112,7 +152,7 @@ public struct GestureModifier<Content: View>: TypeSafeView {
         }
 
         guard
-            !gestures.isEmpty,
+            hasHandlers,
             let pointerBackend = backend
                 as? any BaseAppBackend & BackendFeatures.PointerGestures
         else {
@@ -180,6 +220,26 @@ public struct GestureModifier<Content: View>: TypeSafeView {
             }
         }
 
+        let scrollHandlers = scrollHandlers
+        var onScroll: (@MainActor (PointerScrollEvent) -> Void)?
+        if !scrollHandlers.isEmpty {
+            onScroll = { event in
+                for handler in scrollHandlers {
+                    handler(event)
+                }
+            }
+        }
+
+        let magnifyHandlers = magnifyHandlers
+        var onMagnify: (@MainActor (PointerMagnifyEvent) -> Void)?
+        if !magnifyHandlers.isEmpty {
+            onMagnify = { event in
+                for handler in magnifyHandlers {
+                    handler(event)
+                }
+            }
+        }
+
         func updateTarget<
             PointerBackend: BaseAppBackend & BackendFeatures.PointerGestures
         >(_ backend: PointerBackend) {
@@ -187,16 +247,20 @@ public struct GestureModifier<Content: View>: TypeSafeView {
                 widget as! PointerBackend.Widget,
                 minimumDragDistance: dragDistances.min() ?? 0.0,
                 tapCount: tapCount ?? 1,
-                coordinateSpace: gestures[0].coordinateSpace,
+                // Scroll and magnify events are always reported in the
+                // target's own space unless a gesture asked for the window's.
+                coordinateSpace: gestures.first?.coordinateSpace ?? .local,
                 environment: environment,
                 onDragChanged: onDragChanged,
                 onDragEnded: onDragEnded,
-                onTap: onTap
+                onTap: onTap,
+                onScroll: onScroll,
+                onMagnify: onMagnify
             )
         }
 
         guard
-            !gestures.isEmpty,
+            hasHandlers,
             let pointerBackend = backend
                 as? any BaseAppBackend & BackendFeatures.PointerGestures
         else {
@@ -273,5 +337,89 @@ extension View {
         _ gesture: some Gesture
     ) -> GestureModifier<Self> {
         self.gesture(gesture)
+    }
+
+    /// Runs an action for each step of a scroll wheel or trackpad scroll
+    /// over this view.
+    ///
+    /// SwiftUI has no modifier for raw wheel input, so this is SwiftCrossUI
+    /// vocabulary. It exists for views that scroll or zoom their own content
+    /// — a drawing canvas panning with the wheel and zooming at the cursor
+    /// with Command (Control on Windows) held:
+    ///
+    /// ```swift
+    /// SheetCanvas()
+    ///     .onScrollWheel { event in
+    ///         if event.modifiers.contains(.command) {
+    ///             zoom(by: event.deltaY, at: event.location)
+    ///         } else {
+    ///             pan(by: CGSize(width: event.deltaX, height: event.deltaY))
+    ///         }
+    ///     }
+    /// ```
+    ///
+    /// While a handler is attached the view consumes the scrolling; without
+    /// one it reaches whatever it would have reached before, such as an
+    /// enclosing ``ScrollView``. See ``PointerScrollEvent`` for the units the
+    /// deltas are in.
+    ///
+    /// Carries the same backend requirements as ``View/gesture(_:)``: a
+    /// backend without ``BackendFeatures/PointerGestures`` never calls the
+    /// action. `AppKitBackend` and `WinUIBackend` implement it.
+    ///
+    /// - Parameter action: The action to run for each scroll step.
+    /// - Returns: A view that reports scrolling.
+    ///
+    /// ## See Also
+    ///
+    /// - ``PointerScrollEvent``
+    /// - ``View/onMagnify(perform:)``
+    public func onScrollWheel(
+        perform action: @escaping @MainActor (PointerScrollEvent) -> Void
+    ) -> GestureModifier<Self> {
+        GestureModifier(
+            body: TupleView1(self),
+            gestures: [],
+            scrollHandlers: [action]
+        )
+    }
+
+    /// Runs an action for each step of a pinch-to-zoom over this view.
+    ///
+    /// This is SwiftCrossUI's spelling of SwiftUI's `MagnifyGesture`, as a
+    /// modifier: ``PointerMagnifyEvent/magnification`` is the same
+    /// accumulated scale factor that `MagnifyGesture.Value.magnification`
+    /// reports, and the event adds the pinch's location and the modifier
+    /// keys.
+    ///
+    /// ```swift
+    /// SheetCanvas()
+    ///     .onMagnify { event in
+    ///         if event.phase == .began { zoomAtPinchStart = zoom }
+    ///         zoom = zoomAtPinchStart * event.magnification
+    ///     }
+    /// ```
+    ///
+    /// Carries the same backend requirements as ``View/gesture(_:)``. On
+    /// macOS a trackpad pinch drives it; on Windows a touch pinch does, and a
+    /// precision touchpad pinch arrives as a Control+wheel
+    /// ``View/onScrollWheel(perform:)`` event instead, as it does for every
+    /// Windows app.
+    ///
+    /// - Parameter action: The action to run for each pinch step.
+    /// - Returns: A view that reports pinching.
+    ///
+    /// ## See Also
+    ///
+    /// - ``PointerMagnifyEvent``
+    /// - ``View/onScrollWheel(perform:)``
+    public func onMagnify(
+        perform action: @escaping @MainActor (PointerMagnifyEvent) -> Void
+    ) -> GestureModifier<Self> {
+        GestureModifier(
+            body: TupleView1(self),
+            gestures: [],
+            magnifyHandlers: [action]
+        )
     }
 }

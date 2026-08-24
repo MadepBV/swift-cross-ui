@@ -28,6 +28,9 @@ public struct PointerGestureEvent: Sendable {
     /// Backends that can't measure this report zero.
     public var velocity: CGSize
 
+    /// The modifier keys held down when the event happened.
+    public var modifiers: PointerModifiers
+
     /// Describes a pointer position.
     ///
     /// - Parameters:
@@ -36,15 +39,18 @@ public struct PointerGestureEvent: Sendable {
     ///   - time: When the event happened.
     ///   - velocity: How fast the pointer is moving, or zero if the backend
     ///     can't measure it.
+    ///   - modifiers: The modifier keys held down.
     public init(
         startLocation: CGPoint,
         location: CGPoint,
         time: Date = Date(),
-        velocity: CGSize = CGSize(width: 0.0, height: 0.0)
+        velocity: CGSize = CGSize(width: 0.0, height: 0.0),
+        modifiers: PointerModifiers = []
     ) {
         self.startLocation = startLocation
         self.location = location
         self.time = time
         self.velocity = velocity
+        self.modifiers = modifiers
     }
 }

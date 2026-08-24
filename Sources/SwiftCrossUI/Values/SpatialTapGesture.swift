@@ -37,11 +37,21 @@ public struct SpatialTapGesture: Gesture {
         /// Where the tap happened, in the gesture's coordinate space.
         public var location: CGPoint
 
+        /// The modifier keys held down when the tap happened.
+        ///
+        /// SwiftUI's value has no such field; SwiftCrossUI adds it so that
+        /// additive selection (Shift or Command clicks) doesn't need a
+        /// separate keyboard listener.
+        public var modifiers: PointerModifiers
+
         /// Describes a tap at a location.
         ///
-        /// - Parameter location: Where the tap happened.
-        package init(location: CGPoint) {
+        /// - Parameters:
+        ///   - location: Where the tap happened.
+        ///   - modifiers: The modifier keys held down.
+        package init(location: CGPoint, modifiers: PointerModifiers = []) {
             self.location = location
+            self.modifiers = modifiers
         }
 
         /// Compares two tap locations.
@@ -57,6 +67,7 @@ public struct SpatialTapGesture: Gesture {
         public static func == (lhs: Value, rhs: Value) -> Bool {
             lhs.location.x == rhs.location.x
                 && lhs.location.y == rhs.location.y
+                && lhs.modifiers == rhs.modifiers
         }
     }
 

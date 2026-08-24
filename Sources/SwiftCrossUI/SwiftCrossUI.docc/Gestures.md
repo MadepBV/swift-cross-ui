@@ -18,6 +18,15 @@
 - ``View/simultaneousGesture(_:)``
 - ``GestureModifier``
 
+### Scrolling and zooming
+
+- ``View/onScrollWheel(perform:)``
+- ``View/onMagnify(perform:)``
+- ``PointerScrollEvent``
+- ``PointerMagnifyEvent``
+- ``PointerEventPhase``
+- ``PointerModifiers``
+
 ### Backend support
 
 - ``BackendFeatures/PointerGestures``

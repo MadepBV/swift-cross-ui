@@ -115,6 +115,31 @@ struct LegacyChevron: Shape {
         }
     }
 
+    /// An `NSMagnificationGestureRecognizer` whose state, position and
+    /// magnification the test drives.
+    final class ReplayedMagnificationGestureRecognizer: NSMagnificationGestureRecognizer {
+        /// The state to report.
+        var replayedState: NSGestureRecognizer.State = .began
+        /// The position to report.
+        var replayedLocation: CGPoint = .zero
+        /// The accumulated change in scale to report.
+        var replayedMagnification: CGFloat = 0.0
+
+        override var state: NSGestureRecognizer.State {
+            get { replayedState }
+            set { replayedState = newValue }
+        }
+
+        override var magnification: CGFloat {
+            get { replayedMagnification }
+            set { replayedMagnification = newValue }
+        }
+
+        override func location(in view: NSView?) -> NSPoint {
+            replayedLocation
+        }
+    }
+
     /// Drives a view through `AppKitBackend` so that the widgets a shape
     /// produces can be inspected.
     ///
@@ -568,6 +593,81 @@ struct ButtonStyleShapeAndGestureTests {
         #expect(first != different)
     }
 
+    @Test("Pointer modifiers are an option set with readable names")
+    func pointerModifiersAreAnOptionSet() {
+        let modifiers: PointerModifiers = [.shift, .command]
+
+        #expect(modifiers.contains(.shift))
+        #expect(modifiers.contains(.command))
+        #expect(!modifiers.contains(.option))
+        #expect(modifiers.description == "shift+command")
+        #expect(PointerModifiers().description == "none")
+        #expect(PointerModifiers.all.contains(.capsLock))
+    }
+
+    @Test("Pointer events default to no modifiers")
+    func pointerEventsDefaultToNoModifiers() {
+        let point = CGPoint(x: 1.0, y: 2.0)
+        let gesture = PointerGestureEvent(startLocation: point, location: point)
+        let scroll = PointerScrollEvent(location: point, deltaX: 0.0, deltaY: -3.0)
+        let magnify = PointerMagnifyEvent(location: point, magnification: 1.5)
+
+        #expect(gesture.modifiers.isEmpty)
+        #expect(scroll.modifiers.isEmpty)
+        #expect(scroll.phase == .changed)
+        #expect(!scroll.isPrecise)
+        #expect(magnify.modifiers.isEmpty)
+        #expect(magnify.phase == .changed)
+    }
+
+    @Test("Drag and tap values carry the modifier keys")
+    func gestureValuesCarryModifiers() {
+        let time = Date(timeIntervalSince1970: 0.0)
+        let plain = DragGesture.Value(
+            time: time,
+            startLocation: .zero,
+            location: CGPoint(x: 1.0, y: 1.0)
+        )
+        let shifted = DragGesture.Value(
+            time: time,
+            startLocation: .zero,
+            location: CGPoint(x: 1.0, y: 1.0),
+            modifiers: [.shift]
+        )
+        let tap = SpatialTapGesture.Value(
+            location: CGPoint(x: 1.0, y: 2.0),
+            modifiers: [.command]
+        )
+
+        #expect(plain.modifiers.isEmpty)
+        #expect(shifted.modifiers == [.shift])
+        #expect(plain != shifted)
+        #expect(tap.modifiers == [.command])
+        #expect(tap != SpatialTapGesture.Value(location: CGPoint(x: 1.0, y: 2.0)))
+    }
+
+    @MainActor
+    @Test("Scroll and magnify modifiers leave the view's layout untouched")
+    func scrollAndMagnifyAreLayoutTransparent() {
+        let plain = computeLayout(of: Text("Snap"))
+        let withScroll = computeLayout(
+            of: Text("Snap").onScrollWheel { _ in }
+        )
+        let withMagnify = computeLayout(
+            of: Text("Snap").onMagnify { _ in }
+        )
+        let withBoth = computeLayout(
+            of: Text("Snap")
+                .gesture(DragGesture(minimumDistance: 0.0))
+                .onScrollWheel { _ in }
+                .onMagnify { _ in }
+        )
+
+        #expect(withScroll.size == plain.size)
+        #expect(withMagnify.size == plain.size)
+        #expect(withBoth.size == plain.size)
+    }
+
     @Test("Named coordinate spaces compare by name")
     func namedCoordinateSpacesCompare() {
         #expect(CoordinateSpace.named("canvas") == .named("canvas"))
@@ -741,6 +841,54 @@ struct ButtonStyleShapeAndGestureTests {
             target.pan(sender: pan)
 
             #expect(log.entries == ["tap", "drag"])
+        }
+
+        @Test("AppKit modifier flags map onto pointer modifiers")
+        func appKitModifierFlagsMap() {
+            let flags: NSEvent.ModifierFlags = [.shift, .command, .option, .control, .capsLock]
+
+            #expect(PointerModifiers(flags) == PointerModifiers.all)
+            #expect(PointerModifiers(NSEvent.ModifierFlags()).isEmpty)
+            #expect(PointerModifiers([.numericPad]).isEmpty)
+        }
+
+        @MainActor
+        @Test("A pinch delivers its scale factor and phases through AppKitBackend")
+        func magnifyDeliversScaleThroughAppKit() {
+            let log = HandlerLog()
+            let harness = AppKitShapeHarness(
+                Color.blue.frame(width: 40.0, height: 20.0)
+                    .onMagnify { event in
+                        log.record(
+                            "\(event.phase) \(event.magnification) at \(Self.describe(event.location))"
+                        )
+                    }
+            )
+            harness.render()
+
+            guard let target = Self.pointerTarget(in: harness.widget) else {
+                Issue.record("expected a pointer gesture target")
+                return
+            }
+
+            let recognizer = ReplayedMagnificationGestureRecognizer()
+            recognizer.replayedState = .began
+            recognizer.replayedLocation = CGPoint(x: 10.0, y: 5.0)
+            recognizer.replayedMagnification = 0.0
+            target.magnify(sender: recognizer)
+            recognizer.replayedState = .changed
+            recognizer.replayedMagnification = 0.5
+            target.magnify(sender: recognizer)
+            recognizer.replayedState = .ended
+            target.magnify(sender: recognizer)
+
+            #expect(
+                log.entries == [
+                    "began 1.0 at (10, 5)",
+                    "changed 1.5 at (10, 5)",
+                    "ended 1.5 at (10, 5)",
+                ]
+            )
         }
 
         @MainActor

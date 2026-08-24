@@ -6,6 +6,11 @@ extension BackendFeatures {
     /// ``BackendFeatures/TapGestures`` can express: a tap arrives there as a
     /// bare callback with no location, and there is no drag callback at all.
     ///
+    /// The same target also delivers scroll wheel/trackpad scrolling and
+    /// pinch-to-zoom, which back ``View/onScrollWheel(perform:)`` and
+    /// ``View/onMagnify(perform:)``, and every event carries the modifier
+    /// keys held down (``PointerModifiers``).
+    ///
     /// This is deliberately **not** part of ``BackendFeatures/Gestures`` or
     /// ``FullAppBackend``. ``View/gesture(_:)`` casts the backend to it at
     /// runtime, so a backend that doesn't implement it keeps compiling and
@@ -54,6 +59,13 @@ extension BackendFeatures {
         ///   - onDragChanged: The action to perform each time a drag updates.
         ///   - onDragEnded: The action to perform when a drag finishes.
         ///   - onTap: The action to perform when a tap is recognized.
+        ///   - onScroll: The action to perform for each step of a scroll
+        ///     wheel or trackpad scroll over the target. While this is `nil`
+        ///     the backend must let scrolling reach whatever it would have
+        ///     reached without the target (an enclosing scroll view, say).
+        ///   - onMagnify: The action to perform for each step of a pinch
+        ///     over the target. Backends whose platform has no pinch
+        ///     gesture for the pointer in use never call it.
         func updatePointerGestureTarget(
             _ target: Widget,
             minimumDragDistance: Double,
@@ -62,7 +74,9 @@ extension BackendFeatures {
             environment: EnvironmentValues,
             onDragChanged: (@MainActor (PointerGestureEvent) -> Void)?,
             onDragEnded: (@MainActor (PointerGestureEvent) -> Void)?,
-            onTap: (@MainActor (PointerGestureEvent) -> Void)?
+            onTap: (@MainActor (PointerGestureEvent) -> Void)?,
+            onScroll: (@MainActor (PointerScrollEvent) -> Void)?,
+            onMagnify: (@MainActor (PointerMagnifyEvent) -> Void)?
         )
     }
 }

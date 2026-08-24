@@ -61,6 +61,13 @@ public struct DragGesture: Gesture {
         /// ``DragGesture/Value/translation``.
         public var predictedEndTranslation: CGSize
 
+        /// The modifier keys held down when this snapshot was taken.
+        ///
+        /// SwiftUI's value has no such field; SwiftCrossUI adds it so that
+        /// constrained drags (Shift) and additive selection (Command) don't
+        /// need a separate keyboard listener.
+        public var modifiers: PointerModifiers
+
         /// Describes a drag from its two endpoints.
         ///
         /// ``DragGesture/Value/translation`` is derived from the two
@@ -77,7 +84,8 @@ public struct DragGesture: Gesture {
             time: Date,
             startLocation: CGPoint,
             location: CGPoint,
-            velocity: CGSize = CGSize(width: 0.0, height: 0.0)
+            velocity: CGSize = CGSize(width: 0.0, height: 0.0),
+            modifiers: PointerModifiers = []
         ) {
             let translation = CGSize(
                 width: location.x - startLocation.x,
@@ -90,6 +98,7 @@ public struct DragGesture: Gesture {
             self.velocity = velocity
             self.predictedEndLocation = location
             self.predictedEndTranslation = translation
+            self.modifiers = modifiers
         }
 
         /// Compares two snapshots field by field.
@@ -118,6 +127,7 @@ public struct DragGesture: Gesture {
                     == rhs.predictedEndTranslation.width
                 && lhs.predictedEndTranslation.height
                     == rhs.predictedEndTranslation.height
+                && lhs.modifiers == rhs.modifiers
         }
     }
 

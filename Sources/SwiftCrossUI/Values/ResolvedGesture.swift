@@ -53,7 +53,8 @@ package enum ResolvedGesture {
             time: event.time,
             startLocation: event.startLocation,
             location: event.location,
-            velocity: event.velocity
+            velocity: event.velocity,
+            modifiers: event.modifiers
         )
         let handlers = switch phase {
             case .changed: gesture.changeHandlers
@@ -75,7 +76,10 @@ package enum ResolvedGesture {
         guard case .spatialTap(let gesture) = self else {
             return
         }
-        let value = SpatialTapGesture.Value(location: event.location)
+        let value = SpatialTapGesture.Value(
+            location: event.location,
+            modifiers: event.modifiers
+        )
         for handler in gesture.changeHandlers {
             handler(value)
         }

@@ -248,7 +248,9 @@ extension AppKitBackend: BackendFeatures.PointerGestures {
         environment: EnvironmentValues,
         onDragChanged: (@MainActor (PointerGestureEvent) -> Void)?,
         onDragEnded: (@MainActor (PointerGestureEvent) -> Void)?,
-        onTap: (@MainActor (PointerGestureEvent) -> Void)?
+        onTap: (@MainActor (PointerGestureEvent) -> Void)?,
+        onScroll: (@MainActor (PointerScrollEvent) -> Void)?,
+        onMagnify: (@MainActor (PointerMagnifyEvent) -> Void)?
     ) {
         let target = container.subviews[1] as! NSCustomPointerGestureTarget
         target.minimumDragDistance = minimumDragDistance
@@ -258,6 +260,8 @@ extension AppKitBackend: BackendFeatures.PointerGestures {
             target.dragChangedHandler = nil
             target.dragEndedHandler = nil
             target.tapHandler = nil
+            target.scrollHandler = nil
+            target.magnifyHandler = nil
             return
         }
 
@@ -265,10 +269,13 @@ extension AppKitBackend: BackendFeatures.PointerGestures {
         target.dragEndedHandler = onDragEnded
         target.tapHandler = onTap
         target.tapCount = tapCount
+        target.scrollHandler = onScroll
+        target.magnifyHandler = onMagnify
     }
 }
 
-/// The view that `AppKitBackend` recognizes drags and spatial taps on.
+/// The view that `AppKitBackend` recognizes drags, spatial taps, scroll
+/// wheel scrolling and pinches on.
 ///
 /// It is flipped so that `location(in:)` hands back SwiftCrossUI's
 /// top-leading-origin coordinates rather than AppKit's bottom-leading ones.
@@ -320,8 +327,32 @@ final class NSCustomPointerGestureTarget: NSView {
         }
     }
 
+    /// The action to run for each scroll wheel or trackpad scroll step.
+    ///
+    /// While `nil`, scroll events are passed up the responder chain so that
+    /// an enclosing scroll view still scrolls.
+    var scrollHandler: (@MainActor (PointerScrollEvent) -> Void)?
+
+    /// The action to run for each step of a trackpad pinch.
+    var magnifyHandler: (@MainActor (PointerMagnifyEvent) -> Void)? {
+        didSet {
+            if magnifyHandler != nil, magnificationRecognizer == nil {
+                let recognizer = NSMagnificationGestureRecognizer(
+                    target: self,
+                    action: #selector(magnify(sender:))
+                )
+                addGestureRecognizer(recognizer)
+                magnificationRecognizer = recognizer
+            } else if magnifyHandler == nil, let magnificationRecognizer {
+                removeGestureRecognizer(magnificationRecognizer)
+                self.magnificationRecognizer = nil
+            }
+        }
+    }
+
     private var panRecognizer: NSPanGestureRecognizer?
     private var clickRecognizer: NSClickGestureRecognizer?
+    private var magnificationRecognizer: NSMagnificationGestureRecognizer?
 
     /// Where the pointer was when the current drag began.
     private var dragStartLocation: CGPoint?
@@ -338,11 +369,46 @@ final class NSCustomPointerGestureTarget: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard
             dragChangedHandler != nil || dragEndedHandler != nil
-                || tapHandler != nil
+                || tapHandler != nil || scrollHandler != nil
+                || magnifyHandler != nil
         else {
             return nil
         }
         return super.hitTest(point)
+    }
+
+    /// Delivers a scroll wheel or trackpad scroll to ``scrollHandler``, or
+    /// passes it on to the next responder while there is none.
+    override func scrollWheel(with event: NSEvent) {
+        guard let scrollHandler else {
+            super.scrollWheel(with: event)
+            return
+        }
+
+        let phase: PointerEventPhase
+        if event.phase.contains(.began) {
+            phase = .began
+        } else if event.phase.contains(.cancelled) {
+            phase = .cancelled
+        } else if event.phase.contains(.ended) || event.momentumPhase.contains(.ended) {
+            phase = .ended
+        } else {
+            // Discrete wheel notches have no phase at all, and momentum
+            // scrolling is a continuation of the swipe that started it.
+            phase = .changed
+        }
+
+        scrollHandler(
+            PointerScrollEvent(
+                location: reported(convert(event.locationInWindow, from: nil)),
+                deltaX: Double(event.scrollingDeltaX),
+                deltaY: Double(event.scrollingDeltaY),
+                isPrecise: event.hasPreciseScrollingDeltas,
+                phase: phase,
+                modifiers: PointerModifiers(event.modifierFlags),
+                time: Date()
+            )
+        )
     }
 
     /// Adds or removes the pan recognizer to match the drag handlers.
@@ -366,7 +432,15 @@ final class NSCustomPointerGestureTarget: NSView {
     /// - Parameter recognizer: The recognizer to read.
     /// - Returns: The pointer's position.
     private func location(of recognizer: NSGestureRecognizer) -> CGPoint {
-        let local = recognizer.location(in: self)
+        reported(recognizer.location(in: self))
+    }
+
+    /// Converts a position in this view's (flipped) coordinates into the
+    /// space the gesture asked for.
+    ///
+    /// - Parameter local: The position in this view's coordinates.
+    /// - Returns: The position to report.
+    private func reported(_ local: CGPoint) -> CGPoint {
         guard reportsWindowCoordinates, let contentView = window?.contentView
         else {
             return local
@@ -396,7 +470,8 @@ final class NSCustomPointerGestureTarget: NSView {
             startLocation: start,
             location: location(of: recognizer),
             time: Date(),
-            velocity: CGSize(width: velocity.x, height: velocity.y)
+            velocity: CGSize(width: velocity.x, height: velocity.y),
+            modifiers: PointerModifiers(NSEvent.modifierFlags)
         )
     }
 
@@ -448,7 +523,67 @@ final class NSCustomPointerGestureTarget: NSView {
     func click(sender: NSClickGestureRecognizer) {
         let point = location(of: sender)
         tapHandler?(
-            PointerGestureEvent(startLocation: point, location: point)
+            PointerGestureEvent(
+                startLocation: point,
+                location: point,
+                modifiers: PointerModifiers(NSEvent.modifierFlags)
+            )
         )
+    }
+
+    /// Driven by the gesture recognizer. Not private so that tests
+    /// can replay a pinch without synthesising real trackpad events.
+    @objc
+    func magnify(sender: NSMagnificationGestureRecognizer) {
+        let phase: PointerEventPhase
+        switch sender.state {
+            case .began:
+                phase = .began
+            case .changed:
+                phase = .changed
+            case .ended:
+                phase = .ended
+            case .cancelled, .failed:
+                phase = .cancelled
+            default:
+                return
+        }
+
+        magnifyHandler?(
+            PointerMagnifyEvent(
+                location: location(of: sender),
+                // AppKit accumulates the change in scale from zero;
+                // SwiftUI (and SwiftCrossUI) report the scale factor itself.
+                magnification: 1.0 + Double(sender.magnification),
+                phase: phase,
+                modifiers: PointerModifiers(NSEvent.modifierFlags),
+                time: Date()
+            )
+        )
+    }
+}
+
+extension PointerModifiers {
+    /// The SwiftCrossUI modifiers corresponding to AppKit's modifier flags.
+    ///
+    /// - Parameter flags: The flags reported by an `NSEvent`.
+    init(_ flags: NSEvent.ModifierFlags) {
+        var modifiers: PointerModifiers = []
+        if flags.contains(.shift) {
+            modifiers.insert(.shift)
+        }
+        if flags.contains(.control) {
+            modifiers.insert(.control)
+        }
+        if flags.contains(.option) {
+            modifiers.insert(.option)
+        }
+        if flags.contains(.command) {
+            modifiers.insert(.command)
+        }
+        if flags.contains(.capsLock) {
+            modifiers.insert(.capsLock)
+        }
+        self = modifiers
     }
 }
