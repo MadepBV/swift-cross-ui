@@ -593,6 +593,31 @@ struct ButtonStyleShapeAndGestureTests {
         #expect(first != different)
     }
 
+    @MainActor
+    @Test("A button whose label fills an infinite proposal doesn't trap")
+    func buttonLabelWithInfiniteFrameDoesNotTrap() {
+        // `.frame(maxWidth: .infinity)` reports an infinite width for an
+        // infinite proposal, which the button used to convert to `Int`.
+        let layout = computeLayout(
+            of: Button(action: {}) {
+                Text("Go").frame(maxWidth: .infinity)
+            },
+            proposedSize: ProposedViewSize(.infinity, 20.0)
+        )
+
+        #expect(layout.size.width.isInfinite)
+        #expect(layout.size.height.isFinite)
+
+        let finite = computeLayout(
+            of: Button(action: {}) {
+                Text("Go").frame(maxWidth: .infinity)
+            },
+            proposedSize: ProposedViewSize(120.0, 20.0)
+        )
+        #expect(finite.size.width >= 120.0)
+        #expect(finite.size.width.isFinite)
+    }
+
     @Test("Pointer modifiers are an option set with readable names")
     func pointerModifiersAreAnOptionSet() {
         let modifiers: PointerModifiers = [.shift, .command]
@@ -841,6 +866,27 @@ struct ButtonStyleShapeAndGestureTests {
             target.pan(sender: pan)
 
             #expect(log.entries == ["tap", "drag"])
+        }
+
+        @MainActor
+        @Test("Updating a window for a colour scheme sets its appearance")
+        func windowAppearanceFollowsColorScheme() {
+            let backend = AppKitBackend()
+            let window = backend.createWindow(
+                withDefaultSize: SIMD2(100, 100),
+                id: "appearance-test"
+            )
+            let environment = EnvironmentValues(backend: backend)
+
+            backend.updateWindow(window, environment: environment.with(\.colorScheme, .dark))
+            #expect(
+                window.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            )
+
+            backend.updateWindow(window, environment: environment.with(\.colorScheme, .light))
+            #expect(
+                window.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .aqua
+            )
         }
 
         @Test("AppKit modifier flags map onto pointer modifiers")

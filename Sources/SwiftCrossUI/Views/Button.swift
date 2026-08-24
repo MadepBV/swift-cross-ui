@@ -189,12 +189,19 @@ extension Button: TypeSafeView {
 
         // Buttons should always be set to label size + padding.
         // The backend representation of a button is expected not to have a minSize.
-        let size = SIMD2(
-            Int(childResult.size.width) + buttonPadding.x,
-            Int(childResult.size.height) + buttonPadding.y
+        //
+        // The arithmetic stays in `Double`: a label such as
+        // `Text("x").frame(maxWidth: .infinity)` reports an infinite width
+        // for an infinite proposal, which is how SwiftUI spells "fill the
+        // proposed width", and converting that to `Int` would trap. The
+        // parent's final, finite proposal resolves it before anything is
+        // committed.
+        let size = ViewSize(
+            childResult.size.width + Double(buttonPadding.x),
+            childResult.size.height + Double(buttonPadding.y)
         )
 
-        return ViewLayoutResult.leafView(size: ViewSize(size))
+        return ViewLayoutResult.leafView(size: size)
     }
 
     func commit<Backend: BaseAppBackend>(
