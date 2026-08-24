@@ -139,7 +139,7 @@ public struct Picker<Label: View, SelectedValue: Hashable, Content: View>: View 
     /// The options that the picker offers.
     private var resolvedOptions: [PickerOption] {
         guard let directOptions else {
-            return PickerOptionCollector.options(of: content)
+            return PickerOptionCollector.options(of: content, environment: environment)
         }
         return directOptions.enumerated().map { index, value in
             PickerOption(title: "\(value)", tag: AnyHashable(value), index: index)

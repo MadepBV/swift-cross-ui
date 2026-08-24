@@ -1,5 +1,6 @@
 import Testing
 
+import DummyBackend
 @testable @_spi(Backends) import SwiftCrossUI
 
 #if canImport(AppKitBackend)
@@ -53,6 +54,18 @@ private final class Box<Value> {
     /// - Parameter value: The initial value.
     init(_ value: Value) {
         self.value = value
+    }
+}
+
+/// A picker option whose title depends on an environment value.
+///
+/// Its body reads `@Environment`, exactly like ``Label`` does, so it can only
+/// be walked into once the collector has installed the environment.
+private struct EnvironmentTitledOption: View {
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Text(isEnabled ? "Enabled" : "Disabled").tag(Flavor.vanilla)
     }
 }
 
@@ -118,6 +131,54 @@ struct PickerTests {
         #expect(
             PickerOptionCollector.options(of: withStrawberry)
                 .map(\.title) == ["Vanilla", "Strawberry"]
+        )
+    }
+
+    @Test("A Label option contributes its title without evaluating its body")
+    func testLabelOptionsUseTheirTitle() {
+        // `Label.body` reads `@Environment(\.labelStyle)`, which traps outside
+        // the view graph; the collector must take the title directly.
+        let content = TupleView2(
+            Label("Vanilla", systemImage: "circle").tag(Flavor.vanilla),
+            Label("Chocolate", image: "bar").tag(Flavor.chocolate)
+        )
+
+        let options = PickerOptionCollector.options(of: content)
+        #expect(options.map(\.title) == ["Vanilla", "Chocolate"])
+        #expect(
+            options.map(\.tag) == [
+                AnyHashable(Flavor.vanilla),
+                AnyHashable(Flavor.chocolate),
+            ]
+        )
+    }
+
+    @Test("Untagged labels become options titled after their text")
+    func testUntaggedLabelsBecomeOptions() {
+        let content = ForEach(Flavor.allCases, id: \.self) { flavor in
+            Label(flavor.title, systemImage: "circle")
+        }
+
+        let options = PickerOptionCollector.options(of: content)
+        #expect(options.map(\.title) == ["Vanilla", "Chocolate", "Strawberry"])
+    }
+
+    @Test("A view whose body reads the environment is collected with one")
+    func testEnvironmentReadingContentIsCollected() {
+        let backend = DummyBackend()
+        let environment = EnvironmentValues(backend: backend)
+
+        #expect(
+            PickerOptionCollector.options(
+                of: EnvironmentTitledOption(),
+                environment: environment
+            ).map(\.title) == ["Enabled"]
+        )
+        #expect(
+            PickerOptionCollector.options(
+                of: EnvironmentTitledOption(),
+                environment: environment.with(\.isEnabled, false)
+            ).map(\.title) == ["Disabled"]
         )
     }
 

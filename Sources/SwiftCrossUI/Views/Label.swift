@@ -126,6 +126,18 @@ public struct Label<Title: View, Icon: View>: View {
     }
 }
 
+extension Label: PickerContentContainer {
+    /// A picker option shows a label's title, so that's what the label
+    /// contributes; the icon carries no text.
+    ///
+    /// Handing the title over directly also means the label's `body` is never
+    /// evaluated outside the view graph, where its `@Environment` read would
+    /// trap.
+    var pickerContentChildren: [any View] {
+        [title]
+    }
+}
+
 extension Label where Title == Text, Icon == Image {
     /// Creates a label with a system image (an SF Symbol) and a title
     /// generated from a string.

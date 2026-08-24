@@ -154,13 +154,28 @@ struct PickerOptionCollector {
     /// The options collected so far.
     private var options: [PickerOption] = []
 
+    /// The environment that views are given before their bodies are read.
+    ///
+    /// The collector runs outside the view graph, so nothing else would
+    /// install a view's `@Environment` values before its `body` reads them.
+    private var environment: EnvironmentValues?
+
     /// Collects the options described by a picker's content.
     ///
-    /// - Parameter content: The picker's content.
+    /// - Parameters:
+    ///   - content: The picker's content.
+    ///   - environment: The picker's environment. Pass it whenever one is
+    ///     available: a view in the content whose `body` reads an
+    ///     `@Environment` value (as ``Label`` does) can only be walked into
+    ///     with its environment installed.
     /// - Returns: The picker's options, in the order that they appear.
     @MainActor
-    static func options(of content: some View) -> [PickerOption] {
+    static func options(
+        of content: some View,
+        environment: EnvironmentValues? = nil
+    ) -> [PickerOption] {
         var collector = PickerOptionCollector()
+        collector.environment = environment
         collector.collect(content, depth: 0)
         return collector.options
     }
@@ -183,7 +198,7 @@ struct PickerOptionCollector {
         if let tagged = view as? any TaggedView {
             let tag = tagged.tagValue
             let title =
-                Self.title(of: tagged.taggedContent, depth: depth)
+                title(of: tagged.taggedContent, depth: depth)
                 ?? String(describing: tag.base)
             append(title: title, tag: tag)
             return
@@ -194,7 +209,7 @@ struct PickerOptionCollector {
             return
         }
 
-        for child in Self.children(of: view) {
+        for child in children(of: view) {
             collect(child, depth: depth + 1)
         }
     }
@@ -216,8 +231,8 @@ struct PickerOptionCollector {
     /// - Returns: The first piece of text found in the view, or `nil` if it
     ///   displays no text of its own.
     @MainActor
-    private static func title(of view: any View, depth: Int) -> String? {
-        guard depth <= depthLimit else {
+    private func title(of view: any View, depth: Int) -> String? {
+        guard depth <= Self.depthLimit else {
             return nil
         }
 
@@ -235,10 +250,17 @@ struct PickerOptionCollector {
 
     /// The views that a view contributes to a picker's options.
     ///
+    /// Views that know their picker-relevant parts (``Label``, ``ForEach``,
+    /// ``Group`` and friends) hand them over directly through
+    /// ``PickerContentContainer``, so their `body` is never evaluated. Any
+    /// other view is walked into through its `body`, after its dynamic
+    /// properties have been given the picker's environment so that an
+    /// `@Environment` read inside the body doesn't trap.
+    ///
     /// - Parameter view: The view to look inside.
     /// - Returns: The view's children, or an empty array if it has none.
     @MainActor
-    private static func children(of view: any View) -> [any View] {
+    private func children(of view: any View) -> [any View] {
         if view is EmptyView || view is Never {
             // Both of these have a `body` that traps when accessed.
             return []
@@ -257,6 +279,9 @@ struct PickerOptionCollector {
             }
         }
 
+        if let environment {
+            return [view.erasedBody(in: environment)]
+        }
         return [view.erasedBody]
     }
 }
@@ -271,5 +296,22 @@ extension View {
     ///   accessing their `body` directly does.
     fileprivate var erasedBody: any View {
         body
+    }
+
+    /// This view's body with its concrete type erased, evaluated with the
+    /// view's dynamic properties (`@Environment`, `@State`, ...) installed
+    /// from the given environment first, exactly as the view graph would do
+    /// before reading `body`.
+    ///
+    /// - Parameter environment: The environment to install.
+    /// - Returns: The body.
+    @MainActor
+    fileprivate func erasedBody(in environment: EnvironmentValues) -> any View {
+        DynamicPropertyUpdater(for: self).update(
+            self,
+            with: environment,
+            previousValue: nil
+        )
+        return body
     }
 }
