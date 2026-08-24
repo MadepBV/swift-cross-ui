@@ -139,6 +139,11 @@ public final class AppKitBackend: FullAppBackend {
 
     public func updateWindow(_ window: Window, environment: EnvironmentValues) {
         window.appearance = environment.colorScheme.nsAppearance
+        // The window's own background is what shows behind any translucent
+        // material the content paints, so it has to match the scheme the
+        // content resolved its colours for. `windowBackgroundColor` is
+        // dynamic and re-resolves under the appearance set above.
+        window.backgroundColor = .windowBackgroundColor
     }
 
     public func size(ofWindow window: Window) -> SIMD2<Int> {
@@ -321,11 +326,46 @@ public final class AppKitBackend: FullAppBackend {
     }
 
     public func computeRootEnvironment(defaultEnvironment: EnvironmentValues) -> EnvironmentValues {
-        let isDark = UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
+        let isDark = Self.systemPrefersDarkAppearance
+        Self.matchApplicationAppearance(toDark: isDark)
         return
             defaultEnvironment
                 .with(\.colorScheme, isDark ? .dark : .light)
                 .with(\.appPhase, NSApplication.shared.isActive ? .active : .inactive)
+    }
+
+    /// Whether the user has chosen the dark appearance in System Settings.
+    ///
+    /// Read from the global preference rather than from
+    /// `NSApplication.effectiveAppearance`, because a process without an
+    /// `Info.plist` (anything launched with `swift run`) is pinned to the
+    /// light appearance by AppKit regardless of the system setting.
+    static var systemPrefersDarkAppearance: Bool {
+        UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
+    }
+
+    /// Makes the whole application follow the colour scheme the root
+    /// environment reports.
+    ///
+    /// SwiftCrossUI resolves its own colours (text, `Color.background`, ...)
+    /// from `EnvironmentValues.colorScheme`, but everything AppKit draws by
+    /// itself — window backgrounds, sidebars, menus, sheets, panels — follows
+    /// the application's appearance. When the two disagree the result is
+    /// dark-mode text on light-mode windows, which happens for any app pinned
+    /// to Aqua (see ``systemPrefersDarkAppearance``). Setting the app-wide
+    /// appearance keeps both in step; `updateWindow(_:environment:)` still
+    /// sets each window's own appearance so that
+    /// `View.preferredColorScheme(_:)` can override it per window.
+    ///
+    /// - Parameter isDark: Whether the dark appearance is wanted.
+    static func matchApplicationAppearance(toDark isDark: Bool) {
+        let wanted: NSAppearance.Name = isDark ? .darkAqua : .aqua
+        let application = NSApplication.shared
+        let current = application.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
+        guard current != wanted else {
+            return
+        }
+        application.appearance = NSAppearance(named: wanted)
     }
 
     public func setRootEnvironmentChangeHandler(
