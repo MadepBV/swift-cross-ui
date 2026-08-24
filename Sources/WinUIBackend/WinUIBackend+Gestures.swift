@@ -290,7 +290,9 @@ extension WinUIBackend: BackendFeatures.PointerGestures {
         environment: EnvironmentValues,
         onDragChanged: (@MainActor (PointerGestureEvent) -> Void)?,
         onDragEnded: (@MainActor (PointerGestureEvent) -> Void)?,
-        onTap: (@MainActor (PointerGestureEvent) -> Void)?
+        onTap: (@MainActor (PointerGestureEvent) -> Void)?,
+        onScroll: (@MainActor (PointerScrollEvent) -> Void)?,
+        onMagnify: (@MainActor (PointerMagnifyEvent) -> Void)?
     ) {
         let target = container as! PointerGestureTarget
         target.minimumDragDistance = minimumDragDistance
@@ -301,12 +303,16 @@ extension WinUIBackend: BackendFeatures.PointerGestures {
             target.dragChangedHandler = nil
             target.dragEndedHandler = nil
             target.tapHandler = nil
+            target.scrollHandler = nil
+            target.magnifyHandler = nil
             return
         }
 
         target.dragChangedHandler = onDragChanged
         target.dragEndedHandler = onDragEnded
         target.tapHandler = onTap
+        target.scrollHandler = onScroll
+        target.magnifyHandler = onMagnify
     }
 }
 
@@ -326,6 +332,18 @@ extension WinUIBackend: BackendFeatures.PointerGestures {
 /// needing three or more clicks have no native counterpart and are counted by
 /// hand from presses instead, so they fire on the final press rather than its
 /// release.
+///
+/// Scrolling comes from `PointerWheelChanged`, in wheel notches (a delta of
+/// 120 is one notch; a precision touchpad reports finer deltas, which are
+/// flagged as precise). Pinching comes from the manipulation events with
+/// `ManipulationModes.scale` enabled, which WinUI only raises for touch (and
+/// pen): a precision touchpad pinch reaches every Windows app as a
+/// Control+wheel `PointerWheelChanged` instead, so it arrives here as a scroll
+/// event carrying ``PointerModifiers/control``.
+///
+/// Every event carries the modifier keys WinUI reported with it; the tap
+/// and manipulation events, which don't carry any, use the modifiers of the
+/// most recent pointer event instead.
 @MainActor
 final class PointerGestureTarget: WinUI.Canvas {
     /// How long two presses may be apart to count as one multi-tap.
@@ -367,6 +385,27 @@ final class PointerGestureTarget: WinUI.Canvas {
             updateHitTesting()
         }
     }
+
+    /// The action to run for each mouse wheel or touchpad scroll step.
+    ///
+    /// While `nil`, wheel events are left unhandled so that an enclosing
+    /// `ScrollViewer` still scrolls.
+    var scrollHandler: (@MainActor (PointerScrollEvent) -> Void)? {
+        didSet {
+            updateHitTesting()
+        }
+    }
+
+    /// The action to run for each step of a touch pinch.
+    var magnifyHandler: (@MainActor (PointerMagnifyEvent) -> Void)? {
+        didSet {
+            updateHitTesting()
+            updateManipulationMode()
+        }
+    }
+
+    /// The modifier keys reported by the most recent pointer event.
+    private var lastModifiers: PointerModifiers = []
 
     /// The pointer currently held down on the target, if any.
     private var pressedPointerId: UInt32?
@@ -431,6 +470,34 @@ final class PointerGestureTarget: WinUI.Canvas {
             guard let position = try? args.getPosition(relativeTo) else { return }
             self.sendTap(at: position.cgPoint)
         }
+        pointerWheelChanged.addHandler { [weak self] _, args in
+            guard let self, let args else { return }
+            self.handlePointerWheelChanged(args)
+        }
+        manipulationStarted.addHandler { [weak self] _, args in
+            guard let self, let args else { return }
+            self.sendMagnify(
+                cumulativeScale: args.cumulative.scale,
+                position: args.position,
+                phase: .began
+            )
+        }
+        manipulationDelta.addHandler { [weak self] _, args in
+            guard let self, let args else { return }
+            self.sendMagnify(
+                cumulativeScale: args.cumulative.scale,
+                position: args.position,
+                phase: .changed
+            )
+        }
+        manipulationCompleted.addHandler { [weak self] _, args in
+            guard let self, let args else { return }
+            self.sendMagnify(
+                cumulativeScale: args.cumulative.scale,
+                position: args.position,
+                phase: .ended
+            )
+        }
     }
 
     /// Lets pointer events through to whatever is behind the target while no
@@ -439,13 +506,31 @@ final class PointerGestureTarget: WinUI.Canvas {
     private func updateHitTesting() {
         let wantsEvents =
             dragChangedHandler != nil || dragEndedHandler != nil
-            || tapHandler != nil
+            || tapHandler != nil || scrollHandler != nil
+            || magnifyHandler != nil
         if wantsEvents {
             let brush = SolidColorBrush()
             brush.color = UWP.Color(a: 0, r: 0, g: 0, b: 0)
             background = brush
         } else {
             background = nil
+        }
+    }
+
+    /// Enables scale manipulations while a magnify handler is attached.
+    ///
+    /// `ManipulationModes` is projected as a plain C enum rather than an
+    /// `OptionSet`, so the flags are combined through their raw values.
+    /// `system` stays set so that an enclosing `ScrollViewer` keeps panning
+    /// with one finger.
+    private func updateManipulationMode() {
+        if magnifyHandler != nil {
+            manipulationMode = WinUI.ManipulationModes(
+                rawValue: WinUI.ManipulationModes.scale.rawValue
+                    | WinUI.ManipulationModes.system.rawValue
+            )
+        } else {
+            manipulationMode = .system
         }
     }
 
@@ -472,7 +557,8 @@ final class PointerGestureTarget: WinUI.Canvas {
             startLocation: start,
             location: location,
             time: Date(),
-            velocity: velocity
+            velocity: velocity,
+            modifiers: lastModifiers
         )
     }
 
@@ -502,6 +588,8 @@ final class PointerGestureTarget: WinUI.Canvas {
     }
 
     private func handlePointerPressed(_ args: WinUI.PointerRoutedEventArgs) {
+        lastModifiers = PointerModifiers(virtualKeyModifiers: args.keyModifiers)
+
         guard let point = try? args.getCurrentPoint(self), point.isPrimaryContact else {
             return
         }
@@ -527,6 +615,8 @@ final class PointerGestureTarget: WinUI.Canvas {
     }
 
     private func handlePointerMoved(_ args: WinUI.PointerRoutedEventArgs) {
+        lastModifiers = PointerModifiers(virtualKeyModifiers: args.keyModifiers)
+
         guard
             let pressedPointerId,
             let start = dragStartLocation,
@@ -551,6 +641,8 @@ final class PointerGestureTarget: WinUI.Canvas {
     }
 
     private func handlePointerReleased(_ args: WinUI.PointerRoutedEventArgs) {
+        lastModifiers = PointerModifiers(virtualKeyModifiers: args.keyModifiers)
+
         guard
             let pressedPointerId,
             args.pointer.pointerId == pressedPointerId
@@ -609,7 +701,89 @@ final class PointerGestureTarget: WinUI.Canvas {
     }
 
     private func sendTap(at location: CGPoint) {
-        tapHandler?(PointerGestureEvent(startLocation: location, location: location))
+        tapHandler?(
+            PointerGestureEvent(
+                startLocation: location,
+                location: location,
+                modifiers: lastModifiers
+            )
+        )
+    }
+
+    /// One notch of a mouse wheel, as `PointerPointProperties.mouseWheelDelta`
+    /// reports it (`WHEEL_DELTA`).
+    private static let wheelNotch = 120.0
+
+    private func handlePointerWheelChanged(_ args: WinUI.PointerRoutedEventArgs) {
+        let modifiers = PointerModifiers(virtualKeyModifiers: args.keyModifiers)
+        lastModifiers = modifiers
+
+        guard
+            let scrollHandler,
+            let location = location(of: args),
+            let point = try? args.getCurrentPoint(self),
+            let properties = point.properties
+        else {
+            return
+        }
+
+        let delta = Double(properties.mouseWheelDelta)
+        let notches = delta / Self.wheelNotch
+        let isHorizontal = properties.isHorizontalMouseWheel
+
+        // A notched wheel reports whole multiples of WHEEL_DELTA; a precision
+        // touchpad reports finer, pixel-like deltas.
+        let isPrecise = properties.mouseWheelDelta % 120 != 0
+
+        scrollHandler(
+            PointerScrollEvent(
+                location: location,
+                deltaX: isHorizontal ? notches : 0.0,
+                deltaY: isHorizontal ? 0.0 : notches,
+                isPrecise: isPrecise,
+                phase: .changed,
+                modifiers: modifiers,
+                time: Date()
+            )
+        )
+
+        // Consumed, so an enclosing ScrollViewer doesn't scroll as well.
+        args.handled = true
+    }
+
+    /// Delivers one step of a touch pinch.
+    ///
+    /// - Parameters:
+    ///   - cumulativeScale: The scale accumulated since the manipulation
+    ///     began, which WinUI reports as a factor (1 means unchanged).
+    ///   - position: The manipulation's position relative to this element.
+    ///   - phase: Where the pinch is in its lifetime.
+    private func sendMagnify(
+        cumulativeScale: Float,
+        position: WindowsFoundation.Point,
+        phase: PointerEventPhase
+    ) {
+        guard let magnifyHandler else {
+            return
+        }
+
+        var location = position.cgPoint
+        if reportsWindowCoordinates,
+            let transform = try? transformToVisual(nil),
+            let transformed = try? transform.transformPoint(position)
+        {
+            location = transformed.cgPoint
+        }
+
+        magnifyHandler(
+            PointerMagnifyEvent(
+                location: location,
+                magnification: Double(cumulativeScale),
+                phase: phase,
+                modifiers: lastModifiers,
+                time: Date()
+            )
+        )
     }
 }
 
@@ -619,6 +793,33 @@ extension WindowsFoundation.Point {
     /// This point as a Core Graphics point.
     var cgPoint: CGPoint {
         CGPoint(x: Double(x), y: Double(y))
+    }
+}
+
+extension PointerModifiers {
+    /// The SwiftCrossUI modifiers corresponding to WinUI's modifier flags.
+    ///
+    /// `VirtualKeyModifiers` is projected as a plain C enum rather than an
+    /// `OptionSet`, so the flags are tested through their raw values.
+    ///
+    /// - Parameter virtualKeyModifiers: The flags reported by a pointer
+    ///   event.
+    init(virtualKeyModifiers: UWP.VirtualKeyModifiers) {
+        let rawValue = virtualKeyModifiers.rawValue
+        var modifiers: PointerModifiers = []
+        if rawValue & UWP.VirtualKeyModifiers.shift.rawValue != 0 {
+            modifiers.insert(.shift)
+        }
+        if rawValue & UWP.VirtualKeyModifiers.control.rawValue != 0 {
+            modifiers.insert(.control)
+        }
+        if rawValue & UWP.VirtualKeyModifiers.menu.rawValue != 0 {
+            modifiers.insert(.option)
+        }
+        if rawValue & UWP.VirtualKeyModifiers.windows.rawValue != 0 {
+            modifiers.insert(.command)
+        }
+        self = modifiers
     }
 }
 
