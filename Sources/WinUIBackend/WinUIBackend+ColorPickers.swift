@@ -19,48 +19,49 @@ extension WinUIBackend: BackendFeatures.ColorPickers {
         }
 
         picker.changeHandler = onChange
-        picker.picker.isAlphaEnabled = supportsOpacity
-        picker.isEnabled = environment.isEnabled
+        picker.setSupportsOpacity(supportsOpacity)
         environment.apply(to: picker)
 
         // Only write the colour back when it actually differs, so that we don't
-        // fight the user while they're dragging inside the flyout.
-        if picker.resolvedColor != color {
-            picker.setColorWithoutNotifying(color.uwpColor)
+        // fight the user while they're dragging a slider in the flyout.
+        if picker.currentColor != color {
+            picker.setColorWithoutNotifying(color)
         }
     }
 }
 
-/// A button showing the current colour, which opens WinUI's `ColorPicker` in a
-/// flyout when clicked.
+/// A button showing the current colour, which opens a flyout of channel
+/// sliders when clicked.
 ///
-/// WinUI's `ColorPicker` is a large panel rather than a compact control, so
-/// putting it in a flyout is the only way to make it usable inline.
+/// WinUI 3 has a `ColorPicker` control, but swift-winui 0.2 doesn't project
+/// it, so the flyout is built out of the controls that are projected: one
+/// `Slider` per channel. Sliders run from 0 to 255 so that the values read
+/// like the hex colours designers are used to.
 @MainActor
 final class CustomColorPicker: WinUI.Button {
     /// The edge length of the colour swatch shown on the button.
     private static let swatchSize = 20.0
 
+    /// The width of each channel slider in the flyout.
+    private static let sliderWidth = 220.0
+
     /// Called whenever the user picks a different colour.
     var changeHandler: ((Color.Resolved) -> Void)?
 
-    /// The picker shown inside the flyout.
-    let picker = WinUI.ColorPicker()
+    /// The colour currently shown.
+    private(set) var currentColor = Color.Resolved(red: 0.0, green: 0.0, blue: 0.0)
 
     /// The swatch showing the currently selected colour.
     private let swatch = WinUI.Grid()
 
-    /// Keeps the colour-changed subscription alive.
-    private var colorChangedEvent: EventCleanup?
+    private let redSlider = WinUI.Slider()
+    private let greenSlider = WinUI.Slider()
+    private let blueSlider = WinUI.Slider()
+    private let opacitySlider = WinUI.Slider()
 
     /// Set while SwiftCrossUI is writing the colour, so that programmatic
     /// updates don't get reported back as user edits.
     private var isUpdatingProgrammatically = false
-
-    /// The picker's colour in SwiftCrossUI's representation.
-    var resolvedColor: Color.Resolved {
-        Color.Resolved(uwpColor: picker.color)
-    }
 
     override init() {
         super.init()
@@ -69,37 +70,90 @@ final class CustomColorPicker: WinUI.Button {
         swatch.height = Self.swatchSize
         content = swatch
 
+        let panel = WinUI.StackPanel()
+        panel.orientation = .vertical
+        panel.spacing = 4.0
+
+        for (slider, label) in [
+            (redSlider, "Red"),
+            (greenSlider, "Green"),
+            (blueSlider, "Blue"),
+            (opacitySlider, "Opacity"),
+        ] {
+            slider.minimum = 0.0
+            slider.maximum = 255.0
+            slider.stepFrequency = 1.0
+            slider.width = Self.sliderWidth
+            slider.header = label
+            slider.valueChanged.addHandler { [weak self] _, _ in
+                self?.sliderChanged()
+            }
+            panel.children.append(slider)
+        }
+
         let flyout = WinUI.Flyout()
-        flyout.content = picker
+        flyout.content = panel
         self.flyout = flyout
 
-        colorChangedEvent = picker.colorChanged.addHandler { [unowned self] _, change in
-            guard let change, !self.isUpdatingProgrammatically else {
-                return
-            }
-            self.updateSwatch(change.newColor)
-            self.changeHandler?(Color.Resolved(uwpColor: change.newColor))
-        }
+        updateSwatch()
     }
 
-    deinit {
-        colorChangedEvent?.dispose()
+    /// Shows or hides the opacity slider.
+    ///
+    /// - Parameter supportsOpacity: Whether the user may edit the opacity.
+    func setSupportsOpacity(_ supportsOpacity: Bool) {
+        opacitySlider.visibility = supportsOpacity ? .visible : .collapsed
     }
 
-    /// Sets the picker's colour without invoking ``changeHandler``.
+    /// Sets the displayed colour without invoking ``changeHandler``.
     ///
     /// - Parameter newColor: The colour to display.
-    func setColorWithoutNotifying(_ newColor: UWP.Color) {
+    func setColorWithoutNotifying(_ newColor: Color.Resolved) {
         isUpdatingProgrammatically = true
-        picker.color = newColor
-        updateSwatch(newColor)
+        currentColor = newColor
+        redSlider.value = Self.sliderValue(for: newColor.red)
+        greenSlider.value = Self.sliderValue(for: newColor.green)
+        blueSlider.value = Self.sliderValue(for: newColor.blue)
+        opacitySlider.value = Self.sliderValue(for: newColor.opacity)
+        updateSwatch()
         isUpdatingProgrammatically = false
     }
 
+    /// Reads the sliders back into a colour and reports it.
+    private func sliderChanged() {
+        guard !isUpdatingProgrammatically else {
+            return
+        }
+        let opacity: Float =
+            opacitySlider.visibility == .visible
+            ? Self.channel(for: opacitySlider.value)
+            : currentColor.opacity
+        let newColor = Color.Resolved(
+            red: Self.channel(for: redSlider.value),
+            green: Self.channel(for: greenSlider.value),
+            blue: Self.channel(for: blueSlider.value),
+            opacity: opacity
+        )
+        guard newColor != currentColor else {
+            return
+        }
+        currentColor = newColor
+        updateSwatch()
+        changeHandler?(newColor)
+    }
+
     /// Repaints the swatch shown on the button.
-    ///
-    /// - Parameter newColor: The colour to paint it.
-    private func updateSwatch(_ newColor: UWP.Color) {
-        swatch.background = WinUI.SolidColorBrush(newColor)
+    private func updateSwatch() {
+        swatch.background = WinUI.SolidColorBrush(currentColor.uwpColor)
+    }
+
+    /// Converts a 0...1 channel into a 0...255 slider value.
+    private static func sliderValue(for channel: Float) -> Double {
+        (Double(min(max(channel, 0.0), 1.0)) * 255.0).rounded()
+    }
+
+    /// Converts a 0...255 slider value into a 0...1 channel.
+    private static func channel(for sliderValue: Double) -> Float {
+        Float(min(max(sliderValue, 0.0), 255.0) / 255.0)
     }
 }
