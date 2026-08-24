@@ -59,10 +59,61 @@ final class KeyboardShortcutRegistry {
         }
 
         let accelerator = WinUI.KeyboardAccelerator()
+        // When the shortcut fires, activate the wrapped control as though it
+        // had been clicked. WinUI would only do that by itself for an
+        // accelerator attached directly to a `Button`, and the target here is
+        // usually a container around one.
+        accelerator.invoked.addHandler { [weak element] _, args in
+            guard let element else { return }
+            if activatePrimaryAction(of: element) {
+                args?.handled = true
+            }
+        }
         element.keyboardAccelerators.append(accelerator)
         accelerators[key] = accelerator
         return accelerator
     }
+}
+
+/// Performs the primary activation of the first control found in an element's
+/// subtree, as a keyboard shortcut is expected to.
+///
+/// Buttons are clicked, checkboxes and switches are toggled. Other widgets
+/// have no primary activation, in which case nothing happens.
+///
+/// - Parameter element: The element to search.
+/// - Returns: Whether a control was activated.
+@MainActor
+private func activatePrimaryAction(of element: WinUI.FrameworkElement) -> Bool {
+    var queue: [WinUI.FrameworkElement] = [element]
+    while !queue.isEmpty {
+        let next = queue.removeFirst()
+        if let button = next as? CustomButton {
+            button.performClick()
+            return true
+        } else if let checkbox = next as? WinUIBackend.CustomCheckBox {
+            guard checkbox.isEnabled else { return false }
+            checkbox.isChecked = !(checkbox.isChecked ?? false)
+            return true
+        } else if let toggleSwitch = next as? WinUI.ToggleSwitch {
+            guard toggleSwitch.isEnabled else { return false }
+            toggleSwitch.isOn = !toggleSwitch.isOn
+            return true
+        }
+
+        if let panel = next as? WinUI.Panel {
+            for index in 0..<panel.children.size {
+                if let child = panel.children.getAt(index) as? WinUI.FrameworkElement {
+                    queue.append(child)
+                }
+            }
+        } else if let contentControl = next as? WinUI.ContentControl,
+            let content = contentControl.content as? WinUI.FrameworkElement
+        {
+            queue.append(content)
+        }
+    }
+    return false
 }
 
 // MARK: - Focus
@@ -203,25 +254,28 @@ extension SwiftCrossUI.EventModifiers {
     /// `.keyboardShortcut("s", modifiers: [.command])` for macOS is Ctrl+S on
     /// Windows, which is what users of a ported app expect. The Windows key is
     /// reserved by the shell and can't be used for app shortcuts anyway.
-    var virtualKeyModifiers: WinUI.VirtualKeyModifiers {
-        var modifiers: WinUI.VirtualKeyModifiers = .none
+    ///
+    /// `VirtualKeyModifiers` is projected as a plain C enum rather than an
+    /// `OptionSet`, so the flags are combined through their raw values.
+    var virtualKeyModifiers: UWP.VirtualKeyModifiers {
+        var rawValue = UWP.VirtualKeyModifiers.none.rawValue
         if contains(.command) || contains(.control) {
-            modifiers.insert(.control)
+            rawValue |= UWP.VirtualKeyModifiers.control.rawValue
         }
         if contains(.option) {
-            modifiers.insert(.menu)
+            rawValue |= UWP.VirtualKeyModifiers.menu.rawValue
         }
         if contains(.shift) {
-            modifiers.insert(.shift)
+            rawValue |= UWP.VirtualKeyModifiers.shift.rawValue
         }
-        return modifiers
+        return UWP.VirtualKeyModifiers(rawValue: rawValue)
     }
 }
 
 extension SwiftCrossUI.KeyEquivalent {
     /// The Windows virtual key corresponding to this key equivalent, if one
     /// exists.
-    var virtualKey: WinUI.VirtualKey? {
+    var virtualKey: UWP.VirtualKey? {
         switch self {
             case .upArrow: return .up
             case .downArrow: return .down

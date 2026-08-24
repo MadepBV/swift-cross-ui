@@ -53,8 +53,17 @@ extension WinUIBackend {
     }
 }
 
-fileprivate final class CustomButton: WinUI.Button {
+final class CustomButton: WinUI.Button {
     fileprivate var action: (() -> Void)?
+
+    /// Runs the button's action as though it had been clicked.
+    ///
+    /// This is what a keyboard shortcut attached to the button (or to a
+    /// container around it) invokes.
+    func performClick() {
+        guard enabled else { return }
+        action?()
+    }
 
     private var isPointerCaptured = false
     fileprivate var isHighlighted = false {
