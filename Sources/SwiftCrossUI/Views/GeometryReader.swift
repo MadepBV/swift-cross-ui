@@ -65,7 +65,14 @@ public struct GeometryReader<Content: View>: TypeSafeView, View {
         let proxy = GeometryProxy(
             size: CGSize(width: size.width, height: size.height)
         )
-        let view = content(proxy)
+        // The content closure is this view's body in all but name, so the
+        // observable properties it reads have to be tracked the way
+        // `View.defaultComputeLayout` tracks a body. Without this, a value
+        // read only inside the closure could change without the reader ever
+        // being asked to update again.
+        let view = ViewObservationTracking.tracking {
+            content(proxy)
+        }
 
         let environment = environment.with(\.layoutAlignment, .leading)
 

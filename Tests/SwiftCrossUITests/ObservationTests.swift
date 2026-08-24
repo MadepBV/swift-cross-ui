@@ -436,8 +436,106 @@ import Testing
 
     // MARK: - Tests
 
+    /// Records what `onChange` handlers were given, in order.
+    @MainActor
+    final class ChangeLog {
+        private(set) var entries: [String] = []
+
+        init() {}
+
+        func record(_ entry: String) {
+            entries.append(entry)
+        }
+    }
+
     @Suite("Observation-related tests")
     struct ObservationTests {
+        @Test("A value read only inside a GeometryReader still drives redraws")
+        @MainActor
+        func testGeometryReaderContentIsObserved() async {
+            guard
+                #available(macOS 14.0, iOS 17.0, tvOS 17.0, watchOS 10.0, *)
+            else {
+                return
+            }
+
+            let model = ObservedModel(title: "before")
+            let harness = ObservationHarness(
+                GeometryReader { _ in
+                    Text(model.title)
+                }
+            )
+
+            #expect(harness.renderedStrings == ["before"])
+
+            model.title = "after"
+            await waitForUpdate { harness.renderedStrings == ["after"] }
+
+            #expect(
+                harness.renderedStrings == ["after"],
+                "Expected a read inside the GeometryReader closure to be tracked"
+            )
+        }
+
+        @Test("onChange below a GeometryReader fires with the old and new values")
+        @MainActor
+        func testOnChangeBelowGeometryReaderFires() async {
+            guard
+                #available(macOS 14.0, iOS 17.0, tvOS 17.0, watchOS 10.0, *)
+            else {
+                return
+            }
+
+            let model = ObservedModel(title: "before")
+            let log = ChangeLog()
+            let harness = ObservationHarness(
+                GeometryReader { _ in
+                    Text(model.title)
+                        .onChange(of: model.title) { oldValue, newValue in
+                            log.record("\(oldValue)->\(newValue)")
+                        }
+                }
+            )
+
+            #expect(log.entries.isEmpty, "onChange must not fire on the first update")
+
+            model.title = "after"
+            await waitForUpdate { !log.entries.isEmpty }
+            #expect(log.entries == ["before->after"])
+
+            // Further commits without a change stay quiet, and a change fires
+            // exactly once with the values from either side of it.
+            harness.render()
+            #expect(log.entries == ["before->after"])
+
+            model.title = "later"
+            await waitForUpdate { log.entries.count == 2 }
+            #expect(log.entries == ["before->after", "after->later"])
+        }
+
+        @Test("onChange(initial:) runs once with the current value on both sides")
+        @MainActor
+        func testOnChangeInitialRunsOnce() async {
+            guard
+                #available(macOS 14.0, iOS 17.0, tvOS 17.0, watchOS 10.0, *)
+            else {
+                return
+            }
+
+            let model = ObservedModel(title: "start")
+            let log = ChangeLog()
+            let harness = ObservationHarness(
+                Text(model.title)
+                    .onChange(of: model.title, initial: true) { oldValue, newValue in
+                        log.record("\(oldValue)->\(newValue)")
+                    }
+            )
+
+            #expect(log.entries == ["start->start"])
+            harness.render()
+            #expect(log.entries == ["start->start"])
+        }
+
         @Test("Mutating an observed property redraws the view that read it")
         @MainActor
         func testObservedMutationRedrawsView() async {
