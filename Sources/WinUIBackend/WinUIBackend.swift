@@ -238,6 +238,9 @@ public final class WinUIBackend:
         // print(GetDpiForWindow(nil))
 
         if let size {
+            // `setSize(ofWindow:to:)` clamps to the display's work area, so a
+            // default size larger than a small or heavily scaled screen
+            // still produces a window that fits on it.
             setSize(ofWindow: window, to: size)
         }
         return window
@@ -276,14 +279,17 @@ public final class WinUIBackend:
     }
 
     public func setSize(ofWindow window: Window, to newSize: SIMD2<Int>) {
-        let scaleFactor = window.scaleFactor
-        let width = scaleFactor * Double(newSize.x)
-        let height = scaleFactor * Double(newSize.y + window.contentHeightAdjustment)
-        let size = UWP.SizeInt32(
-            width: Int32(width.rounded(.towardZero)),
-            height: Int32(height.rounded(.towardZero))
-        )
-        try! window.appWindow.resizeClient(size)
+        // Sizes cross this boundary in points (logical pixels); AppWindow
+        // works in physical pixels, so the display's scale factor is applied
+        // exactly once, here. The result is clamped to the work area of the
+        // display the window is on, so a window never starts off larger than
+        // the screen.
+        var contentSize = newSize
+        if let available = window.availableContentSize {
+            contentSize.x = min(contentSize.x, available.x)
+            contentSize.y = min(contentSize.y, available.y)
+        }
+        try! window.appWindow.resizeClient(window.physicalClientSize(forContentSize: contentSize))
     }
 
     public func setSizeLimits(
@@ -291,19 +297,25 @@ public final class WinUIBackend:
         minimum minimumSize: SIMD2<Int>,
         maximum maximumSize: SIMD2<Int>?
     ) {
-        debugLogOnce("\(#function) unimplemented")
+        // Windows App SDK 1.4 (swift-winui 0.2) has no presenter-level
+        // minimum/maximum, so the limits are enforced by resizing back
+        // whenever the window's client size leaves them.
+        window.minimumContentSize = minimumSize
+        window.maximumContentSize = maximumSize
+        window.installSizeLimitEnforcement()
+        window.enforceSizeLimits()
     }
 
     public func setResizeHandler(
         ofWindow window: Window,
         to action: @escaping (SIMD2<Int>) -> Void
     ) {
-        window.sizeChanged.addHandler { _, args in
-            let size = SIMD2(
-                Int(args!.size.width.rounded(.awayFromZero)),
-                Int(args!.size.height.rounded(.awayFromZero)) - window.contentHeightAdjustment
-            )
-            action(size)
+        window.sizeChanged.addHandler { [weak self, weak window] _, _ in
+            guard let self, let window else { return }
+            // Read the size back the same way `size(ofWindow:)` does, so the
+            // layout is always given the client size in points regardless of
+            // the units the event reports in.
+            action(self.size(ofWindow: window))
         }
     }
 
@@ -479,9 +491,12 @@ public final class WinUIBackend:
         window: Window,
         rootEnvironment: EnvironmentValues
     ) -> EnvironmentValues {
-        // TODO: Compute window scale factor (easy enough, but we would also have to keep
-        //   it up-to-date then, which is kinda annoying for now)
+        // Points stay points; the scale factor is only there for views that
+        // rasterise their own content (images, canvases) so they can draw at
+        // the display's pixel density. A DPI change resizes the window, which
+        // re-runs this through the resize handler.
         rootEnvironment
+            .with(\.windowScaleFactor, window.scaleFactor)
             .with(\.scenePhase, window.isActive ? .active : .inactive)
     }
 
@@ -571,25 +586,14 @@ public final class WinUIBackend:
     }
 
     public func setCornerRadius(of widget: Widget, to radius: Int) {
-        let visual: WinAppSDK.Visual = try! widget.getVisualInternal()
-
-        let geometry = try! visual.compositor.createRoundedRectangleGeometry()!
-        geometry.cornerRadius = WindowsFoundation.Vector2(
+        guard let clip = CornerClipRegistry.shared.clip(for: widget) else {
+            return
+        }
+        clip.geometry.cornerRadius = WindowsFoundation.Vector2(
             x: Float(radius),
             y: Float(radius)
         )
-
-        // We assume that SwiftCrossUI has explicitly set the size of the
-        // underlying widget.
-        geometry.size = WindowsFoundation.Vector2(
-            x: Float(widget.width),
-            y: Float(widget.height)
-        )
-
-        let clip = try! visual.compositor.createGeometricClip()!
-        clip.geometry = geometry
-
-        visual.clip = clip
+        clip.resize(width: widget.width, height: widget.height)
     }
 
     public func naturalSize(of widget: Widget) -> SIMD2<Int> {
@@ -2336,6 +2340,98 @@ public class CustomWindow: WinUI.Window {
         menuBarIsVisible ? Self.menuBarHeight : 0
     }
 
+    /// The smallest content size the window may shrink to, in points.
+    var minimumContentSize: SIMD2<Int> = .zero
+
+    /// The largest content size the window may grow to, in points.
+    var maximumContentSize: SIMD2<Int>?
+
+    /// Whether ``enforceSizeLimits()`` is already run on every size change.
+    private var enforcesSizeLimits = false
+
+    /// The client size, in physical pixels, that shows a given content size.
+    ///
+    /// - Parameter contentSize: The content size in points.
+    /// - Returns: The client size for `AppWindow`.
+    func physicalClientSize(forContentSize contentSize: SIMD2<Int>) -> UWP.SizeInt32 {
+        let scaleFactor = scaleFactor
+        let width = scaleFactor * Double(contentSize.x)
+        let height = scaleFactor * Double(contentSize.y + contentHeightAdjustment)
+        return UWP.SizeInt32(
+            width: Int32(width.rounded(.towardZero)),
+            height: Int32(height.rounded(.towardZero))
+        )
+    }
+
+    /// The largest content size, in points, that fits the work area of the
+    /// display the window is on, allowing for the window's own frame.
+    ///
+    /// `nil` when the display can't be determined.
+    var availableContentSize: SIMD2<Int>? {
+        guard
+            let displayArea = WinAppSDK.DisplayArea.getFromWindowId(
+                cachedAppWindow.id,
+                WinAppSDK.DisplayAreaFallback.nearest
+            )
+        else {
+            return nil
+        }
+        let workArea = displayArea.workArea
+        guard workArea.width > 0, workArea.height > 0 else {
+            return nil
+        }
+
+        // The frame (title bar and borders) is the difference between the
+        // window's outer size and its client size.
+        let outer = cachedAppWindow.size
+        let client = cachedAppWindow.clientSize
+        let frameWidth = max(0, Int(outer.width) - Int(client.width))
+        let frameHeight = max(0, Int(outer.height) - Int(client.height))
+
+        let scaleFactor = scaleFactor
+        let width = Double(Int(workArea.width) - frameWidth) / scaleFactor
+        let height = Double(Int(workArea.height) - frameHeight) / scaleFactor
+        return SIMD2(
+            max(1, Int(width.rounded(.towardZero))),
+            max(1, Int(height.rounded(.towardZero)) - contentHeightAdjustment)
+        )
+    }
+
+    /// Starts resizing the window back into its limits whenever its size
+    /// changes. Does nothing the second time.
+    func installSizeLimitEnforcement() {
+        guard !enforcesSizeLimits else {
+            return
+        }
+        enforcesSizeLimits = true
+        cachedAppWindow.changed.addHandler { [weak self] _, args in
+            guard let self, let args, args.didSizeChange else { return }
+            self.enforceSizeLimits()
+        }
+    }
+
+    /// Resizes the window back into ``minimumContentSize`` and
+    /// ``maximumContentSize`` if it has left them.
+    func enforceSizeLimits() {
+        let minimum = physicalClientSize(forContentSize: minimumContentSize)
+        let maximum = maximumContentSize.map(physicalClientSize(forContentSize:))
+        let current = cachedAppWindow.clientSize
+
+        var width = max(current.width, minimum.width)
+        var height = max(current.height, minimum.height)
+        if let maximum {
+            width = min(width, maximum.width)
+            height = min(height, maximum.height)
+        }
+
+        guard width != current.width || height != current.height else {
+            return
+        }
+        // Resizing raises `changed` again; the size is then within the
+        // limits, so that call returns above.
+        try? cachedAppWindow.resizeClient(UWP.SizeInt32(width: width, height: height))
+    }
+
     var scaleFactor: Double {
         // I'm leaving this code here for future travellers. Be warned that this always
         // seems to return 100% even if the scale factor is set to 125% in settings.
@@ -2417,6 +2513,77 @@ public class CustomWindow: WinUI.Window {
 public final class GeometryGroupHolder {
     var group = GeometryGroup()
     var strokeStyle: StrokeStyle?
+}
+
+/// Keeps the composition clip behind each rounded element so that the clip
+/// follows the element's size.
+///
+/// `setCornerRadius(of:to:)` used to size the clip once from the element's
+/// width and height at the time of the call; an element that hadn't been
+/// sized yet, or that was resized later, was clipped to the wrong rectangle
+/// (a zero-sized one hides the element entirely). The clip now resizes with
+/// the element's `SizeChanged` event.
+@MainActor
+final class CornerClipRegistry {
+    static let shared = CornerClipRegistry()
+
+    /// A rounded-rectangle clip on one element.
+    final class Clip {
+        let geometry: WinAppSDK.CompositionRoundedRectangleGeometry
+
+        init(geometry: WinAppSDK.CompositionRoundedRectangleGeometry) {
+            self.geometry = geometry
+        }
+
+        /// Sizes the clip, ignoring sizes the element doesn't have yet.
+        func resize(width: Double, height: Double) {
+            guard width.isFinite, height.isFinite, width > 0.0, height > 0.0 else {
+                return
+            }
+            geometry.size = WindowsFoundation.Vector2(x: Float(width), y: Float(height))
+        }
+    }
+
+    private struct Entry {
+        weak var element: WinUI.FrameworkElement?
+        let clip: Clip
+    }
+
+    private var entries: [ObjectIdentifier: Entry] = [:]
+
+    private init() {}
+
+    /// The clip installed on an element, created and attached on first use.
+    ///
+    /// - Parameter element: The element to clip.
+    /// - Returns: The clip, or `nil` if the element has no composition visual.
+    func clip(for element: WinUI.FrameworkElement) -> Clip? {
+        let key = ObjectIdentifier(element)
+        if let entry = entries[key], entry.element === element {
+            return entry.clip
+        }
+
+        entries = entries.filter { _, entry in entry.element != nil }
+
+        guard
+            let visual: WinAppSDK.Visual = try? element.getVisualInternal(),
+            let geometry = try? visual.compositor.createRoundedRectangleGeometry(),
+            let geometricClip = try? visual.compositor.createGeometricClip()
+        else {
+            logger.warning("failed to create a composition clip for a rounded element")
+            return nil
+        }
+        geometricClip.geometry = geometry
+        visual.clip = geometricClip
+
+        let clip = Clip(geometry: geometry)
+        element.sizeChanged.addHandler { [weak clip] _, args in
+            guard let clip, let args else { return }
+            clip.resize(width: Double(args.newSize.width), height: Double(args.newSize.height))
+        }
+        entries[key] = Entry(element: element, clip: clip)
+        return clip
+    }
 }
 
 /// Keeps the `WriteableBitmap` behind each image view so that an image whose
