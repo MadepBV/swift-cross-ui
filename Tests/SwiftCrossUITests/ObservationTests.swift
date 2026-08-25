@@ -390,7 +390,7 @@ import Testing
         ///
         /// - Parameter view: The view to search.
         /// - Returns: The strings, in tree order.
-        private static func strings(in view: NSView) -> [String] {
+        static func strings(in view: NSView) -> [String] {
             var collected: [String] = []
             if let field = view as? NSTextField {
                 collected.append(field.stringValue)
@@ -445,6 +445,20 @@ import Testing
 
         func record(_ entry: String) {
             entries.append(entry)
+        }
+    }
+
+    /// A view whose body is an `onChange` modifier and nothing else.
+    @available(macOS 14.0, iOS 17.0, tvOS 17.0, watchOS 10.0, *)
+    struct ChangeReportingView: View {
+        let model: ObservedModel
+        let log: ChangeLog
+
+        var body: some View {
+            Text(model.title)
+                .onChange(of: model.title) { oldValue, newValue in
+                    log.record("\(oldValue)->\(newValue)")
+                }
         }
     }
 
@@ -511,6 +525,75 @@ import Testing
             model.title = "later"
             await waitForUpdate { log.entries.count == 2 }
             #expect(log.entries == ["before->after", "after->later"])
+        }
+
+        @Test("onChange at the root of a window's content fires on a change")
+        @MainActor
+        func testOnChangeAtWindowRootFires() async {
+            guard
+                #available(macOS 14.0, iOS 17.0, tvOS 17.0, watchOS 10.0, *)
+            else {
+                return
+            }
+
+            // The content closure of a WindowGroup runs outside any view
+            // graph node, so what it reads has to be observed by the scene.
+            let model = ObservedModel(title: "before")
+            let log = ChangeLog()
+            let backend = AppKitBackend()
+            let environment = EnvironmentValues(backend: backend)
+            let scene = WindowGroup("Window") {
+                Text(model.title)
+                    .onChange(of: model.title) { oldValue, newValue in
+                        log.record("\(oldValue)->\(newValue)")
+                    }
+            }
+            let reference = WindowReference(
+                scene: scene,
+                backend: backend,
+                environment: environment,
+                onClose: {},
+                id: "onchange-window-root"
+            )
+            reference.update(nil, backend: backend, environment: environment)
+            let window = reference.window as! NSWindow
+            #expect(log.entries.isEmpty)
+            #expect(ObservationHarness<EmptyView>.strings(in: window.contentView!) == ["before"])
+
+            model.title = "after"
+            await waitForUpdate { !log.entries.isEmpty }
+            #expect(log.entries == ["before->after"])
+            #expect(ObservationHarness<EmptyView>.strings(in: window.contentView!) == ["after"])
+            window.close()
+        }
+
+        @Test("onChange at the root of a view's body fires on a change")
+        @MainActor
+        func testOnChangeAtBodyRootFires() async {
+            guard
+                #available(macOS 14.0, iOS 17.0, tvOS 17.0, watchOS 10.0, *)
+            else {
+                return
+            }
+
+            let model = ObservedModel(title: "before")
+            let log = ChangeLog()
+            let harness = ObservationHarness(
+                VStack {
+                    Text("header")
+                    ChangeReportingView(model: model, log: log)
+                }
+            )
+            #expect(log.entries.isEmpty)
+
+            model.title = "after"
+            await waitForUpdate { !log.entries.isEmpty }
+            #expect(log.entries == ["before->after"])
+
+            model.title = "later"
+            await waitForUpdate { log.entries.count == 2 }
+            #expect(log.entries == ["before->after", "after->later"])
+            #expect(harness.renderedStrings == ["header", "later"])
         }
 
         @Test("onChange(initial:) runs once with the current value on both sides")

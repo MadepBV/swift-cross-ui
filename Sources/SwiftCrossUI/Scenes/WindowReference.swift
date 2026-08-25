@@ -1,3 +1,7 @@
+#if canImport(Observation)
+    import Observation
+#endif
+
 /// Holds the view graph and window handle for a single window.
 @MainActor
 final class WindowReference<SceneType: WindowingScene> {
@@ -17,6 +21,14 @@ final class WindowReference<SceneType: WindowingScene> {
     private let containerWidget: AnyWidget
     /// The window's preferred color scheme, cached from the last update.
     private var preferredColorScheme: ColorScheme?
+
+    /// Observation of the scene's content closure.
+    ///
+    /// The closure handed to `WindowGroup { ... }` runs outside any view
+    /// graph node, so an observable property it reads (`Text(model.title)`
+    /// at the window's root, say) would otherwise never invalidate anything.
+    /// Created by the first update.
+    private var contentObservation: ObservationRegistration?
 
     /// - Parameters:
     ///   - closeHandler: The action to perform when the window is closed. Should
@@ -185,8 +197,18 @@ final class WindowReference<SceneType: WindowingScene> {
             environment.colorScheme = preferredColorScheme
         }
 
+        // The scene's content closure is re-run when the scene changed, and
+        // once on the first update so that what it reads is observed (the
+        // evaluation in `init` couldn't be tracked yet).
+        let newContent: SceneType.Content?
+        if newScene != nil || contentObservation == nil {
+            newContent = trackedContent(of: newScene ?? scene, backend: backend)
+        } else {
+            newContent = nil
+        }
+
         let probingResult = viewGraph.computeLayout(
-            with: newScene?.content(),
+            with: newContent,
             proposedSize: .zero,
             environment: environment
                 .with(\.allowLayoutCaching, true)
@@ -301,6 +323,66 @@ final class WindowReference<SceneType: WindowingScene> {
             backend.show(window: window)
             isFirstUpdate = false
         }
+    }
+
+    /// Evaluates the scene's content closure, observing what it reads.
+    ///
+    /// When an observed property later changes, the scene is updated again
+    /// (on the main thread, asynchronously) so that the closure re-runs with
+    /// the new value.
+    ///
+    /// - Parameters:
+    ///   - scene: The scene whose content to evaluate.
+    ///   - backend: The backend, used to schedule the update.
+    /// - Returns: The content.
+    private func trackedContent<Backend: BaseAppBackend>(
+        of scene: SceneType,
+        backend: Backend
+    ) -> SceneType.Content {
+        #if canImport(Observation)
+            guard #available(macOS 14.0, iOS 17.0, tvOS 17.0, watchOS 10.0, *) else {
+                return scene.content()
+            }
+
+            let registration: ObservationRegistration
+            if let contentObservation {
+                registration = contentObservation
+            } else {
+                registration = ObservationRegistration { [weak self, backend] in
+                    backend.runInMainThread {
+                        self?.contentDidChange(backend: backend)
+                    }
+                }
+                contentObservation = registration
+            }
+
+            let generation = registration.beginGeneration()
+            return withObservationTracking {
+                scene.content()
+            } onChange: {
+                registration.reportChange(generation: generation)
+            }
+        #else
+            return scene.content()
+        #endif
+    }
+
+    /// Re-runs the scene's content closure after something it read changed.
+    ///
+    /// - Parameter backend: The backend to update through.
+    private func contentDidChange<Backend: BaseAppBackend>(backend: Backend) {
+        contentObservation?.updateWillRun()
+        guard let window = window as? Backend.Window else {
+            return
+        }
+        update(
+            scene,
+            proposedWindowSize: cachedWindowSize ?? backend.size(ofWindow: window),
+            needsWindowSizeCommit: false,
+            backend: backend,
+            environment: parentEnvironment,
+            windowSizeIsFinal: !backend.isWindowProgrammaticallyResizable(window)
+        )
     }
 
     func activate<Backend: BaseAppBackend>(backend: Backend) {
