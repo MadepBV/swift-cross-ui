@@ -37,7 +37,12 @@ extension WinUIBackend: BackendFeatures.Alerts {
                             case .secondary: 1
                             case .none: 2
                             default:
-                                fatalError("WinUIBackend: Invalid dialog response")
+                                // Treat anything unexpected as a dismissal
+                                // rather than trapping the whole app.
+                                logger.warning(
+                                    "WinUIBackend: unexpected dialog response \(result); treating it as dismissal"
+                                )
+                                2
                         }
                     self.handleResponse?(index)
                 } else {

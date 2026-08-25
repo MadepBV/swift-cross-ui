@@ -93,7 +93,7 @@ public final class WinUIBackend:
         .compact,
         .wheel,
     ]
-    public let supportedPickerStyles: [BackendPickerStyle] = [.menu, .radioGroup]
+    public let supportedPickerStyles: [BackendPickerStyle] = [.menu, .radioGroup, .segmented]
     public let canOverrideWindowColorScheme = true
     public let restoresWindowFrames = false
 
@@ -659,6 +659,10 @@ public final class WinUIBackend:
             // the defaults set in the following code from the WinUI repository:
             // https://github.com/marcelwgn/microsoft-ui-xaml/blob/ff21f9b212cea2191b959649e45e52486c8465aa/src/controls/dev/ProgressRing/ProgressRing.xaml#L12
             return SIMD2(32, 32)
+        } else if let segmentedPicker = widget as? CustomSegmentedPicker {
+            // A row of toggle buttons whose padding, like a button's, isn't
+            // measured before the first render; add the segments up by hand.
+            return segmentedPicker.naturalSize()
         } else if let datePicker = widget as? CustomDatePicker {
             // CustomDatePicker is a StackPanel whose individual subviews need to be manually sized
             // and then added together. Its naturalSize(in:) method dispatches back here once for
@@ -1118,10 +1122,15 @@ public final class WinUIBackend:
                 }
 
                 return picker
+            case .segmented:
+                return CustomSegmentedPicker()
             default:
-                let message = "unsupported picker style \(style)"
-                logger.critical("\(message)")
-                fatalError(message)
+                // A style this backend can't draw is still a picker; the
+                // menu picker is the closest thing to every other style.
+                logger.warnOnce(
+                    "WinUIBackend can't draw picker style \(style); drawing a menu picker instead"
+                )
+                return createPicker(style: .menu)
         }
     }
 
@@ -1196,6 +1205,9 @@ public final class WinUIBackend:
             }
 
             picker.onChangeSelection = onChange
+        } else if let picker = picker as? CustomSegmentedPicker {
+            picker.onChangeSelection = onChange
+            picker.setOptions(options, environment: environment)
         }
     }
 
@@ -1204,6 +1216,8 @@ public final class WinUIBackend:
             picker.selectedIndex = Int32(selectedOption ?? 0)
         } else if let picker = picker as? RadioButtons {
             picker.selectedIndex = Int32(selectedOption ?? -1)
+        } else if let picker = picker as? CustomSegmentedPicker {
+            picker.setSelectedIndex(selectedOption)
         }
     }
 

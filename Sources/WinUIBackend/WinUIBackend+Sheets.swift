@@ -97,11 +97,12 @@ extension WinUIBackend: BackendFeatures.Sheets {
                 sheet.dismissHandler?()
             }
         } catch {
-            // Force tries don't print properly in some Windows environments, and this
-            // is a particularly useful error to have access to, because there are legitimate
-            // edge cases under which this could be triggered
-            print("Error: \(error)")
-            fatalError("\(error)")
+            // WinUI refuses to show a second ContentDialog while one is up
+            // (and a few other legitimate edge cases). A sheet that fails to
+            // appear is reported as dismissed so the app's state stays
+            // consistent, rather than trapping the whole app.
+            logger.error("failed to present sheet", metadata: ["error": "\(error)"])
+            sheet.dismissHandler?()
         }
     }
 
