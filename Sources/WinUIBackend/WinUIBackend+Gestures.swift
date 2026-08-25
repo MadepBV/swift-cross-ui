@@ -285,6 +285,7 @@ extension WinUIBackend: BackendFeatures.PointerGestures {
     public func updatePointerGestureTarget(
         _ container: Widget,
         minimumDragDistance: Double,
+        dragButtons: PointerButtons,
         tapCount: Int,
         coordinateSpace: SwiftCrossUI.CoordinateSpace,
         environment: EnvironmentValues,
@@ -297,6 +298,7 @@ extension WinUIBackend: BackendFeatures.PointerGestures {
     ) {
         let target = container as! PointerGestureTarget
         target.minimumDragDistance = minimumDragDistance
+        target.dragButtons = dragButtons
         target.tapCount = tapCount
         target.reportsWindowCoordinates = coordinateSpace == .global
 
@@ -349,8 +351,12 @@ extension WinUIBackend: BackendFeatures.PointerGestures {
 /// most recent pointer event instead.
 @MainActor
 final class PointerGestureTarget: WinUI.Canvas {
-    /// How long two presses may be apart to count as one multi-tap.
-    private static let multiTapInterval: TimeInterval = 0.5
+    /// How long two presses may be apart to count as one multi-tap: the
+    /// system's double-click time.
+    private static let multiTapInterval: TimeInterval = {
+        let milliseconds = UWP.UISettings().doubleClickTime
+        return milliseconds > 0 ? Double(milliseconds) / 1000.0 : 0.5
+    }()
 
     /// How far apart two presses may be to count as one multi-tap.
     private static let multiTapDistance = 8.0
@@ -361,8 +367,16 @@ final class PointerGestureTarget: WinUI.Canvas {
     /// starts being reported.
     var minimumDragDistance = 0.0
 
-    /// How many clicks in quick succession ``tapHandler`` needs.
+    /// The largest click count any tap gesture needs. Single and double
+    /// clicks come from WinUI's own `Tapped` and `DoubleTapped`; only counts
+    /// of three or more are tallied by hand.
     var tapCount = 1
+
+    /// The buttons a drag may be made with.
+    var dragButtons: PointerButtons = .primary
+
+    /// The button the current drag is being made with.
+    private var dragButton: PointerButton = .primary
 
     /// Whether positions are reported in window coordinates rather than in
     /// this element's own.
@@ -478,17 +492,20 @@ final class PointerGestureTarget: WinUI.Canvas {
             guard let self, let args else { return }
             self.handlePointerExited(args)
         }
+        // Every click is reported with its count and SwiftCrossUI routes it
+        // to the gesture asking for that count. WinUI raises Tapped for the
+        // first click of a double click and DoubleTapped for the second.
         tapped.addHandler { [weak self] _, args in
-            guard let self, let args, self.tapCount == 1 else { return }
+            guard let self, let args else { return }
             let relativeTo: WinUI.UIElement? = self.reportsWindowCoordinates ? nil : self
             guard let position = try? args.getPosition(relativeTo) else { return }
-            self.sendTap(at: position.cgPoint)
+            self.sendTap(at: position.cgPoint, clickCount: 1)
         }
         doubleTapped.addHandler { [weak self] _, args in
-            guard let self, let args, self.tapCount == 2 else { return }
+            guard let self, let args, self.tapCount >= 2 else { return }
             let relativeTo: WinUI.UIElement? = self.reportsWindowCoordinates ? nil : self
             guard let position = try? args.getPosition(relativeTo) else { return }
-            self.sendTap(at: position.cgPoint)
+            self.sendTap(at: position.cgPoint, clickCount: 2)
         }
         pointerWheelChanged.addHandler { [weak self] _, args in
             guard let self, let args else { return }
@@ -578,7 +595,8 @@ final class PointerGestureTarget: WinUI.Canvas {
             location: location,
             time: Date(),
             velocity: velocity,
-            modifiers: lastModifiers
+            modifiers: lastModifiers,
+            button: dragButton
         )
     }
 
@@ -610,18 +628,19 @@ final class PointerGestureTarget: WinUI.Canvas {
     private func handlePointerPressed(_ args: WinUI.PointerRoutedEventArgs) {
         lastModifiers = PointerModifiers(virtualKeyModifiers: args.keyModifiers)
 
-        guard let point = try? args.getCurrentPoint(self), point.isPrimaryContact else {
+        guard let point = try? args.getCurrentPoint(self), let button = point.pressedButton else {
             return
         }
 
-        if tapHandler != nil, tapCount >= 3 {
+        if button == .primary, tapHandler != nil, tapCount >= 3 {
             countPress(at: point.position.cgPoint)
         }
 
-        guard wantsDrag, let location = location(of: args) else {
+        guard wantsDrag, dragButtons.contains(button), let location = location(of: args) else {
             return
         }
 
+        dragButton = button
         pressedPointerId = point.pointerId
         dragStartLocation = location
         dragIsRecognized = minimumDragDistance <= 0.0
@@ -733,12 +752,16 @@ final class PointerGestureTarget: WinUI.Canvas {
         lastPressTime = now
         lastPressLocation = location
 
-        guard consecutivePresses >= tapCount else {
+        // The first two clicks are reported by Tapped/DoubleTapped.
+        guard consecutivePresses >= 3 else {
             return
         }
-        consecutivePresses = 0
-        lastPressTime = nil
-        lastPressLocation = nil
+        let clickCount = consecutivePresses
+        if consecutivePresses >= tapCount {
+            consecutivePresses = 0
+            lastPressTime = nil
+            lastPressLocation = nil
+        }
 
         if reportsWindowCoordinates,
             let transform = try? transformToVisual(nil),
@@ -746,18 +769,19 @@ final class PointerGestureTarget: WinUI.Canvas {
                 WindowsFoundation.Point(x: Float(location.x), y: Float(location.y))
             )
         {
-            sendTap(at: transformed.cgPoint)
+            sendTap(at: transformed.cgPoint, clickCount: clickCount)
         } else {
-            sendTap(at: location)
+            sendTap(at: location, clickCount: clickCount)
         }
     }
 
-    private func sendTap(at location: CGPoint) {
+    private func sendTap(at location: CGPoint, clickCount: Int) {
         tapHandler?(
             PointerGestureEvent(
                 startLocation: location,
                 location: location,
-                modifiers: lastModifiers
+                modifiers: lastModifiers,
+                clickCount: clickCount
             )
         )
     }
@@ -886,5 +910,21 @@ extension WinAppSDK.PointerPoint {
             return false
         }
         return properties.isLeftButtonPressed
+    }
+
+    /// The button held down, or `nil` if none is (a hover, or a pointer
+    /// WinUI reports no button for).
+    var pressedButton: PointerButton? {
+        guard let properties else {
+            return nil
+        }
+        if properties.isLeftButtonPressed {
+            return .primary
+        } else if properties.isRightButtonPressed {
+            return .secondary
+        } else if properties.isMiddleButtonPressed {
+            return .middle
+        }
+        return nil
     }
 }
