@@ -249,11 +249,15 @@ public struct GestureModifier<Content: View>: TypeSafeView {
 
         let gestures = gestures
         var dragDistances: [Double] = []
+        var dragButtons: PointerButtons = []
         var tapCount: Int?
         for gesture in gestures {
             switch gesture {
-                case .drag: dragDistances.append(gesture.minimumDragDistance)
-                case .spatialTap: tapCount = gesture.tapCount
+                case .drag:
+                    dragDistances.append(gesture.minimumDragDistance)
+                    dragButtons.formUnion(gesture.dragButtons)
+                case .spatialTap:
+                    tapCount = max(tapCount ?? 1, gesture.tapCount)
             }
         }
 
@@ -318,6 +322,7 @@ public struct GestureModifier<Content: View>: TypeSafeView {
             backend.updatePointerGestureTarget(
                 widget as! PointerBackend.Widget,
                 minimumDragDistance: dragDistances.min() ?? 0.0,
+                dragButtons: dragButtons,
                 tapCount: tapCount ?? 1,
                 // One target reports every event in one space: the first
                 // gesture's, else the hover's, else the target's own.

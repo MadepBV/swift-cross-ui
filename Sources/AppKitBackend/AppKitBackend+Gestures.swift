@@ -243,6 +243,7 @@ extension AppKitBackend: BackendFeatures.PointerGestures {
     public func updatePointerGestureTarget(
         _ container: Widget,
         minimumDragDistance: Double,
+        dragButtons: PointerButtons,
         tapCount: Int,
         coordinateSpace: SwiftCrossUI.CoordinateSpace,
         environment: EnvironmentValues,
@@ -255,6 +256,7 @@ extension AppKitBackend: BackendFeatures.PointerGestures {
     ) {
         let target = container.subviews[1] as! NSCustomPointerGestureTarget
         target.minimumDragDistance = minimumDragDistance
+        target.dragButtons = dragButtons
         target.reportsWindowCoordinates = coordinateSpace == .global
 
         guard environment.isEnabled else {
@@ -287,12 +289,21 @@ final class NSCustomPointerGestureTarget: NSView {
     /// starts being reported.
     var minimumDragDistance: Double = 0.0
 
-    /// How many clicks in quick succession ``tapHandler`` needs.
-    var tapCount: Int = 1 {
+    /// The largest click count any tap gesture needs.
+    ///
+    /// Unused on AppKit: the click recognizer fires for every click and
+    /// reports `NSEvent.clickCount`, which is what SwiftCrossUI routes on.
+    var tapCount: Int = 1
+
+    /// The buttons a drag may be made with.
+    var dragButtons: PointerButtons = .primary {
         didSet {
-            clickRecognizer?.numberOfClicksRequired = tapCount
+            panRecognizer?.buttonMask = dragButtons.appKitButtonMask
         }
     }
+
+    /// The button the current drag is being made with.
+    private var dragButton: PointerButton = .primary
 
     /// Whether positions are reported in window coordinates rather than in
     /// this view's own.
@@ -318,9 +329,11 @@ final class NSCustomPointerGestureTarget: NSView {
             if tapHandler != nil, clickRecognizer == nil {
                 let recognizer = NSClickGestureRecognizer(
                     target: self,
-                    action: #selector(click)
+                    action: #selector(click(sender:))
                 )
-                recognizer.numberOfClicksRequired = tapCount
+                // Every click is reported with its count; a double click
+                // arrives as a click with `clickCount` 1 and then one with 2.
+                recognizer.numberOfClicksRequired = 1
                 addGestureRecognizer(recognizer)
                 clickRecognizer = recognizer
             } else if tapHandler == nil, let clickRecognizer {
@@ -497,8 +510,9 @@ final class NSCustomPointerGestureTarget: NSView {
         if wantsDrag, panRecognizer == nil {
             let recognizer = NSPanGestureRecognizer(
                 target: self,
-                action: #selector(pan)
+                action: #selector(pan(sender:))
             )
+            recognizer.buttonMask = dragButtons.appKitButtonMask
             addGestureRecognizer(recognizer)
             panRecognizer = recognizer
         } else if !wantsDrag, let panRecognizer {
@@ -551,16 +565,36 @@ final class NSCustomPointerGestureTarget: NSView {
             location: location(of: recognizer),
             time: Date(),
             velocity: CGSize(width: velocity.x, height: velocity.y),
-            modifiers: PointerModifiers(NSEvent.modifierFlags)
+            modifiers: PointerModifiers(NSEvent.modifierFlags),
+            button: dragButton
         )
+    }
+
+    /// The button behind the event AppKit is currently delivering.
+    private static var currentButton: PointerButton {
+        guard let event = NSApp.currentEvent else {
+            return .primary
+        }
+        switch event.buttonNumber {
+            case 0: return .primary
+            case 1: return .secondary
+            default: return .middle
+        }
     }
 
     /// Driven by the gesture recognizer. Not private so that tests
     /// can replay a gesture without synthesising real mouse events.
     @objc
     func pan(sender: NSPanGestureRecognizer) {
+        pan(sender: sender, button: Self.currentButton)
+    }
+
+    /// Replays a pan made with a given button. Not private so that tests can
+    /// drive it without an `NSApp.currentEvent`.
+    func pan(sender: NSPanGestureRecognizer, button: PointerButton) {
         switch sender.state {
             case .began:
+                dragButton = button
                 dragStartLocation = location(of: sender)
                 dragIsRecognized = minimumDragDistance <= 0.0
             case .changed:
@@ -601,12 +635,19 @@ final class NSCustomPointerGestureTarget: NSView {
     /// can replay a gesture without synthesising real mouse events.
     @objc
     func click(sender: NSClickGestureRecognizer) {
+        click(sender: sender, clickCount: NSApp.currentEvent?.clickCount ?? 1)
+    }
+
+    /// Replays a click with a given count. Not private so that tests can
+    /// drive it without an `NSApp.currentEvent`.
+    func click(sender: NSClickGestureRecognizer, clickCount: Int) {
         let point = location(of: sender)
         tapHandler?(
             PointerGestureEvent(
                 startLocation: point,
                 location: point,
-                modifiers: PointerModifiers(NSEvent.modifierFlags)
+                modifiers: PointerModifiers(NSEvent.modifierFlags),
+                clickCount: max(clickCount, 1)
             )
         )
     }
@@ -640,6 +681,23 @@ final class NSCustomPointerGestureTarget: NSView {
                 time: Date()
             )
         )
+    }
+}
+
+extension PointerButtons {
+    /// The `NSPanGestureRecognizer.buttonMask` selecting these buttons.
+    var appKitButtonMask: Int {
+        var mask = 0
+        if contains(.primary) {
+            mask |= 0x1
+        }
+        if contains(.secondary) {
+            mask |= 0x2
+        }
+        if contains(.middle) {
+            mask |= 0x4
+        }
+        return mask
     }
 }
 

@@ -52,8 +52,13 @@ extension BackendFeatures {
         ///   - target: The pointer gesture target to update.
         ///   - minimumDragDistance: How far the pointer must move before a
         ///     drag is recognized.
-        ///   - tapCount: How many taps in quick succession are needed before
-        ///     `onTap` runs.
+        ///   - dragButtons: The buttons a drag may be made with. A press of
+        ///     any other button is not a drag and must be left alone.
+        ///   - tapCount: The largest click count any tap gesture on the
+        ///     target needs. `onTap` must run for *every* click, with
+        ///     ``PointerGestureEvent/clickCount`` saying which click of a
+        ///     multi-click it is (as the platform counts them); SwiftCrossUI
+        ///     routes each click to the gesture asking for that count.
         ///   - coordinateSpace: The space to report positions in. Only
         ///     ``CoordinateSpace/local`` and ``CoordinateSpace/global`` are
         ///     ever passed.
@@ -75,6 +80,7 @@ extension BackendFeatures {
         func updatePointerGestureTarget(
             _ target: Widget,
             minimumDragDistance: Double,
+            dragButtons: PointerButtons,
             tapCount: Int,
             coordinateSpace: CoordinateSpace,
             environment: EnvironmentValues,

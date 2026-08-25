@@ -31,6 +31,14 @@ public struct PointerGestureEvent: Sendable {
     /// The modifier keys held down when the event happened.
     public var modifiers: PointerModifiers
 
+    /// The button that drove the event.
+    public var button: PointerButton
+
+    /// For a tap, how many clicks in quick succession this one is; `1` for
+    /// a single click, `2` for the second click of a double click, and so
+    /// on. Always `1` for a drag.
+    public var clickCount: Int
+
     /// Describes a pointer position.
     ///
     /// - Parameters:
@@ -40,17 +48,23 @@ public struct PointerGestureEvent: Sendable {
     ///   - velocity: How fast the pointer is moving, or zero if the backend
     ///     can't measure it.
     ///   - modifiers: The modifier keys held down.
+    ///   - button: The button that drove the event.
+    ///   - clickCount: For a tap, which click of a multi-click this is.
     public init(
         startLocation: CGPoint,
         location: CGPoint,
         time: Date = Date(),
         velocity: CGSize = CGSize(width: 0.0, height: 0.0),
-        modifiers: PointerModifiers = []
+        modifiers: PointerModifiers = [],
+        button: PointerButton = .primary,
+        clickCount: Int = 1
     ) {
         self.startLocation = startLocation
         self.location = location
         self.time = time
         self.velocity = velocity
         self.modifiers = modifiers
+        self.button = button
+        self.clickCount = clickCount
     }
 }

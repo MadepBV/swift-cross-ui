@@ -37,6 +37,14 @@ package enum ResolvedGesture {
         }
     }
 
+    /// The buttons a drag responds to; empty for a tap.
+    package var dragButtons: PointerButtons {
+        switch self {
+            case .drag(let gesture): gesture.buttons
+            case .spatialTap: []
+        }
+    }
+
     /// Delivers a drag update to the gesture's handlers.
     ///
     /// Does nothing for a gesture that isn't a drag.
@@ -46,7 +54,7 @@ package enum ResolvedGesture {
     ///   - phase: Whether the drag is still going or has finished.
     @MainActor
     package func sendDrag(_ event: PointerGestureEvent, phase: DragPhase) {
-        guard case .drag(let gesture) = self else {
+        guard case .drag(let gesture) = self, gesture.buttons.contains(event.button) else {
             return
         }
         let value = DragGesture.Value(
@@ -54,7 +62,8 @@ package enum ResolvedGesture {
             startLocation: event.startLocation,
             location: event.location,
             velocity: event.velocity,
-            modifiers: event.modifiers
+            modifiers: event.modifiers,
+            button: event.button
         )
         let handlers = switch phase {
             case .changed: gesture.changeHandlers
@@ -73,12 +82,15 @@ package enum ResolvedGesture {
     /// - Parameter event: The pointer position the backend reported.
     @MainActor
     package func sendTap(_ event: PointerGestureEvent) {
-        guard case .spatialTap(let gesture) = self else {
+        // Backends report every click with its count; a gesture only fires
+        // for the click that completes the count it asked for.
+        guard case .spatialTap(let gesture) = self, gesture.count == event.clickCount else {
             return
         }
         let value = SpatialTapGesture.Value(
             location: event.location,
-            modifiers: event.modifiers
+            modifiers: event.modifiers,
+            clickCount: event.clickCount
         )
         for handler in gesture.changeHandlers {
             handler(value)

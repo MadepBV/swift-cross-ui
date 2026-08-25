@@ -68,6 +68,13 @@ public struct DragGesture: Gesture {
         /// need a separate keyboard listener.
         public var modifiers: PointerModifiers
 
+        /// The button the drag is being made with.
+        ///
+        /// SwiftUI's value has no such field; SwiftCrossUI adds it for drags
+        /// that accept several ``DragGesture/buttons`` (a right-button pan
+        /// alongside a left-button select, say).
+        public var button: PointerButton
+
         /// Describes a drag from its two endpoints.
         ///
         /// ``DragGesture/Value/translation`` is derived from the two
@@ -85,7 +92,8 @@ public struct DragGesture: Gesture {
             startLocation: CGPoint,
             location: CGPoint,
             velocity: CGSize = CGSize(width: 0.0, height: 0.0),
-            modifiers: PointerModifiers = []
+            modifiers: PointerModifiers = [],
+            button: PointerButton = .primary
         ) {
             let translation = CGSize(
                 width: location.x - startLocation.x,
@@ -99,6 +107,7 @@ public struct DragGesture: Gesture {
             self.predictedEndLocation = location
             self.predictedEndTranslation = translation
             self.modifiers = modifiers
+            self.button = button
         }
 
         /// Compares two snapshots field by field.
@@ -128,6 +137,7 @@ public struct DragGesture: Gesture {
                 && lhs.predictedEndTranslation.height
                     == rhs.predictedEndTranslation.height
                 && lhs.modifiers == rhs.modifiers
+                && lhs.button == rhs.button
         }
     }
 
@@ -149,12 +159,40 @@ public struct DragGesture: Gesture {
     ///   - minimumDistance: How far the pointer must move before the drag is
     ///     recognized.
     ///   - coordinateSpace: The coordinate space to report locations in.
+    /// The pointer buttons the drag responds to.
+    ///
+    /// SwiftUI's drags only ever follow the primary button; SwiftCrossUI
+    /// lets a drag also (or only) follow the secondary or middle button, so
+    /// that a right-button pan can live alongside a left-button selection.
+    /// ``Value/button`` says which one is being used.
+    public var buttons: PointerButtons
+
     public init(
         minimumDistance: CGFloat = 10.0,
         coordinateSpace: CoordinateSpace = .local
     ) {
         self.minimumDistance = minimumDistance
         self.coordinateSpace = coordinateSpace
+        self.buttons = .primary
+    }
+
+    /// Creates a drag gesture that follows the given buttons.
+    ///
+    /// This is SwiftCrossUI vocabulary; see ``buttons``.
+    ///
+    /// - Parameters:
+    ///   - minimumDistance: How far the pointer must move before the drag
+    ///     is recognized.
+    ///   - coordinateSpace: The coordinate space to report locations in.
+    ///   - buttons: The buttons the drag responds to.
+    public init(
+        minimumDistance: CGFloat = 10.0,
+        coordinateSpace: CoordinateSpace = .local,
+        buttons: PointerButtons
+    ) {
+        self.minimumDistance = minimumDistance
+        self.coordinateSpace = coordinateSpace
+        self.buttons = buttons
     }
 
     /// Adds an action to perform each time the drag updates.

@@ -44,14 +44,29 @@ public struct SpatialTapGesture: Gesture {
         /// separate keyboard listener.
         public var modifiers: PointerModifiers
 
+        /// How many clicks in quick succession this tap completed: the
+        /// gesture's ``SpatialTapGesture/count``.
+        ///
+        /// SwiftUI's value has no such field; SwiftCrossUI adds it so that a
+        /// handler shared between a single- and a double-click gesture can
+        /// tell them apart without timing clicks itself.
+        public var clickCount: Int
+
         /// Describes a tap at a location.
         ///
         /// - Parameters:
         ///   - location: Where the tap happened.
         ///   - modifiers: The modifier keys held down.
-        package init(location: CGPoint, modifiers: PointerModifiers = []) {
+        ///   - clickCount: How many clicks in quick succession the tap
+        ///     completed.
+        package init(
+            location: CGPoint,
+            modifiers: PointerModifiers = [],
+            clickCount: Int = 1
+        ) {
             self.location = location
             self.modifiers = modifiers
+            self.clickCount = clickCount
         }
 
         /// Compares two tap locations.
@@ -68,6 +83,7 @@ public struct SpatialTapGesture: Gesture {
             lhs.location.x == rhs.location.x
                 && lhs.location.y == rhs.location.y
                 && lhs.modifiers == rhs.modifiers
+                && lhs.clickCount == rhs.clickCount
         }
     }
 

@@ -14,6 +14,8 @@
 - ``DragGesture``
 - ``SpatialTapGesture``
 - ``CoordinateSpace``
+- ``PointerButton``
+- ``PointerButtons``
 - ``View/gesture(_:)``
 - ``View/simultaneousGesture(_:)``
 - ``GestureModifier``

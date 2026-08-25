@@ -655,6 +655,22 @@ struct ButtonStyleShapeAndGestureTests {
         #expect(chained.size == plain.size)
     }
 
+    @Test("Drag gestures follow the primary button unless told otherwise")
+    func dragGestureButtons() {
+        #expect(DragGesture().buttons == .primary)
+        #expect(DragGesture(minimumDistance: 0.0, buttons: .secondary).buttons == .secondary)
+        let both = DragGesture(buttons: [.secondary, .middle])
+        #expect(both.buttons.contains(.secondary))
+        #expect(both.buttons.contains(.middle))
+        #expect(!both.buttons.contains(.primary))
+        #expect(PointerButtons(.middle) == .middle)
+        #expect(PointerButtons.all.contains(.primary))
+
+        let event = PointerGestureEvent(startLocation: .zero, location: .zero)
+        #expect(event.button == .primary)
+        #expect(event.clickCount == 1)
+    }
+
     @Test("Pointer modifiers are an option set with readable names")
     func pointerModifiersAreAnOptionSet() {
         let modifiers: PointerModifiers = [.shift, .command]
@@ -865,6 +881,84 @@ struct ButtonStyleShapeAndGestureTests {
             target.click(sender: recognizer)
 
             #expect(log.entries == ["(7, 3)"])
+        }
+
+        @MainActor
+        @Test("Single and double clicks each reach the gesture asking for that count")
+        func clickCountsRouteToTheirGestures() {
+            let log = HandlerLog()
+            let harness = AppKitShapeHarness(
+                Color.blue.frame(width: 40.0, height: 20.0)
+                    .gesture(
+                        SpatialTapGesture().onEnded { value in
+                            log.record("single \(value.clickCount)")
+                        }
+                    )
+                    .simultaneousGesture(
+                        SpatialTapGesture(count: 2).onEnded { value in
+                            log.record("double \(value.clickCount)")
+                        }
+                    )
+            )
+            harness.render()
+
+            guard let target = Self.pointerTarget(in: harness.widget) else {
+                Issue.record("expected a pointer gesture target")
+                return
+            }
+
+            let click = ReplayedClickGestureRecognizer()
+            click.replayedLocation = CGPoint(x: 1.0, y: 1.0)
+            // A double click arrives as a click counted 1, then one counted 2.
+            target.click(sender: click, clickCount: 1)
+            target.click(sender: click, clickCount: 2)
+            // A lone triple click reaches neither.
+            target.click(sender: click, clickCount: 3)
+
+            #expect(log.entries == ["single 1", "double 2"])
+        }
+
+        @MainActor
+        @Test("A secondary-button drag reaches only the drags that accept it")
+        func secondaryButtonDragRoutesByButton() {
+            let log = HandlerLog()
+            let harness = AppKitShapeHarness(
+                Color.blue.frame(width: 40.0, height: 20.0)
+                    .gesture(
+                        DragGesture(minimumDistance: 0.0).onEnded { value in
+                            log.record("primary drag \(value.button)")
+                        }
+                    )
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 0.0, buttons: .secondary)
+                            .onEnded { value in
+                                log.record("secondary drag \(value.button)")
+                            }
+                    )
+            )
+            harness.render()
+
+            guard let target = Self.pointerTarget(in: harness.widget) else {
+                Issue.record("expected a pointer gesture target")
+                return
+            }
+
+            func drag(with button: PointerButton) {
+                let pan = ReplayedPanGestureRecognizer()
+                pan.replayedState = .began
+                pan.replayedLocation = CGPoint(x: 1.0, y: 1.0)
+                target.pan(sender: pan, button: button)
+                pan.replayedState = .changed
+                pan.replayedLocation = CGPoint(x: 9.0, y: 1.0)
+                target.pan(sender: pan, button: button)
+                pan.replayedState = .ended
+                target.pan(sender: pan, button: button)
+            }
+
+            drag(with: .secondary)
+            #expect(log.entries == ["secondary drag secondary"])
+            drag(with: .primary)
+            #expect(log.entries == ["secondary drag secondary", "primary drag primary"])
         }
 
         @MainActor
