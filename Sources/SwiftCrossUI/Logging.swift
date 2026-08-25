@@ -9,7 +9,11 @@ private struct SourceLocation: Hashable {
 private let warnedSourceLocations: Mutex<Set<SourceLocation>> = Mutex([])
 
 extension Logger {
-    func warnOnce(
+    /// Logs a warning the first time a call site is reached, and never again.
+    ///
+    /// Exposed to backends so that a degraded rendering can be reported once
+    /// without flooding the log on every update.
+    @_spi(Backends) public func warnOnce(
         _ message: @autoclosure () -> Logger.Message,
         metadata: @autoclosure () -> Logger.Metadata? = nil,
         file: String = #fileID,

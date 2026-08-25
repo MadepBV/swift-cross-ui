@@ -134,6 +134,25 @@ struct PickerTests {
         )
     }
 
+    @Test("An unsupported picker style degrades to the default instead of trapping")
+    func testUnsupportedPickerStyleDegrades() {
+        // DummyBackend supports no picker styles at all, so any style is
+        // unsupported; the modifier used to assert.
+        let backend = DummyBackend()
+        let window = backend.createWindow(withDefaultSize: nil, id: "picker-style")
+        let environment = EnvironmentValues(backend: backend).with(\.window, window)
+        let node = ViewGraphNode(
+            for: Text("Reinforcement").pickerStyle(.segmented),
+            backend: backend,
+            environment: environment
+        )
+        let layout = node.computeLayout(
+            proposedSize: ProposedViewSize(200.0, 40.0),
+            environment: environment
+        )
+        #expect(layout.size.width > 0.0)
+    }
+
     @Test("A Label option contributes its title without evaluating its body")
     func testLabelOptionsUseTheirTitle() {
         // `Label.body` reads `@Environment(\.labelStyle)`, which traps outside
