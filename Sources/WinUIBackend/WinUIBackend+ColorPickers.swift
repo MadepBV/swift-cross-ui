@@ -9,10 +9,10 @@ extension WinUIBackend: BackendFeatures.ColorPickers {
 
     public func updateColorPicker(
         _ colorPicker: Widget,
-        color: Color.Resolved,
+        color: SwiftCrossUI.Color.Resolved,
         supportsOpacity: Bool,
         environment: EnvironmentValues,
-        onChange: @escaping (Color.Resolved) -> Void
+        onChange: @escaping (SwiftCrossUI.Color.Resolved) -> Void
     ) {
         guard let picker = colorPicker as? CustomColorPicker else {
             return
@@ -46,10 +46,10 @@ final class CustomColorPicker: WinUI.Button {
     private static let sliderWidth = 220.0
 
     /// Called whenever the user picks a different colour.
-    var changeHandler: ((Color.Resolved) -> Void)?
+    var changeHandler: ((SwiftCrossUI.Color.Resolved) -> Void)?
 
     /// The colour currently shown.
-    private(set) var currentColor = Color.Resolved(red: 0.0, green: 0.0, blue: 0.0)
+    private(set) var currentColor = SwiftCrossUI.Color.Resolved(red: 0.0, green: 0.0, blue: 0.0)
 
     /// The swatch showing the currently selected colour.
     private let swatch = WinUI.Grid()
@@ -66,6 +66,17 @@ final class CustomColorPicker: WinUI.Button {
     override init() {
         super.init()
 
+        // `init()` overrides a nonisolated WinRT initializer and so is itself
+        // nonisolated; the isolated set-up (static sizes, the slider handlers,
+        // the swatch) runs from an isolated method instead. WinUI creates and
+        // drives this control on the UI thread, which is the main actor.
+        MainActor.assumeIsolated {
+            configure()
+        }
+    }
+
+    /// Builds the swatch and the flyout of sliders.
+    private func configure() {
         swatch.width = Self.swatchSize
         swatch.height = Self.swatchSize
         content = swatch
@@ -108,7 +119,7 @@ final class CustomColorPicker: WinUI.Button {
     /// Sets the displayed colour without invoking ``changeHandler``.
     ///
     /// - Parameter newColor: The colour to display.
-    func setColorWithoutNotifying(_ newColor: Color.Resolved) {
+    func setColorWithoutNotifying(_ newColor: SwiftCrossUI.Color.Resolved) {
         isUpdatingProgrammatically = true
         currentColor = newColor
         redSlider.value = Self.sliderValue(for: newColor.red)
@@ -128,7 +139,7 @@ final class CustomColorPicker: WinUI.Button {
             opacitySlider.visibility == .visible
             ? Self.channel(for: opacitySlider.value)
             : currentColor.opacity
-        let newColor = Color.Resolved(
+        let newColor = SwiftCrossUI.Color.Resolved(
             red: Self.channel(for: redSlider.value),
             green: Self.channel(for: greenSlider.value),
             blue: Self.channel(for: blueSlider.value),

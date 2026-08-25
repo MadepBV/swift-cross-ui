@@ -152,6 +152,10 @@ final class FocusRegistry {
     static let shared = FocusRegistry()
 
     /// Per-element focus state.
+    ///
+    /// Isolated explicitly: a nested type doesn't inherit the registry's
+    /// isolation, and `applyDesiredFocus` walks the element tree.
+    @MainActor
     final class Entry {
         /// Called when the platform changes the element's focus.
         var onFocusChange: ((Bool) -> Void)?

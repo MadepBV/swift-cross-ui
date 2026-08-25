@@ -133,6 +133,18 @@ final class TapGestureTarget: WinUI.Canvas {
     override init() {
         super.init()
 
+        // `init()` overrides a nonisolated WinRT initializer and so is itself
+        // nonisolated, which would make the event handler closures created
+        // here nonisolated too. WinUI raises these events on the UI thread,
+        // which is the main actor, so the handlers are installed from an
+        // isolated method instead (as `WinUIApplication.onLaunched` does).
+        MainActor.assumeIsolated {
+            installEventHandlers()
+        }
+    }
+
+    /// Subscribes to the pointer events the target recognizes taps from.
+    private func installEventHandlers() {
         pointerPressed.addHandler { [weak self] _, args in
             guard let self, let args else { return }
             self.handlePointerPressed(args)
@@ -468,6 +480,16 @@ final class PointerGestureTarget: WinUI.Canvas {
     override init() {
         super.init()
 
+        // See `TapGestureTarget.init()`: the override is nonisolated, so the
+        // handlers are installed from an isolated method.
+        MainActor.assumeIsolated {
+            installEventHandlers()
+        }
+    }
+
+    /// Subscribes to the pointer, tap, wheel and manipulation events the
+    /// target recognizes gestures from.
+    private func installEventHandlers() {
         pointerPressed.addHandler { [weak self] _, args in
             guard let self, let args else { return }
             self.handlePointerPressed(args)

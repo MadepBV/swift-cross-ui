@@ -97,8 +97,8 @@ final class CustomButton: WinUI.Button {
     override init() {
         super.init()
         padding = Thickness.null
-        horizontalContentAlignment = HorizontalAlignment.center
-        verticalContentAlignment = VerticalAlignment.center
+        horizontalContentAlignment = WinUI.HorizontalAlignment.center
+        verticalContentAlignment = WinUI.VerticalAlignment.center
 
         click.addHandler { [weak self] _, _ in
             guard let self else { return }
@@ -229,7 +229,7 @@ extension ButtonStyle.Kind {
 }
 
 extension UWP.Color {
-    static let transparent: Self = Color(a: 0, r: 0, g: 0, b: 0)
+    static let transparent: Self = UWP.Color(a: 0, r: 0, g: 0, b: 0)
 }
 
 extension WinUI.Thickness {

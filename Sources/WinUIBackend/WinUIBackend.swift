@@ -86,7 +86,7 @@ public final class WinUIBackend:
     public let requiresToggleSwitchSpacer = false
     public let requiresImageUpdateOnScaleFactorChange = false
     public let supportsMultipleWindows = true
-    public let deviceClass = DeviceClass.desktop
+    public let deviceClass = SwiftCrossUI.DeviceClass.desktop
     public let supportedDatePickerStyles: [DatePickerStyle] = [
         .automatic,
         .graphical,
@@ -509,23 +509,23 @@ public final class WinUIBackend:
     }
 
     public func createContainer() -> Widget {
-        Canvas()
+        WinUI.Canvas()
     }
 
     public func removeAllChildren(of container: Widget) {
-        let container = container as! Canvas
+        let container = container as! WinUI.Canvas
         container.children.clear()
     }
 
     public func insert(_ child: Widget, into container: Widget, at index: Int) {
-        let container = container as! Canvas
+        let container = container as! WinUI.Canvas
         container.children.insertAt(UInt32(index), child)
     }
 
     public func swap(childAt firstIndex: Int, withChildAt secondIndex: Int, in container: Widget) {
         // TODO: Find out if there's an efficient way to do this without WinUI
         //   getting annoyed at us for having the same element in the list twice.
-        let container = container as! Canvas
+        let container = container as! WinUI.Canvas
         let largerIndex = UInt32(max(firstIndex, secondIndex))
         let smallerIndex = UInt32(min(firstIndex, secondIndex))
         let element1 = container.children[Int(smallerIndex)]
@@ -537,30 +537,30 @@ public final class WinUIBackend:
     }
 
     public func remove(childAt index: Int, from container: Widget) {
-        let container = container as! Canvas
+        let container = container as! WinUI.Canvas
         container.children.removeAt(UInt32(index))
     }
 
     public func setPosition(ofChildAt index: Int, in container: Widget, to position: SIMD2<Int>) {
-        let container = container as! Canvas
+        let container = container as! WinUI.Canvas
         guard let child = container.children.getAt(UInt32(index)) else {
             logger.warning("child to set position of not found")
             return
         }
 
-        Canvas.setTop(child, Double(position.y))
-        Canvas.setLeft(child, Double(position.x))
+        WinUI.Canvas.setTop(child, Double(position.y))
+        WinUI.Canvas.setLeft(child, Double(position.x))
     }
 
     public func createColorableRectangle() -> Widget {
-        Canvas()
+        WinUI.Canvas()
     }
 
     public func setColor(
         ofColorableRectangle widget: Widget,
         to color: SwiftCrossUI.Color.Resolved
     ) {
-        let canvas = widget as! Canvas
+        let canvas = widget as! WinUI.Canvas
         let brush = WinUI.SolidColorBrush()
         brush.color = color.uwpColor
         canvas.background = brush
