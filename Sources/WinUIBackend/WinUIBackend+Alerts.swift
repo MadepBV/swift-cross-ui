@@ -31,19 +31,19 @@ extension WinUIBackend: BackendFeatures.Alerts {
                     self.window?.currentAlert = self.parentAlert
                     self.parentAlert?.showAttached()
 
-                    let index =
-                        switch result {
-                            case .primary: 0
-                            case .secondary: 1
-                            case .none: 2
-                            default:
-                                // Treat anything unexpected as a dismissal
-                                // rather than trapping the whole app.
-                                logger.warning(
-                                    "WinUIBackend: unexpected dialog response \(result); treating it as dismissal"
-                                )
-                                2
-                        }
+                    let index: Int
+                    switch result {
+                        case .primary: index = 0
+                        case .secondary: index = 1
+                        case .none: index = 2
+                        default:
+                            // Treat anything unexpected as a dismissal
+                            // rather than trapping the whole app.
+                            logger.warning(
+                                "WinUIBackend: unexpected dialog response \(result); treating it as dismissal"
+                            )
+                            index = 2
+                    }
                     self.handleResponse?(index)
                 } else {
                     self.ignoreNextDismissal = false
