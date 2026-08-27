@@ -108,3 +108,58 @@ enum TextViewStateCache {
         return false
     }
 }
+
+/// Remembers the size and child positions last written to each view.
+///
+/// `setSize(of:to:)` and `setPosition(ofChildAt:in:to:)` both work by scanning a
+/// view's constraints for the one they want, so each call is linear in the
+/// number of constraints on the view — which makes positioning a container's
+/// children quadratic in the number of children. A commit sizes and positions
+/// every widget in the window, and almost all of them land where they already
+/// were.
+///
+/// This is the AppKit counterpart of `WidgetPropertyCache` in `WinUIBackend`,
+/// where the same guard saves a COM crossing rather than a constraint scan.
+@MainActor
+enum ViewGeometryCache {
+    /// The geometry last written to one view.
+    final class Entry {
+        /// The size last written to the view.
+        var size: SIMD2<Int>?
+        /// The positions last written for the view's children, by index.
+        ///
+        /// Stored against the container rather than the child so that it stays
+        /// meaningful when a child is re-parented, and cleared whenever the
+        /// container's children are rearranged.
+        var childPositions: [Int: SIMD2<Int>] = [:]
+    }
+
+    private static let association = ObjectAssociation<Entry>()
+
+    /// The cache entry for a view, creating one if needed.
+    ///
+    /// - Parameter view: The view.
+    /// - Returns: The view's entry.
+    static func entry(for view: NSView) -> Entry {
+        if let entry = association[view] {
+            return entry
+        }
+        let entry = Entry()
+        association[view] = entry
+        return entry
+    }
+
+    /// Forgets a container's remembered child positions.
+    ///
+    /// - Parameter container: The container whose children changed.
+    static func invalidateChildPositions(of container: NSView) {
+        association[container]?.childPositions.removeAll()
+    }
+
+    /// Forgets everything remembered about a view.
+    ///
+    /// - Parameter view: The view to forget.
+    static func invalidate(_ view: NSView) {
+        association[view] = nil
+    }
+}

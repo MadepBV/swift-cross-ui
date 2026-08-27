@@ -496,11 +496,13 @@ public final class AppKitBackend: FullAppBackend {
 
     public func removeAllChildren(of container: Widget) {
         container.subviews = []
+        ViewGeometryCache.invalidateChildPositions(of: container)
     }
 
     public func insert(_ child: Widget, into container: Widget, at index: Int) {
         container.subviews.insert(child, at: index)
         child.translatesAutoresizingMaskIntoConstraints = false
+        ViewGeometryCache.invalidateChildPositions(of: container)
     }
 
     public func swap(childAt firstIndex: Int, withChildAt secondIndex: Int, in container: NSView) {
@@ -526,6 +528,18 @@ public final class AppKitBackend: FullAppBackend {
             \(position)
             """
         )
+
+        // Each of the two searches below walks every constraint on the
+        // container, so positioning a container's children is quadratic in the
+        // number of children — and a commit repositions every child of every
+        // container, almost all of which land where they already were. The
+        // position is remembered against the container and index rather than
+        // the child, and invalidated wherever the children are rearranged.
+        let entry = ViewGeometryCache.entry(for: container)
+        if entry.childPositions[index] == position {
+            return
+        }
+        entry.childPositions[index] = position
 
         let child = container.subviews[index]
 
@@ -569,6 +583,7 @@ public final class AppKitBackend: FullAppBackend {
 
     public func remove(childAt index: Int, from container: Widget) {
         container.subviews.remove(at: index)
+        ViewGeometryCache.invalidateChildPositions(of: container)
     }
 
     public func createColorableRectangle() -> Widget {
@@ -609,6 +624,14 @@ public final class AppKitBackend: FullAppBackend {
     }
 
     public func setSize(of widget: Widget, to size: SIMD2<Int>) {
+        // See the note in `setPosition(ofChildAt:in:to:)`: the constraint
+        // searches below are linear, and a commit sizes every widget in the
+        // window.
+        let entry = ViewGeometryCache.entry(for: widget)
+        guard entry.size != size else {
+            return
+        }
+        entry.size = size
         setSize(of: widget, to: ProposedViewSize(ViewSize(Double(size.x), Double(size.y))))
     }
 
