@@ -120,6 +120,35 @@ public protocol View {
 }
 
 extension View {
+    /// Whether ``body`` has to be wrapped in a ``TupleView1`` before the
+    /// default implementations can treat it as a container's content.
+    ///
+    /// `@ViewBuilder` wraps a body in a `TupleViewN`, and the default
+    /// implementations below lay a body out as the content of a `VStack`,
+    /// which only works for `TupleView` content: it reaches past the body view
+    /// to *its* children, so anything else loses its own layout. A body that
+    /// is an `HStack` would have its children stacked vertically, and a body
+    /// that keeps its own children storage — a ``Canvas``, an ``Image``, a
+    /// ``ScrollView`` — would contribute no widgets at all and lay out to
+    /// nothing.
+    ///
+    /// A body only arrives unwrapped when it opted out of the result builder,
+    /// which in Swift is what an explicit `return` in the body does:
+    ///
+    /// ```swift
+    /// var body: some View {
+    ///     let title = makeTitle()      // forces an explicit return below
+    ///     return HStack { ... }        // Content is HStack, not TupleView1
+    /// }
+    /// ```
+    ///
+    /// Wrapping such a body restores exactly the shape the result builder
+    /// would have produced, so the two spellings behave the same. A body that
+    /// is already a `TupleView` is left alone, and costs nothing extra.
+    static var bodyNeedsWrapping: Bool {
+        ViewBodyWrapping.isNeeded(for: Content.self)
+    }
+
     public func children<Backend: BaseAppBackend>(
         backend: Backend,
         snapshots: [ViewGraphSnapshotter.NodeSnapshot]?,
@@ -139,7 +168,12 @@ extension View {
         snapshots: [ViewGraphSnapshotter.NodeSnapshot]?,
         environment: EnvironmentValues
     ) -> any ViewGraphNodeChildren {
-        body.children(backend: backend, snapshots: snapshots, environment: environment)
+        // See `bodyNeedsWrapping`.
+        if Self.bodyNeedsWrapping {
+            return TupleView1(body)
+                .children(backend: backend, snapshots: snapshots, environment: environment)
+        }
+        return body.children(backend: backend, snapshots: snapshots, environment: environment)
     }
 
     public func layoutableChildren<Backend: BaseAppBackend>(
@@ -156,7 +190,10 @@ extension View {
         backend: Backend,
         children: any ViewGraphNodeChildren
     ) -> [LayoutSystem.LayoutableChild] {
-        body.layoutableChildren(backend: backend, children: children)
+        if Self.bodyNeedsWrapping {
+            return TupleView1(body).layoutableChildren(backend: backend, children: children)
+        }
+        return body.layoutableChildren(backend: backend, children: children)
     }
 
     public func asWidget<Backend: BaseAppBackend>(
@@ -172,8 +209,10 @@ extension View {
         _ children: any ViewGraphNodeChildren,
         backend: Backend
     ) -> Backend.Widget {
-        let vStack = VStack(content: body)
-        return vStack.asWidget(children, backend: backend)
+        if Self.bodyNeedsWrapping {
+            return VStack(content: TupleView1(body)).asWidget(children, backend: backend)
+        }
+        return VStack(content: body).asWidget(children, backend: backend)
     }
 
     public func computeLayout<Backend: BaseAppBackend>(
@@ -209,8 +248,17 @@ extension View {
         environment: EnvironmentValues,
         backend: Backend
     ) -> ViewLayoutResult {
-        let vStack = VStack(content: ViewObservationTracking.trackedBody(of: self))
-        return vStack.computeLayout(
+        let body = ViewObservationTracking.trackedBody(of: self)
+        if Self.bodyNeedsWrapping {
+            return VStack(content: TupleView1(body)).computeLayout(
+                widget,
+                children: children,
+                proposedSize: proposedSize,
+                environment: environment,
+                backend: backend
+            )
+        }
+        return VStack(content: body).computeLayout(
             widget,
             children: children,
             proposedSize: proposedSize,
@@ -249,8 +297,17 @@ extension View {
         environment: EnvironmentValues,
         backend: Backend
     ) {
-        let vStack = VStack(content: ViewObservationTracking.body(of: self))
-        return vStack.commit(
+        let body = ViewObservationTracking.body(of: self)
+        if Self.bodyNeedsWrapping {
+            return VStack(content: TupleView1(body)).commit(
+                widget,
+                children: children,
+                layout: layout,
+                environment: environment,
+                backend: backend
+            )
+        }
+        return VStack(content: body).commit(
             widget,
             children: children,
             layout: layout,
