@@ -56,7 +56,11 @@ public struct ZStack<Content: View>: View {
             childResults.map(\.size.height).max() ?? 0
         )
 
-        if !(children is TupleViewChildren || children is EmptyViewChildren) {
+        // Resolved once: a stack asks for its layout cache on every layout
+        // computation and every commit, and a dynamic cast to an existential
+        // protocol is one of the more expensive things in the layout path.
+        let tupleChildren = children as? TupleViewChildren
+        if tupleChildren == nil, !(children is EmptyViewChildren) {
             logger.warning(
                 "ZStack will not function correctly with non-TupleView content",
                 metadata: [
@@ -66,7 +70,7 @@ public struct ZStack<Content: View>: View {
             )
         }
 
-        (children as? TupleViewChildren)?.stackLayoutCache = StackLayoutCache(
+        tupleChildren?.stackLayoutCache = StackLayoutCache(
             priorityGroups: [],
             isHidden: [],
             totalSpacing: 0,

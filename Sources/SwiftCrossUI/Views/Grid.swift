@@ -102,10 +102,12 @@ public struct Grid<Content: View>: View {
             logUnexpectedChildren(children)
             return []
         }
-        return LayoutSystem.markingGroupingContainers(
-            body.layoutableChildren(backend: backend, children: children.wrapped),
-            using: children.wrapped
+        var layoutableChildren = body.layoutableChildren(
+            backend: backend,
+            children: children.wrapped
         )
+        LayoutSystem.markGroupingContainers(&layoutableChildren, using: children.wrapped)
+        return layoutableChildren
     }
 
     public func asWidget<Backend: BaseAppBackend>(

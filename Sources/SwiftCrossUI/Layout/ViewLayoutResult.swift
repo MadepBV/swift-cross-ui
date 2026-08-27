@@ -31,8 +31,8 @@ public struct ViewLayoutResult {
         self.participateInStackLayoutsWhenEmpty = participateInStackLayoutsWhenEmpty
 
         preferences = PreferenceValues(
-            merging: childResults.map(\.preferences)
-                + [preferencesOverlay].compactMap { $0 }
+            mergingResults: childResults,
+            overlay: preferencesOverlay
         )
     }
 

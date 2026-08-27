@@ -56,11 +56,29 @@ public enum LayoutSystem {
                 _ environment: EnvironmentValues
             ) -> ViewLayoutResult
         private var _commit: @MainActor () -> ViewLayoutResult
-        var tag: String?
+        /// A caller-supplied tag, used in diagnostics.
+        private var explicitTag: String?
+        /// The type of the wrapped view, used to derive ``tag`` when no
+        /// explicit tag was given.
+        ///
+        /// Stored as a metatype rather than as a string because layoutable
+        /// children are rebuilt for every child on every layout computation,
+        /// and formatting a type name costs a runtime metadata lookup plus a
+        /// heap-allocated string — for a value that's only ever read by a
+        /// warning that almost never fires.
+        var viewType: (any View.Type)?
         /// Whether the child is a ``GroupingContainer`` (such as ``ForEach`` or
         /// ``Group``), and may therefore be handed an enclosing
         /// ``ContainerChildLayout``.
         var isGroupingContainer: Bool
+
+        /// A description of the wrapped view, for diagnostics.
+        var tag: String? {
+            if let explicitTag {
+                return explicitTag
+            }
+            return viewType.map { "\($0)" }
+        }
 
         public init(
             computeLayout: @escaping @MainActor (ProposedViewSize, EnvironmentValues)
@@ -71,12 +89,19 @@ public enum LayoutSystem {
         ) {
             self.computeLayout = computeLayout
             self._commit = commit
-            self.tag = tag
+            self.explicitTag = tag
             self.isGroupingContainer = isGroupingContainer
         }
 
+        /// - Parameter isGroupingContainer: Whether `Child` is a
+        ///   ``GroupingContainer``. Callers that build many children of the
+        ///   same type should hoist
+        ///   ``LayoutSystem/isGroupingContainer(_:)`` out of their loop and
+        ///   pass the result, since a protocol conformance check is not free.
+        @MainActor
         init<Child: View>(
             _ node: AnyViewGraphNode<Child>,
+            isGroupingContainer: Bool? = nil,
             child: @escaping @Sendable @MainActor () -> Child?
         ) {
             self.init(
@@ -90,8 +115,10 @@ public enum LayoutSystem {
                 commit: {
                     node.commit()
                 },
-                isGroupingContainer: Child.self is any GroupingContainer.Type
+                isGroupingContainer: isGroupingContainer
+                    ?? LayoutSystem.isGroupingContainer(Child.self)
             )
+            self.viewType = Child.self
         }
 
         @MainActor
@@ -108,6 +135,28 @@ public enum LayoutSystem {
         }
     }
 
+    /// Whether a view type is a ``GroupingContainer``.
+    ///
+    /// Memoised because the layout system asks this once per child per layout
+    /// computation, and a protocol conformance check against an existential
+    /// metatype goes through the runtime's conformance cache every time.
+    ///
+    /// - Parameter type: The view type to check.
+    /// - Returns: Whether `type` conforms to ``GroupingContainer``.
+    @MainActor
+    static func isGroupingContainer(_ type: any View.Type) -> Bool {
+        let key = ObjectIdentifier(type)
+        if let cached = groupingContainerCache[key] {
+            return cached
+        }
+        let result = type is any GroupingContainer.Type
+        groupingContainerCache[key] = result
+        return result
+    }
+
+    @MainActor
+    private static var groupingContainerCache: [ObjectIdentifier: Bool] = [:]
+
     /// Annotates layoutable children with whether they wrap a
     /// ``GroupingContainer``, which is what decides whether an enclosing
     /// ``ContainerChildLayout`` gets published to them.
@@ -116,28 +165,51 @@ public enum LayoutSystem {
     /// grouping containers, so containers that can publish a layout (or hand
     /// one on) annotate their children themselves.
     ///
+    /// Takes the children `inout` and leaves them untouched when every flag
+    /// already agrees, because this runs on every layout computation and every
+    /// commit of every ``Group``, ``Grid`` and ``LazyVGrid``.
+    ///
     /// - Parameters:
-    ///   - children: The layoutable children to annotate.
+    ///   - children: The layoutable children to annotate. Left unchanged if
+    ///     the two collections don't line up.
     ///   - nodes: The children that `children` was derived from, in the same
     ///     order.
-    /// - Returns: The annotated children, or `children` unchanged if the two
-    ///   collections don't line up.
     @MainActor
-    static func markingGroupingContainers(
-        _ children: [LayoutableChild],
+    static func markGroupingContainers(
+        _ children: inout [LayoutableChild],
         using nodes: any ViewGraphNodeChildren
-    ) -> [LayoutableChild] {
+    ) {
+        // `LayoutableChild` already records its view type, so the flags can be
+        // derived without erasing every node (which allocates an array of
+        // closure-bearing wrappers per call).
+        for index in children.indices {
+            guard let viewType = children[index].viewType else {
+                // Fall back to erasing the nodes for children built through the
+                // public initialiser, which doesn't record a view type.
+                markGroupingContainersByErasingNodes(&children, using: nodes)
+                return
+            }
+            let isGroupingContainer = isGroupingContainer(viewType)
+            if children[index].isGroupingContainer != isGroupingContainer {
+                children[index].isGroupingContainer = isGroupingContainer
+            }
+        }
+    }
+
+    @MainActor
+    private static func markGroupingContainersByErasingNodes(
+        _ children: inout [LayoutableChild],
+        using nodes: any ViewGraphNodeChildren
+    ) {
         let erasedNodes = nodes.erasedNodes
         guard erasedNodes.count == children.count else {
-            return children
+            return
         }
 
-        var children = children
         for index in children.indices {
             children[index].isGroupingContainer =
-                erasedNodes[index].viewType is any GroupingContainer.Type
+                isGroupingContainer(erasedNodes[index].viewType)
         }
-        return children
     }
 
     /// - Parameter inheritStackLayoutParticipation: If `true`, the stack layout

@@ -32,19 +32,22 @@ public struct Group<Content: View>: View {
         environment: EnvironmentValues,
         backend: Backend
     ) -> ViewLayoutResult {
-        if !(children is TupleViewChildren || children is EmptyViewChildren) {
+        // Resolved once: a stack asks for its layout cache on every layout
+        // computation and every commit, and a dynamic cast to an existential
+        // protocol is one of the more expensive things in the layout path.
+        let tupleChildren = children as? TupleViewChildren
+        if tupleChildren == nil, !(children is EmptyViewChildren) {
             logger.warning(
                 "Group will not function correctly with non-TupleView content",
                 metadata: ["childrenType": "\(type(of: children))"]
             )
         }
-        var cache = (children as? TupleViewChildren)?.stackLayoutCache ?? StackLayoutCache.initial
+        var cache = tupleChildren?.stackLayoutCache ?? StackLayoutCache.initial
+        var layoutableChildren = layoutableChildren(backend: backend, children: children)
+        LayoutSystem.markGroupingContainers(&layoutableChildren, using: children)
         let result = LayoutSystem.computeStackLayout(
             container: widget,
-            children: LayoutSystem.markingGroupingContainers(
-                layoutableChildren(backend: backend, children: children),
-                using: children
-            ),
+            children: layoutableChildren,
             cache: &cache,
             proposedSize: proposedSize,
             environment: environment,
@@ -52,7 +55,7 @@ public struct Group<Content: View>: View {
             inheritStackLayoutParticipation: true,
             participatesInParentLayout: true
         )
-        (children as? TupleViewChildren)?.stackLayoutCache = cache
+        tupleChildren?.stackLayoutCache = cache
         return result
     }
 
@@ -63,20 +66,20 @@ public struct Group<Content: View>: View {
         environment: EnvironmentValues,
         backend: Backend
     ) {
-        var cache = (children as? TupleViewChildren)?.stackLayoutCache ?? StackLayoutCache.initial
+        let tupleChildren = children as? TupleViewChildren
+        var cache = tupleChildren?.stackLayoutCache ?? StackLayoutCache.initial
+        var layoutableChildren = layoutableChildren(backend: backend, children: children)
+        LayoutSystem.markGroupingContainers(&layoutableChildren, using: children)
         LayoutSystem.commitStackLayout(
             container: widget,
-            children: LayoutSystem.markingGroupingContainers(
-                layoutableChildren(backend: backend, children: children),
-                using: children
-            ),
+            children: layoutableChildren,
             cache: &cache,
             layout: layout,
             environment: environment,
             backend: backend,
             participatesInParentLayout: true
         )
-        (children as? TupleViewChildren)?.stackLayoutCache = cache
+        tupleChildren?.stackLayoutCache = cache
     }
 }
 

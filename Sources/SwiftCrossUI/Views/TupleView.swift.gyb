@@ -11,19 +11,12 @@ private func layoutableChild<V: View>(
     node: AnyViewGraphNode<V>,
     view: V
 ) -> LayoutSystem.LayoutableChild {
-    LayoutSystem.LayoutableChild(
-        computeLayout: { proposedSize, environment in
-            node.computeLayout(
-                with: view,
-                proposedSize: proposedSize,
-                environment: environment
-            )
-        },
-        commit: {
-            node.commit()
-        },
-        tag: "\(type(of: view))"
-    )
+    // This runs once per child per layout computation and again per commit, so
+    // it goes through the initialiser that records the view's type rather than
+    // formatting a diagnostic tag string that is almost never read.
+    LayoutSystem.LayoutableChild(node) {
+        view
+    }
 }
 
 /// Just a vessel for some default implementations to compress this generated code.

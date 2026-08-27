@@ -59,7 +59,11 @@ public struct VStack<Content: View>: View {
         environment: EnvironmentValues,
         backend: Backend
     ) -> ViewLayoutResult {
-        if !(children is TupleViewChildren || children is EmptyViewChildren) {
+        // Resolved once: a stack asks for its layout cache on every layout
+        // computation and every commit, and a dynamic cast to an existential
+        // protocol is one of the more expensive things in the layout path.
+        let tupleChildren = children as? TupleViewChildren
+        if tupleChildren == nil, !(children is EmptyViewChildren) {
             // TODO: Make layout caching a ViewGraphNode feature so that we can handle
             //   these edge cases without a second thought. Would also make introducing
             //   a port of SwiftUI's Layout protocol much easier.
@@ -71,7 +75,7 @@ public struct VStack<Content: View>: View {
                 ]
             )
         }
-        var cache = (children as? TupleViewChildren)?.stackLayoutCache ?? StackLayoutCache.initial
+        var cache = tupleChildren?.stackLayoutCache ?? StackLayoutCache.initial
         let result = LayoutSystem.computeStackLayout(
             container: widget,
             children: layoutableChildren(backend: backend, children: children),
@@ -83,7 +87,7 @@ public struct VStack<Content: View>: View {
                 .with(\.layoutSpacing, spacing),
             backend: backend
         )
-        (children as? TupleViewChildren)?.stackLayoutCache = cache
+        tupleChildren?.stackLayoutCache = cache
         return result
     }
 
@@ -94,7 +98,8 @@ public struct VStack<Content: View>: View {
         environment: EnvironmentValues,
         backend: Backend
     ) {
-        var cache = (children as? TupleViewChildren)?.stackLayoutCache ?? StackLayoutCache.initial
+        let tupleChildren = children as? TupleViewChildren
+        var cache = tupleChildren?.stackLayoutCache ?? StackLayoutCache.initial
         LayoutSystem.commitStackLayout(
             container: widget,
             children: layoutableChildren(backend: backend, children: children),
@@ -106,6 +111,6 @@ public struct VStack<Content: View>: View {
                 .with(\.layoutSpacing, spacing),
             backend: backend
         )
-        (children as? TupleViewChildren)?.stackLayoutCache = cache
+        tupleChildren?.stackLayoutCache = cache
     }
 }

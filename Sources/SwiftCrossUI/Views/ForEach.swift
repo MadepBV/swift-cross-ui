@@ -100,6 +100,7 @@ extension ForEach: TypeSafeView, View where Child: View {
 
         var oldIdentifiers = children.identifiers
         let newIdentifiers = elements.map { $0[keyPath: idKeyPath] }
+        let childIsGroupingContainer = LayoutSystem.isGroupingContainer(Child.self)
 
         // If the identifiers of our elements have changed, then we must rearrange
         // our nodes and widgets so that child view states remain with their
@@ -175,7 +176,10 @@ extension ForEach: TypeSafeView, View where Child: View {
                 children.identifierMap[identifier] = index
                 children.identifiers.append(identifier)
                 children.layoutableChildren.append(
-                    LayoutSystem.LayoutableChild(node) { child(element) }
+                    LayoutSystem.LayoutableChild(
+                        node,
+                        isGroupingContainer: childIsGroupingContainer
+                    ) { child(element) }
                 )
             }
 
@@ -193,7 +197,10 @@ extension ForEach: TypeSafeView, View where Child: View {
         // Recompute layoutable children if the last commit cleared them
         if children.layoutableChildren.isEmpty && !children.nodes.isEmpty {
             children.layoutableChildren = zip(children.nodes, elements).map { (node, element) in
-                LayoutSystem.LayoutableChild(node) { child(element) }
+                LayoutSystem.LayoutableChild(
+                    node,
+                    isGroupingContainer: childIsGroupingContainer
+                ) { child(element) }
             }
         }
 
@@ -229,7 +236,31 @@ extension ForEach: TypeSafeView, View where Child: View {
 
         let elementsStartIndex = elements.startIndex
 
+        // Reuse the layoutable children built earlier in this update cycle.
+        // `commit` clears the cache, so this only ever skips rebuilding within
+        // a single pass, where the parent hands us the same elements and the
+        // same child closure for each of the layout system's probing
+        // computations. Rebuilding them costs two closure allocations per
+        // element per probe, which dominates a long list's layout.
+        if !children.layoutableChildren.isEmpty,
+            !children.isFirstUpdate,
+            children.layoutableChildren.count == elements.count,
+            children.nodes.count == elements.count
+        {
+            return LayoutSystem.computeStackLayout(
+                container: widget,
+                children: children.layoutableChildren,
+                cache: &children.stackLayoutCache,
+                proposedSize: proposedSize,
+                environment: environment,
+                backend: backend,
+                participatesInParentLayout: true
+            )
+        }
+
+        let childIsGroupingContainer = LayoutSystem.isGroupingContainer(Child.self)
         var layoutableChildren: [LayoutSystem.LayoutableChild] = []
+        layoutableChildren.reserveCapacity(elements.count)
         for (i, node) in children.nodes.enumerated() {
             guard i < elements.count else {
                 break
@@ -238,7 +269,10 @@ extension ForEach: TypeSafeView, View where Child: View {
             if children.isFirstUpdate {
                 insertChild(node.widget.into(), atIndex: i)
             }
-            let layoutableChild = LayoutSystem.LayoutableChild(node) { child(elements[index]) }
+            let layoutableChild = LayoutSystem.LayoutableChild(
+                node,
+                isGroupingContainer: childIsGroupingContainer
+            ) { child(elements[index]) }
             layoutableChildren.append(layoutableChild)
         }
         children.isFirstUpdate = false
@@ -256,7 +290,10 @@ extension ForEach: TypeSafeView, View where Child: View {
                 )
                 insertChild(node.widget.into(), atIndex: children.nodes.count)
                 children.nodes.append(node)
-                let layoutableChild = LayoutSystem.LayoutableChild(node) { child(element) }
+                let layoutableChild = LayoutSystem.LayoutableChild(
+                    node,
+                    isGroupingContainer: childIsGroupingContainer
+                ) { child(element) }
                 layoutableChildren.append(layoutableChild)
             }
         } else if remainingElementCount < 0 {

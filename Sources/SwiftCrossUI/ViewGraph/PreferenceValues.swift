@@ -70,35 +70,100 @@ public struct PreferenceValues: Sendable {
 
 extension PreferenceValues {
     init(merging children: [PreferenceValues]) {
-        let handlers = children.compactMap(\.onOpenURL)
+        self.init(mergingResults: [], childPreferences: children, overlay: nil)
+    }
+
+    /// Merges the preferences of a view's children, plus an optional overlay
+    /// contributed by the view itself.
+    ///
+    /// This runs once per container per layout computation, which is the
+    /// hottest allocation site in the layout system, so it merges in a single
+    /// pass rather than by building one throwaway array per property. The
+    /// two child sources are kept separate (rather than concatenated) for the
+    /// same reason: ``ViewLayoutResult`` has layout results, not preferences,
+    /// and mapping them into an array first is exactly the allocation being
+    /// avoided.
+    ///
+    /// - Parameters:
+    ///   - results: Child layout results whose preferences take part in the
+    ///     merge, in order.
+    ///   - childPreferences: Additional child preferences, merged after
+    ///     `results`.
+    ///   - overlay: The view's own preferences, merged last.
+    init(
+        mergingResults results: [ViewLayoutResult],
+        childPreferences: [PreferenceValues] = [],
+        overlay: PreferenceValues?
+    ) {
+        self = .default
+
+        var handlers: [@Sendable @MainActor (URL) -> Void] = []
+        var childCount = 0
+        var firstChildLayoutPriority = Self.defaultLayoutPriority
+
+        // For presentation modifiers, take the outer-most value (using child
+        // ordering to break ties), which is what taking the first non-nil in
+        // order amounts to.
+        func merge(_ child: PreferenceValues) {
+            if childCount == 0 {
+                firstChildLayoutPriority = child.layoutPriority
+            }
+            childCount += 1
+
+            if let handler = child.onOpenURL {
+                handlers.append(handler)
+            }
+            if presentationDetents == nil {
+                presentationDetents = child.presentationDetents
+            }
+            if presentationCornerRadius == nil {
+                presentationCornerRadius = child.presentationCornerRadius
+            }
+            if presentationDragIndicatorVisibility == nil {
+                presentationDragIndicatorVisibility = child.presentationDragIndicatorVisibility
+            }
+            if presentationBackground == nil {
+                presentationBackground = child.presentationBackground
+            }
+            if preferredColorScheme == nil {
+                preferredColorScheme = child.preferredColorScheme
+            }
+            if interactiveDismissDisabled == nil {
+                interactiveDismissDisabled = child.interactiveDismissDisabled
+            }
+            if windowDismissBehavior == nil {
+                windowDismissBehavior = child.windowDismissBehavior
+            }
+            if preferredWindowMinimizeBehavior == nil {
+                preferredWindowMinimizeBehavior = child.preferredWindowMinimizeBehavior
+            }
+            if windowResizeBehavior == nil {
+                windowResizeBehavior = child.windowResizeBehavior
+            }
+            if gridCellColumns == nil {
+                gridCellColumns = child.gridCellColumns
+            }
+        }
+
+        for result in results {
+            merge(result.preferences)
+        }
+        for child in childPreferences {
+            merge(child)
+        }
+        if let overlay {
+            merge(overlay)
+        }
 
         if !handlers.isEmpty {
+            let mergedHandlers = handlers
             onOpenURL = { url in
-                for handler in handlers {
+                for handler in mergedHandlers {
                     handler(url)
                 }
             }
         }
 
-        // For presentation modifiers, take the outer-most value (using child ordering to break ties).
-        presentationDetents = children.compactMap(\.presentationDetents).first
-        presentationCornerRadius = children.compactMap(\.presentationCornerRadius).first
-        presentationDragIndicatorVisibility =
-            children.compactMap(\.presentationDragIndicatorVisibility).first
-        presentationBackground = children.compactMap(\.presentationBackground).first
-        preferredColorScheme = children.compactMap(\.preferredColorScheme).first
-        interactiveDismissDisabled = children.compactMap(\.interactiveDismissDisabled).first
-
-        windowDismissBehavior = children.compactMap(\.windowDismissBehavior).first
-        preferredWindowMinimizeBehavior =
-            children.compactMap(\.preferredWindowMinimizeBehavior).first
-        windowResizeBehavior = children.compactMap(\.windowResizeBehavior).first
-        gridCellColumns = children.compactMap(\.gridCellColumns).first
-
-        if let firstChild = children.first, children.count == 1 {
-            layoutPriority = firstChild.layoutPriority
-        } else {
-            layoutPriority = Self.defaultLayoutPriority
-        }
+        layoutPriority = childCount == 1 ? firstChildLayoutPriority : Self.defaultLayoutPriority
     }
 }
