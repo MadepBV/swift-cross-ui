@@ -109,7 +109,11 @@ public struct LazyVGrid<Content: View>: View {
             logUnexpectedChildren(children)
             return []
         }
-        var layoutableChildren = body.layoutableChildren(
+        // Goes through the default rather than reaching to `body` directly:
+        // a `@ViewBuilder` closure containing an explicit `return` opts out of
+        // the result builder, so `body` is not necessarily a `TupleView`. See
+        // `View.bodyNeedsWrapping`.
+        var layoutableChildren = defaultLayoutableChildren(
             backend: backend,
             children: children.wrapped
         )

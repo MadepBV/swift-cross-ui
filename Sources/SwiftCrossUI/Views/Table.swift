@@ -207,7 +207,7 @@ struct RowView<Content: View>: View {
         backend: Backend,
         children: any ViewGraphNodeChildren
     ) -> [LayoutSystem.LayoutableChild] {
-        body.layoutableChildren(backend: backend, children: children)
+        defaultLayoutableChildren(backend: backend, children: children)
     }
 
     func children<Backend: BaseAppBackend>(
@@ -215,7 +215,7 @@ struct RowView<Content: View>: View {
         snapshots: [ViewGraphSnapshotter.NodeSnapshot]?,
         environment: EnvironmentValues
     ) -> any ViewGraphNodeChildren {
-        body.children(backend: backend, snapshots: snapshots, environment: environment)
+        defaultChildren(backend: backend, snapshots: snapshots, environment: environment)
     }
 
     func asWidget<Backend: BaseAppBackend>(

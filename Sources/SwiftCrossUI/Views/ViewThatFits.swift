@@ -71,7 +71,13 @@ public struct ViewThatFits<Content: View>: TypeSafeView, View {
         environment: EnvironmentValues
     ) -> ViewThatFitsChildren {
         ViewThatFitsChildren(
-            content: body.children(
+            // Goes through the default rather than reaching to `body`
+            // directly: a `@ViewBuilder` closure containing an explicit
+            // `return` opts out of the result builder, so `body` is not
+            // necessarily a `TupleView`. Reaching past it would make each of
+            // an unwrapped container's children a separate candidate. See
+            // `View.bodyNeedsWrapping`.
+            content: defaultChildren(
                 backend: backend,
                 snapshots: snapshots,
                 environment: environment
@@ -114,7 +120,7 @@ public struct ViewThatFits<Content: View>: TypeSafeView, View {
             )
         }
 
-        let candidates = body.layoutableChildren(
+        let candidates = defaultLayoutableChildren(
             backend: backend,
             children: children.content
         )
@@ -166,7 +172,7 @@ public struct ViewThatFits<Content: View>: TypeSafeView, View {
         environment: EnvironmentValues,
         backend: Backend
     ) {
-        let candidates = body.layoutableChildren(
+        let candidates = defaultLayoutableChildren(
             backend: backend,
             children: children.content
         )
