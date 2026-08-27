@@ -20,6 +20,14 @@ import Foundation
 /// > Note: Geometry reader content may get evaluated multiple times with various
 /// > sizes before the layout system settles on a size. Do not depend on the size
 /// > proposal always being final.
+///
+/// A container asks each child how big it would be at the smallest and the
+/// largest size it could be given before proposing the size it has settled on,
+/// so the content closure runs several times per update pass at sizes the
+/// content will never be shown at. When the closure does something expensive
+/// that doesn't affect layout — rasterising, drawing, heavy formatting — read
+/// ``EnvironmentValues/isProbingLayout`` and skip it while the size is still
+/// provisional.
 public struct GeometryReader<Content: View>: TypeSafeView, View {
     var content: (GeometryProxy) -> Content
 

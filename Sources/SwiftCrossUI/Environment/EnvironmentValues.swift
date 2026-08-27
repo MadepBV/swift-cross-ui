@@ -55,6 +55,33 @@ public struct EnvironmentValues {
     /// proposal received by each view must be its intended final proposal.
     var allowLayoutCaching: Bool = false
 
+    /// Whether the layout system is currently probing sizes rather than
+    /// settling on one.
+    ///
+    /// A container works out how flexible its children are by asking each of
+    /// them how big it would be at the smallest and the largest size it could
+    /// be given, and only then proposes the size it has decided on. A view
+    /// whose content depends on the proposed size — a ``GeometryReader``, or a
+    /// ``Canvas`` that draws from it — therefore has its content produced
+    /// several times per update pass, at sizes it will never be shown at.
+    ///
+    /// Read this to do the expensive part of that work only once:
+    ///
+    /// ```swift
+    /// GeometryReader { proxy in
+    ///     SheetView(size: proxy.size, drawsContent: !isProbingLayout)
+    /// }
+    /// ```
+    ///
+    /// - Important: A view must still report the same *size* whether it is
+    ///   being probed or not, or the layout it ends up with will not be the one
+    ///   that was measured. Use this to skip work that doesn't affect layout —
+    ///   rasterising, drawing, expensive formatting — never to change how big
+    ///   the view claims to be.
+    public var isProbingLayout: Bool {
+        allowLayoutCaching
+    }
+
     /// The current stack orientation.
     ///
     /// Inherited by ``ForEach`` and ``Group`` so that they can be used without
