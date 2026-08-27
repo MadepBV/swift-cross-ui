@@ -207,7 +207,13 @@ struct FocusedSceneValueModifier<T, Content: View>: View {
         backend: Backend
     ) {
         if isSceneActive(in: environment) {
-            FocusedValuesStore.shared.publish(value, for: keyPath)
+            // The widget is this modifier's stable identity for as long as it
+            // is in the view graph, which is what lets the store tell a
+            // republish from a different view taking over the key path. See
+            // `FocusedValuesStore.publish(_:for:from:)`.
+            let publisher: AnyObject? =
+                type(of: widget as Any) is AnyClass ? (widget as AnyObject) : nil
+            FocusedValuesStore.shared.publish(value, for: keyPath, from: publisher)
         }
 
         defaultCommit(

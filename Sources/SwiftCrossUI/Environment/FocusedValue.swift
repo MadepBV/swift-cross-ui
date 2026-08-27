@@ -78,23 +78,89 @@ final class FocusedValuesStore {
 
     private init() {}
 
+    /// The publisher that last published each key path, and whether the value
+    /// it published could be compared with its successor.
+    ///
+    /// Used to break the republish loop described on ``publish(_:for:from:)``.
+    private var lastPublishers: [PartialKeyPath<FocusedValues>: ObjectIdentifier] = [:]
+
+    /// Key paths that have already warned about an incomparable value, so that
+    /// the warning is logged once rather than once per commit.
+    private var warnedKeyPaths: Set<PartialKeyPath<FocusedValues>> = []
+
     /// Publishes a value for a key path, notifying observers if it changed.
     ///
     /// Values that compare equal are dropped so that a view which both
-    /// publishes and reads a focused value can't drive an endless update
-    /// loop. Values that don't conform to `Equatable` are always treated as
-    /// changed.
+    /// publishes and reads a focused value can't drive an endless update loop.
+    /// Equality is established by `Equatable` where the value has it, and by
+    /// reference identity where the value is an object.
+    ///
+    /// ## Values that can't be compared
+    ///
+    /// A value that is neither `Equatable` nor an object — a struct of
+    /// closures, say — can't be told apart from the one published a moment
+    /// ago. Treating it as changed every time is what makes the loop: the
+    /// modifier publishes on every commit, publishing notifies observers, an
+    /// observer re-resolves the scene, re-resolving commits the window, and
+    /// the window's commit publishes again.
+    ///
+    /// So an incomparable value republished by the *same* publisher is stored
+    /// but doesn't notify. Anyone reading it still sees the newest value; they
+    /// just aren't woken by a change nobody can detect. A different publisher
+    /// taking over the key path, or a value that can be compared, notifies as
+    /// usual. Making the value `Equatable` restores change notifications, and
+    /// the first incomparable publish logs a warning saying so.
     ///
     /// - Parameters:
     ///   - value: The new value, or `nil` to withdraw the current one.
     ///   - keyPath: A key path to the ``FocusedValues`` property to publish
     ///     under.
-    func publish<T>(_ value: T?, for keyPath: WritableKeyPath<FocusedValues, T?>) {
-        guard !areEquivalent(values[keyPath: keyPath], value) else {
+    ///   - publisher: The object identifying the view that is publishing,
+    ///     if known. Views publishing an incomparable value must pass one to
+    ///     get the loop-breaking behaviour.
+    func publish<T>(
+        _ value: T?,
+        for keyPath: WritableKeyPath<FocusedValues, T?>,
+        from publisher: AnyObject? = nil
+    ) {
+        let old = values[keyPath: keyPath]
+        guard !areEquivalent(old, value) else {
             return
         }
+
+        let publisherIdentity = publisher.map(ObjectIdentifier.init)
+        let isRepublishByTheSamePublisher =
+            publisherIdentity != nil
+            && lastPublishers[keyPath] == publisherIdentity
+        let isIncomparable = value.map { !isComparable($0) } ?? false
+
         values[keyPath: keyPath] = value
+        lastPublishers[keyPath] = publisherIdentity
+
+        if isIncomparable {
+            warnAboutIncomparableValue(of: T.self, for: keyPath)
+            if isRepublishByTheSamePublisher {
+                return
+            }
+        }
+
         didChange.send()
+    }
+
+    /// Logs, once per key path, that a focused value can't be compared.
+    private func warnAboutIncomparableValue<T>(
+        of type: T.Type,
+        for keyPath: PartialKeyPath<FocusedValues>
+    ) {
+        guard warnedKeyPaths.insert(keyPath).inserted else {
+            return
+        }
+        logger.warning(
+            """
+            focused value is neither Equatable nor an object, so changes to it             can't be detected; it will be published but won't notify readers a             second time. Conform it to Equatable to restore change             notifications
+            """,
+            metadata: ["type": "\(T.self)"]
+        )
     }
 
     /// Reads the value currently published for a key path.
@@ -116,13 +182,40 @@ private func areEquivalent<T>(_ lhs: T?, _ rhs: T?) -> Bool {
         case (nil, nil):
             return true
         case (.some(let lhs), .some(let rhs)):
-            guard let lhs = lhs as? any Equatable else {
-                return false
+            if let equatableLHS = lhs as? any Equatable {
+                return areEqual(equatableLHS, rhs)
             }
-            return areEqual(lhs, rhs)
+            // Two references to one object are the same value whatever the
+            // object's type has to say about equality, and publishing a model
+            // object is the common case. Without this, publishing the same
+            // object on every commit reports a change every time.
+            if isClassInstance(lhs), isClassInstance(rhs) {
+                return (lhs as AnyObject) === (rhs as AnyObject)
+            }
+            return false
         default:
             return false
     }
+}
+
+/// Whether a value's changes can be detected at all.
+///
+/// - Parameter value: The value to check.
+/// - Returns: Whether the value is `Equatable` or an object.
+private func isComparable(_ value: Any) -> Bool {
+    value is any Equatable || isClassInstance(value)
+}
+
+/// Whether a value is an instance of a class.
+///
+/// Checks the value's type rather than casting it: `value as? AnyObject`
+/// succeeds for a struct too on Darwin, by boxing it in a fresh object, which
+/// would make every struct look like a distinct instance.
+///
+/// - Parameter value: The value to check.
+/// - Returns: Whether `value` is a class instance.
+private func isClassInstance(_ value: Any) -> Bool {
+    type(of: value) is AnyClass
 }
 
 /// Compares an opened `Equatable` existential against an arbitrary value.

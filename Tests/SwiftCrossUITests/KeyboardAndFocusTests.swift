@@ -298,6 +298,61 @@ struct KeyboardAndFocusTests {
         store.publish(nil, for: \.notifiedValue)
     }
 
+    @Test("Republishing the same object doesn't notify observers")
+    func testFocusedValueStoreComparesObjectsByIdentity() {
+        let store = FocusedValuesStore.shared
+        store.publish(nil, for: \.publishedObject)
+
+        var notifications = 0
+        let cancellable = store.didChange.observe {
+            notifications += 1
+        }
+        defer { cancellable.cancel() }
+
+        let model = PublishedObject()
+        store.publish(model, for: \.publishedObject)
+        store.publish(model, for: \.publishedObject)
+        store.publish(PublishedObject(), for: \.publishedObject)
+
+        // A model object republished on every commit is the common case, and
+        // it isn't necessarily `Equatable`. Comparing references is what stops
+        // it from reporting a change every single commit.
+        #expect(notifications == 2)
+
+        store.publish(nil, for: \.publishedObject)
+    }
+
+    @Test("Republishing an incomparable value from one publisher notifies once")
+    func testFocusedValueStoreBreaksIncomparableRepublishLoop() {
+        let store = FocusedValuesStore.shared
+        store.publish(nil, for: \.incomparableValue)
+
+        var notifications = 0
+        let cancellable = store.didChange.observe {
+            notifications += 1
+        }
+        defer { cancellable.cancel() }
+
+        let publisher = PublishedObject()
+        store.publish(IncomparableValue(), for: \.incomparableValue, from: publisher)
+        store.publish(IncomparableValue(), for: \.incomparableValue, from: publisher)
+        store.publish(IncomparableValue(), for: \.incomparableValue, from: publisher)
+
+        // A value that is neither `Equatable` nor an object can't be told apart
+        // from its predecessor, so republishing it from the same view mustn't
+        // wake the readers that caused the commit doing the republishing.
+        #expect(notifications == 1)
+
+        // The newest value is still what readers see.
+        #expect(store.value(for: \.incomparableValue) != nil)
+
+        // A different view taking the key path over is a real change.
+        store.publish(IncomparableValue(), for: \.incomparableValue, from: PublishedObject())
+        #expect(notifications == 2)
+
+        store.publish(nil, for: \.incomparableValue)
+    }
+
     @Test("A focused value property reads the published value")
     func testFocusedValueProperty() {
         FocusedValuesStore.shared.publish(42, for: \.barCount)
@@ -430,7 +485,35 @@ private struct InactiveSceneValueKey: FocusedValueKey {
     typealias Value = String
 }
 
+/// An object published as a focused value. Deliberately not `Equatable`, which
+/// is the shape a document model takes.
+private final class PublishedObject {}
+
+/// A value that is neither `Equatable` nor an object, which is the shape a
+/// struct of command closures takes.
+private struct IncomparableValue {
+    var perform: () -> Void = {}
+}
+
+private struct PublishedObjectKey: FocusedValueKey {
+    typealias Value = PublishedObject
+}
+
+private struct IncomparableValueKey: FocusedValueKey {
+    typealias Value = IncomparableValue
+}
+
 extension FocusedValues {
+    fileprivate var publishedObject: PublishedObject? {
+        get { self[PublishedObjectKey.self] }
+        set { self[PublishedObjectKey.self] = newValue }
+    }
+
+    fileprivate var incomparableValue: IncomparableValue? {
+        get { self[IncomparableValueKey.self] }
+        set { self[IncomparableValueKey.self] = newValue }
+    }
+
     fileprivate var toolName: String? {
         get { self[ToolNameKey.self] }
         set { self[ToolNameKey.self] = newValue }
