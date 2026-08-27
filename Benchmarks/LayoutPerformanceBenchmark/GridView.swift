@@ -2,7 +2,8 @@ import SwiftCrossUI
 
 struct Column: View {
     var body: some View {
-        HStack {
+        BodyCounter.record()
+        return HStack {
             Color.orange.frame(width: 5)
             Text("Lorem ipsum dolor sit amet.")
         }
@@ -11,7 +12,8 @@ struct Column: View {
 
 struct DoubleColumn: View {
     var body: some View {
-        HStack {
+        BodyCounter.record()
+        return HStack {
             Column()
             Column()
         }
@@ -20,7 +22,8 @@ struct DoubleColumn: View {
 
 struct Row: View {
     var body: some View {
-        HStack {
+        BodyCounter.record()
+        return HStack {
             HStack {
                 DoubleColumn()
                 DoubleColumn()
@@ -39,7 +42,8 @@ struct Row: View {
 
 struct DoubleRow: View {
     var body: some View {
-        VStack {
+        BodyCounter.record()
+        return VStack {
             Row()
             Row()
         }
@@ -48,7 +52,8 @@ struct DoubleRow: View {
 
 struct GridView: TestCaseView {
     var body: some View {
-        VStack {
+        BodyCounter.record()
+        return VStack {
             VStack {
                 DoubleRow()
                 DoubleRow()

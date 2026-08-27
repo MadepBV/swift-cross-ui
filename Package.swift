@@ -323,6 +323,7 @@ let package = Package(
             name: "LayoutPerformanceBenchmark",
             dependencies: [
                 .product(name: "Benchmark", package: "swift-benchmark"),
+                .product(name: "ImageFormats", package: "swift-image-formats"),
                 "SwiftCrossUI",
                 "DummyBackend",
             ] + additionalLayoutPerformanceBenchmarkDependencies,

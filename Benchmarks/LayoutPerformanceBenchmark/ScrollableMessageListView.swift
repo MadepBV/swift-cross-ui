@@ -6,7 +6,8 @@ struct MessageView: View {
     var message: ScrollableMessageListView.Message
 
     var body: some View {
-        HStack(alignment: .top) {
+        BodyCounter.record()
+        return HStack(alignment: .top) {
             message.author.profileColor
                 .frame(width: Self.profileSize, height: Self.profileSize)
                 .cornerRadius(Self.profileSize / 2)
@@ -86,7 +87,8 @@ struct ScrollableMessageListView: TestCaseView {
     }
 
     var body: some View {
-        ScrollView {
+        BodyCounter.record()
+        return ScrollView {
             VStack(alignment: .leading) {
                 ForEach(Self.messages) { message in
                     MessageView(message: message)

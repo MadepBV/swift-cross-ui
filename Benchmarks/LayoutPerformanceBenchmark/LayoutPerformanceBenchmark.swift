@@ -1,5 +1,5 @@
 import Benchmark
-import SwiftCrossUI
+@_spi(Backends) import SwiftCrossUI
 import DummyBackend
 import Foundation
 
@@ -26,6 +26,15 @@ protocol TestCaseView: View {
 struct Benchmarks {
     @MainActor
     static func main() async {
+        // A steady-state profile of repeated update+layout+commit passes over
+        // an already-built view graph, which is what decides how an app feels
+        // once it's on screen. The stock benchmarks below measure graph
+        // construction instead.
+        if ProcessInfo.processInfo.environment["SCUI_PROFILE"] == "1" {
+            SteadyStateProfile.run()
+            return
+        }
+
         let backend = DummyBackend()
         let defaultEnvironment = EnvironmentValues(backend: backend)
         let environment = backend.computeRootEnvironment(defaultEnvironment: defaultEnvironment)
