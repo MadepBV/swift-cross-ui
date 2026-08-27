@@ -530,11 +530,13 @@ public final class WinUIBackend:
     public func removeAllChildren(of container: Widget) {
         let container = container as! WinUI.Canvas
         container.children.clear()
+        WidgetPropertyCache.shared.invalidateChildPositions(of: container)
     }
 
     public func insert(_ child: Widget, into container: Widget, at index: Int) {
         let container = container as! WinUI.Canvas
         container.children.insertAt(UInt32(index), child)
+        WidgetPropertyCache.shared.invalidateChildPositions(of: container)
     }
 
     public func swap(childAt firstIndex: Int, withChildAt secondIndex: Int, in container: Widget) {
@@ -549,15 +551,31 @@ public final class WinUIBackend:
         container.children.removeAt(smallerIndex)
         container.children.insertAt(smallerIndex, element2)
         container.children.insertAt(largerIndex, element1)
+        WidgetPropertyCache.shared.invalidateChildPositions(of: container)
     }
 
     public func remove(childAt index: Int, from container: Widget) {
         let container = container as! WinUI.Canvas
         container.children.removeAt(UInt32(index))
+        WidgetPropertyCache.shared.invalidateChildPositions(of: container)
     }
 
     public func setPosition(ofChildAt index: Int, in container: Widget, to position: SIMD2<Int>) {
         let container = container as! WinUI.Canvas
+
+        // A commit repositions every child of every container, and almost all
+        // of them land where they already were. The lookup and the two attached
+        // property writes below are three COM crossings, so the position is
+        // remembered against the container (a child fetched from the children
+        // collection is a fresh projected object each time and can't be used as
+        // a cache key). `invalidateChildPositions(of:)` is called wherever the
+        // container's children are rearranged, so an index always refers to the
+        // same child as when its position was recorded.
+        let entry = WidgetPropertyCache.shared.entry(for: container)
+        if entry.childPositions[index] == position {
+            return
+        }
+
         guard let child = container.children.getAt(UInt32(index)) else {
             logger.warning("child to set position of not found")
             return
@@ -565,6 +583,7 @@ public final class WinUIBackend:
 
         WinUI.Canvas.setTop(child, Double(position.y))
         WinUI.Canvas.setLeft(child, Double(position.x))
+        entry.childPositions[index] = position
     }
 
     public func createColorableRectangle() -> Widget {
@@ -576,9 +595,12 @@ public final class WinUIBackend:
         to color: SwiftCrossUI.Color.Resolved
     ) {
         let canvas = widget as! WinUI.Canvas
-        let brush = WinUI.SolidColorBrush()
-        brush.color = color.uwpColor
-        canvas.background = brush
+        let entry = WidgetPropertyCache.shared.entry(for: canvas)
+        guard entry.backgroundColor != color else {
+            return
+        }
+        entry.backgroundColor = color
+        canvas.background = SolidColorBrushCache.brush(for: color)
     }
 
     public func createCornerRadiusContainer(wrapping child: Widget) -> Widget {
@@ -685,6 +707,11 @@ public final class WinUIBackend:
             widget.width = oldWidth
             widget.height = oldHeight
         }
+        // The measurement below writes Width and Height directly. The `defer`
+        // above puts them back, but only after WinUI has seen the intermediate
+        // values, so drop anything remembered about this widget rather than
+        // assume the restore leaves it in the state the cache describes.
+        WidgetPropertyCache.shared.invalidate(widget)
 
         widget.width = .nan
         widget.height = .nan
@@ -769,6 +796,14 @@ public final class WinUIBackend:
     }
 
     public func setSize(of widget: Widget, to size: SIMD2<Int>) {
+        // Writing Width or Height invalidates the element's measure and arrange
+        // passes even when the value is unchanged, and a commit sizes every
+        // widget in the window.
+        let entry = WidgetPropertyCache.shared.entry(for: widget)
+        guard entry.size != size else {
+            return
+        }
+        entry.size = size
         widget.width = Double(size.x)
         widget.height = Double(size.y)
     }
@@ -790,6 +825,22 @@ public final class WinUIBackend:
         proposedHeight: Int?,
         environment: EnvironmentValues
     ) -> SIMD2<Int> {
+        // A WinUI measure pass is expensive and the layout system asks for the
+        // same measurement repeatedly: up to three times within one update pass
+        // per label, and again on every subsequent pass even when nothing about
+        // the label changed. The key spells out every input this function reads
+        // so that adding a new one is a compile-time decision.
+        let cacheKey = TextMeasurementCache.Key(
+            text: text,
+            proposedWidth: proposedWidth,
+            proposedHeight: proposedHeight,
+            font: environment.resolvedFont,
+            lineLimit: environment.lineLimitSettings
+        )
+        if let cached = TextMeasurementCache.measurement(for: cacheKey) {
+            return cached
+        }
+
         // Update the text view's environment and measure its desired line height
         updateTextView(measurementTextBlock, content: text, environment: environment)
 
@@ -816,6 +867,7 @@ public final class WinUIBackend:
         // Make sure the text doesn't get shorter than a single line of text even if
         // it's empty.
         size.y = max(usedHeight, Int(lineHeight))
+        TextMeasurementCache.record(size, for: cacheKey)
         return size
     }
 
@@ -851,8 +903,26 @@ public final class WinUIBackend:
         environment: EnvironmentValues
     ) {
         let block = textView as! TextBlock
-        block.text = content
-        block.isTextSelectionEnabled = environment.isTextSelectionEnabled
+
+        // `Text.computeLayout` calls this on every layout computation (so up to
+        // three times per update pass per label) and the layout system asks for
+        // a measurement in between. Each of the writes below is a COM crossing
+        // and the foreground brush used to be a fresh WinRT object every time,
+        // so a window of static labels spent thousands of COM calls per frame
+        // rewriting the values it had just written.
+        let entry = WidgetPropertyCache.shared.entry(for: block)
+
+        if entry.text != content {
+            entry.text = content
+            block.text = content
+        }
+
+        let isTextSelectionEnabled = environment.isTextSelectionEnabled
+        if entry.isTextSelectionEnabled != isTextSelectionEnabled {
+            entry.isTextSelectionEnabled = isTextSelectionEnabled
+            block.isTextSelectionEnabled = isTextSelectionEnabled
+        }
+
         // TODO: Font design handling (monospace vs normal)
         environment.apply(to: block)
     }
@@ -873,12 +943,46 @@ public final class WinUIBackend:
         action: @escaping () -> Void
     ) {
         let button = button as! WinUI.Button
-        let block = TextBlock()
-        block.text = label
-        button.content = block
+        // Activating a `TextBlock` and reassigning `Button.content` rebuilds the
+        // button's visual tree, and this runs on every update pass. Reuse the
+        // label that's already there.
+        let block = Self.label(of: button)
+        Self.setLabelText(label, of: block)
         environment.apply(to: block)
         environment.apply(to: button)
         internalState.buttonClickActions[ObjectIdentifier(button)] = action
+    }
+
+    /// The text block used as a button's label, creating and installing one if
+    /// the button doesn't have one yet.
+    ///
+    /// - Parameter button: The button.
+    /// - Returns: The button's label element.
+    @MainActor
+    private static func label(of button: WinUI.Button) -> TextBlock {
+        let entry = WidgetPropertyCache.shared.entry(for: button)
+        if let existing = entry.buttonLabel {
+            return existing
+        }
+        let block = TextBlock()
+        entry.buttonLabel = block
+        button.content = block
+        return block
+    }
+
+    /// Writes a label's text if it isn't already what's wanted.
+    ///
+    /// - Parameters:
+    ///   - text: The wanted text.
+    ///   - block: The label element.
+    @MainActor
+    private static func setLabelText(_ text: String, of block: TextBlock) {
+        let entry = WidgetPropertyCache.shared.entry(for: block)
+        guard entry.text != text else {
+            return
+        }
+        entry.text = text
+        block.text = text
     }
 
     public func createPopoverMenu() -> Menu {
@@ -905,9 +1009,9 @@ public final class WinUIBackend:
         environment: EnvironmentValues
     ) {
         let button = button as! WinUI.Button
-        let block = TextBlock()
-        block.text = label
-        button.content = block
+        // See `updateSimpleButton`.
+        let block = Self.label(of: button)
+        Self.setLabelText(label, of: block)
         environment.apply(to: block)
         environment.apply(to: button)
         button.flyout = menu
@@ -2066,8 +2170,24 @@ public final class WinUIBackend:
         let winUiPath = container as! WinUI.Path
         let strokeStyle = overrideStrokeStyle ?? path.strokeStyle!
 
-        winUiPath.fill = WinUI.SolidColorBrush(fillColor.uwpColor)
-        winUiPath.stroke = WinUI.SolidColorBrush(strokeColor.uwpColor)
+        // A `Canvas` renders one path widget per drawing command and re-renders
+        // every one of them on every commit. Everything below is a COM crossing
+        // and the brushes and the dash collection used to be fresh WinRT objects
+        // each time, so a sheet overlay with a few hundred commands spent
+        // thousands of COM calls per frame repainting an unchanged drawing.
+        let entry = WidgetPropertyCache.shared.entry(for: winUiPath)
+        if entry.pathFillColor == fillColor,
+            entry.pathStrokeColor == strokeColor,
+            entry.pathStrokeStyle == strokeStyle
+        {
+            return
+        }
+        entry.pathFillColor = fillColor
+        entry.pathStrokeColor = strokeColor
+        entry.pathStrokeStyle = strokeStyle
+
+        winUiPath.fill = SolidColorBrushCache.brush(for: fillColor)
+        winUiPath.stroke = SolidColorBrushCache.brush(for: strokeColor)
         winUiPath.strokeThickness = strokeStyle.width
 
         switch strokeStyle.cap {
@@ -2210,41 +2330,79 @@ public final class WinUIBackend:
 }
 
 extension EnvironmentValues {
+    /// A brush painting the current foreground colour.
+    ///
+    /// Shared rather than freshly activated per access; see
+    /// ``SolidColorBrushCache``.
     @MainActor
     var winUIForegroundBrush: WinUI.Brush {
-        let brush = SolidColorBrush()
-        brush.color = suggestedForegroundColor.resolve(in: self).uwpColor
-        return brush
+        SolidColorBrushCache.brush(for: suggestedForegroundColor.resolve(in: self))
     }
 
+    /// Applies the environment's font, colours and enabled state to a control.
+    ///
+    /// Every write here is a COM crossing, and this runs on every update pass
+    /// for every button, text field, toggle, slider and picker in the window,
+    /// so each group of writes is skipped when its inputs are unchanged.
     @MainActor
     func apply(to control: WinUI.Control) {
+        let entry = WidgetPropertyCache.shared.entry(for: control)
+
         let resolvedFont = resolvedFont
-        control.fontSize = resolvedFont.pointSize
-        control.fontWeight.weight = resolvedFont.winUIFontWeight
-        control.foreground = winUIForegroundBrush
-        control.isEnabled = isEnabled
-        if resolvedFont.isItalic {
-            control.fontStyle = .italic
+        if entry.font != resolvedFont {
+            entry.font = resolvedFont
+            control.fontSize = resolvedFont.pointSize
+            control.fontWeight.weight = resolvedFont.winUIFontWeight
+            if resolvedFont.isItalic {
+                control.fontStyle = .italic
+            }
         }
-        switch colorScheme {
-            case .light:
-                control.requestedTheme = .light
-            case .dark:
-                control.requestedTheme = .dark
+
+        let foregroundColor = suggestedForegroundColor.resolve(in: self)
+        if entry.foregroundColor != foregroundColor {
+            entry.foregroundColor = foregroundColor
+            control.foreground = SolidColorBrushCache.brush(for: foregroundColor)
+        }
+
+        if entry.isEnabled != isEnabled {
+            entry.isEnabled = isEnabled
+            control.isEnabled = isEnabled
+        }
+
+        if entry.colorScheme != colorScheme {
+            entry.colorScheme = colorScheme
+            switch colorScheme {
+                case .light:
+                    control.requestedTheme = .light
+                case .dark:
+                    control.requestedTheme = .dark
+            }
         }
     }
 
+    /// Applies the environment's font and foreground colour to a text block.
+    ///
+    /// See the note on ``apply(to:)-(WinUI.Control)`` for why the writes are
+    /// guarded.
     @MainActor
     func apply(to textBlock: WinUI.TextBlock) {
-        let resolvedFont = resolvedFont
-        textBlock.fontSize = resolvedFont.pointSize
-        textBlock.fontWeight.weight = resolvedFont.winUIFontWeight
-        textBlock.foreground = winUIForegroundBrush
-        textBlock.lineHeight = resolvedFont.lineHeight
+        let entry = WidgetPropertyCache.shared.entry(for: textBlock)
 
-        if resolvedFont.isItalic {
-            textBlock.fontStyle = .italic
+        let resolvedFont = resolvedFont
+        if entry.font != resolvedFont {
+            entry.font = resolvedFont
+            textBlock.fontSize = resolvedFont.pointSize
+            textBlock.fontWeight.weight = resolvedFont.winUIFontWeight
+            textBlock.lineHeight = resolvedFont.lineHeight
+            if resolvedFont.isItalic {
+                textBlock.fontStyle = .italic
+            }
+        }
+
+        let foregroundColor = suggestedForegroundColor.resolve(in: self)
+        if entry.foregroundColor != foregroundColor {
+            entry.foregroundColor = foregroundColor
+            textBlock.foreground = SolidColorBrushCache.brush(for: foregroundColor)
         }
     }
 }

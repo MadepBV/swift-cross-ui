@@ -418,24 +418,43 @@ extension Canvas {
         let backendPath = child.backendPath as! Backend.Path
 
         let pointsChanged = child.lastActions != path.actions
-        child.lastActions = path.actions
+        let styleChanged = child.lastStrokeStyle != .some(strokeStyle)
+        if pointsChanged || styleChanged {
+            child.lastActions = path.actions
+            backend.updatePath(
+                backendPath,
+                path,
+                bounds: bounds,
+                pointsChanged: pointsChanged,
+                environment: environment
+            )
+        }
 
-        backend.updatePath(
-            backendPath,
-            path,
-            bounds: bounds,
-            pointsChanged: pointsChanged,
-            environment: environment
-        )
-        backend.setSize(of: widget, to: size.vector)
-        backend.setPosition(ofChildAt: index, in: container, to: .zero)
-        backend.renderPath(
-            backendPath,
-            container: widget,
-            strokeColor: strokeColor,
-            fillColor: fillColor,
-            overrideStrokeStyle: strokeStyle
-        )
+        let sizeVector = size.vector
+        if child.lastSize != sizeVector {
+            child.lastSize = sizeVector
+            backend.setSize(of: widget, to: sizeVector)
+        }
+
+        if child.lastPosition != .zero {
+            child.lastPosition = .zero
+            backend.setPosition(ofChildAt: index, in: container, to: .zero)
+        }
+
+        if styleChanged || child.lastStrokeColor != strokeColor
+            || child.lastFillColor != fillColor
+        {
+            child.lastStrokeStyle = .some(strokeStyle)
+            child.lastStrokeColor = strokeColor
+            child.lastFillColor = fillColor
+            backend.renderPath(
+                backendPath,
+                container: widget,
+                strokeColor: strokeColor,
+                fillColor: fillColor,
+                overrideStrokeStyle: strokeStyle
+            )
+        }
     }
 
     /// Renders a recorded run of text into its child widget.
@@ -475,11 +494,26 @@ extension Canvas {
         let content = textEnvironment.applyingTextTransforms(
             to: command.text.string
         )
-        backend.updateTextView(
-            widget,
-            content: content,
-            environment: textEnvironment
-        )
+
+        // Writing the text view and measuring it are the two most expensive
+        // things a canvas does per command, and both are repeated on every
+        // commit even when the drawing is unchanged. See the note on
+        // ``CanvasStorage/Child/lastSize``.
+        let font = textEnvironment.resolvedFont
+        let color = textEnvironment.suggestedForegroundColor.resolve(in: textEnvironment)
+        let textChanged =
+            child.lastText != content || child.lastFont != font
+            || child.lastTextColor != color
+        if textChanged {
+            child.lastText = content
+            child.lastFont = font
+            child.lastTextColor = color
+            backend.updateTextView(
+                widget,
+                content: content,
+                environment: textEnvironment
+            )
+        }
 
         let proposedWidth: Int?
         let proposedHeight: Int?
@@ -492,14 +526,27 @@ extension Canvas {
                 proposedHeight = Canvas.proposedDimension(rect.height)
         }
 
-        let measured = backend.size(
-            of: content,
-            whenDisplayedIn: widget,
-            proposedWidth: proposedWidth,
-            proposedHeight: proposedHeight,
-            environment: textEnvironment
-        )
-        backend.setSize(of: widget, to: measured)
+        let measured: SIMD2<Int>
+        if !textChanged, let cached = child.lastMeasurement,
+            child.lastProposal == SIMD2(proposedWidth ?? -1, proposedHeight ?? -1)
+        {
+            measured = cached
+        } else {
+            measured = backend.size(
+                of: content,
+                whenDisplayedIn: widget,
+                proposedWidth: proposedWidth,
+                proposedHeight: proposedHeight,
+                environment: textEnvironment
+            )
+            child.lastMeasurement = measured
+            child.lastProposal = SIMD2(proposedWidth ?? -1, proposedHeight ?? -1)
+        }
+
+        if child.lastSize != measured {
+            child.lastSize = measured
+            backend.setSize(of: widget, to: measured)
+        }
 
         let origin: SIMD2<Double>
         switch command.placement {
@@ -515,11 +562,11 @@ extension Canvas {
                 )
         }
 
-        backend.setPosition(
-            ofChildAt: index,
-            in: container,
-            to: SIMD2(Int(origin.x.rounded()), Int(origin.y.rounded()))
-        )
+        let position = SIMD2(Int(origin.x.rounded()), Int(origin.y.rounded()))
+        if child.lastPosition != position {
+            child.lastPosition = position
+            backend.setPosition(ofChildAt: index, in: container, to: position)
+        }
     }
 
     /// Measures a string using a scratch text view owned by the canvas.
@@ -596,6 +643,35 @@ final class CanvasStorage: ViewGraphNodeChildren {
         /// The path actions last uploaded to the backend, used to skip
         /// rebuilding unchanged geometry.
         var lastActions: [Path.Action]?
+
+        /// The size last written to the child widget.
+        ///
+        /// A canvas re-applies every one of its commands on every commit, and a
+        /// commit happens whenever anything in the window updates, not only
+        /// when the drawing changed. Each of the backend calls guarded by these
+        /// is a COM crossing on Windows, so a sheet overlay with a few hundred
+        /// commands used to spend thousands of them per frame repainting an
+        /// unchanged drawing.
+        var lastSize: SIMD2<Int>?
+        /// The position last written for the child widget.
+        var lastPosition: SIMD2<Int>?
+        /// The stroke colour last rendered into the child widget.
+        var lastStrokeColor: Color.Resolved?
+        /// The fill colour last rendered into the child widget.
+        var lastFillColor: Color.Resolved?
+        /// The stroke style last rendered into the child widget.
+        var lastStrokeStyle: StrokeStyle??
+        /// The text content last written to the child widget.
+        var lastText: String?
+        /// The font the text content was last written with.
+        var lastFont: Font.Resolved?
+        /// The colour the text content was last written with.
+        var lastTextColor: Color.Resolved?
+        /// The measurement the text content last produced.
+        var lastMeasurement: SIMD2<Int>?
+        /// The proposal ``lastMeasurement`` was produced for. An unspecified
+        /// dimension is stored as -1, which no real proposal can be.
+        var lastProposal: SIMD2<Int>?
 
         /// Creates a child.
         ///

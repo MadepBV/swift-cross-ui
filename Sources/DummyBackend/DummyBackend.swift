@@ -7,8 +7,35 @@ public final class DummyBackend:
     BackendFeatures.CornerRadius,
     BackendFeatures.Tables,
     BackendFeatures.Colors,
+    BackendFeatures.Paths,
     BackendFeatures.Windowing
 {
+    /// How many times each backend method has been called.
+    ///
+    /// Every one of these is a COM crossing on WinUI and a widget-tree mutation
+    /// on AppKit and GTK, so the number of them per update pass is the
+    /// backend-independent measure of how much work the framework is asking a
+    /// real backend to do. Counting them here makes that measurable without a
+    /// real backend.
+    public private(set) var callCounts: [String: Int] = [:]
+
+    /// Forgets the recorded call counts.
+    public func resetCallCounts() {
+        callCounts.removeAll(keepingCapacity: true)
+    }
+
+    /// The total number of backend calls recorded.
+    public var totalCallCount: Int {
+        callCounts.values.reduce(0, +)
+    }
+
+    /// Records a call to a backend method.
+    ///
+    /// - Parameter method: The method's name.
+    @inline(__always)
+    func record(_ method: String) {
+        callCounts[method, default: 0] += 1
+    }
     public class Window {
         static let defaultSize = SIMD2<Int>(400, 200)
 
@@ -393,6 +420,7 @@ public final class DummyBackend:
     }
 
     public func insert(_ child: Widget, into container: Widget, at index: Int) {
+        record("insert")
         (container as! Container).children.insert((child, .zero), at: index)
     }
 
@@ -401,6 +429,7 @@ public final class DummyBackend:
     }
 
     public func setPosition(ofChildAt index: Int, in container: Widget, to position: SIMD2<Int>) {
+        record("setPosition")
         (container as! Container).children[index].position = position
     }
 
@@ -414,6 +443,7 @@ public final class DummyBackend:
     }
 
     public func setColor(ofColorableRectangle widget: Widget, to color: Color.Resolved) {
+        record("setColor")
         (widget as! Rectangle).color = color
     }
 
@@ -430,6 +460,7 @@ public final class DummyBackend:
     }
 
     public func setSize(of widget: Widget, to size: SIMD2<Int>) {
+        record("setSize")
         widget.size = size
     }
 
@@ -522,6 +553,7 @@ public final class DummyBackend:
         proposedHeight: Int?,
         environment: EnvironmentValues
     ) -> SIMD2<Int> {
+        record("size(ofText:)")
         let resolvedFont = environment.resolvedFont
         let lineHeight = Int(resolvedFont.lineHeight)
         let characterHeight = Int(resolvedFont.pointSize)
@@ -555,6 +587,7 @@ public final class DummyBackend:
         content: String,
         environment: EnvironmentValues
     ) {
+        record("updateTextView")
         let textView = textView as! TextView
         textView.content = content
         textView.color = environment.suggestedForegroundColor.resolve(in: environment)
@@ -575,6 +608,7 @@ public final class DummyBackend:
         dataHasChanged: Bool,
         environment: EnvironmentValues
     ) {
+        record("updateImageView")
         let imageView = imageView as! ImageView
         imageView.rgbaData = rgbaData
         imageView.pixelWidth = width
@@ -833,5 +867,56 @@ public final class DummyBackend:
 
     public func getContent(ofTextEditor textEditor: Widget) -> String {
         fatalError("\(Self.self): \(#function) not implemented")
+    }
+}
+
+// MARK: - Paths
+
+extension DummyBackend {
+    /// A recorded path, kept so that benchmarks can exercise ``Canvas``.
+    public final class DummyPath {
+        public var actions: [SwiftCrossUI.Path.Action] = []
+        public var strokeStyle: StrokeStyle?
+        public var strokeColor: Color.Resolved?
+        public var fillColor: Color.Resolved?
+
+        public init() {}
+    }
+
+    public func createPathWidget() -> Widget {
+        Widget()
+    }
+
+    public func createPath() -> DummyPath {
+        DummyPath()
+    }
+
+    public func updatePath(
+        _ path: DummyPath,
+        _ source: SwiftCrossUI.Path,
+        bounds: SwiftCrossUI.Path.Rect,
+        pointsChanged: Bool,
+        environment: EnvironmentValues
+    ) {
+        record("updatePath")
+        path.strokeStyle = source.strokeStyle
+        if pointsChanged {
+            path.actions = source.actions
+        }
+    }
+
+    public func renderPath(
+        _ path: DummyPath,
+        container: Widget,
+        strokeColor: Color.Resolved,
+        fillColor: Color.Resolved,
+        overrideStrokeStyle: StrokeStyle?
+    ) {
+        record("renderPath")
+        path.strokeColor = strokeColor
+        path.fillColor = fillColor
+        if let overrideStrokeStyle {
+            path.strokeStyle = overrideStrokeStyle
+        }
     }
 }

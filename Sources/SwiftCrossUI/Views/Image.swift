@@ -36,7 +36,7 @@ public struct Image: Sendable {
     /// The source of the image.
     private var source: Source
 
-    enum Source: Equatable {
+    enum Source {
         case url(URL, useFileExtension: Bool)
         case image(ImageFormats.Image<RGBA>)
         case systemName(String)
@@ -108,6 +108,60 @@ public struct Image: Sendable {
             scaleFactor: environment.windowScaleFactor,
             color: environment.suggestedForegroundColor
         )
+    }
+}
+
+extension Image.Source: Equatable {
+    /// Compares two sources without walking pixel data.
+    ///
+    /// A raster source holds a whole frame's worth of bytes — a full-window
+    /// viewport is megabytes — and an image view compares its source against
+    /// the one it last resolved on every layout computation, which the layout
+    /// system runs up to three times per update pass. Comparing the buffers
+    /// element by element makes that proportional to the number of pixels;
+    /// comparing their storage identity makes it constant time.
+    ///
+    /// The comparison errs in the safe direction. Two arrays holding equal
+    /// pixels in separate buffers are reported as different, which costs a
+    /// redundant upload rather than a stale picture. It cannot report two
+    /// different images as equal: the cached source keeps its buffer alive and
+    /// shared, so mutating the original array copies it first, and the address
+    /// of a live buffer can't be reused by another one.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        switch (lhs, rhs) {
+            case (
+                .url(let lhsURL, let lhsUseFileExtension),
+                .url(let rhsURL, let rhsUseFileExtension)
+            ):
+                lhsURL == rhsURL && lhsUseFileExtension == rhsUseFileExtension
+            case (.systemName(let lhsName), .systemName(let rhsName)):
+                lhsName == rhsName
+            case (.image(let lhsImage), .image(let rhsImage)):
+                lhsImage.width == rhsImage.width
+                    && lhsImage.height == rhsImage.height
+                    && lhsImage.bytes.count == rhsImage.bytes.count
+                    && Image.storageIdentity(of: lhsImage.bytes)
+                        == Image.storageIdentity(of: rhsImage.bytes)
+            default:
+                false
+        }
+    }
+}
+
+extension Image {
+    /// The address of an array's storage, as a plain integer.
+    ///
+    /// Two arrays that share storage (as copies of one array do until one of
+    /// them is mutated) report the same identity. The address is never
+    /// dereferenced; it's only ever compared with another one taken the same
+    /// way from an array that is still alive.
+    ///
+    /// - Parameter bytes: The array to identify.
+    /// - Returns: The address of the array's storage, or 0 if it's empty.
+    fileprivate static func storageIdentity(of bytes: [UInt8]) -> UInt {
+        bytes.withUnsafeBufferPointer { buffer in
+            UInt(bitPattern: buffer.baseAddress)
+        }
     }
 }
 

@@ -217,3 +217,51 @@ struct LongListView: TestCaseView {
         }
     }
 }
+
+/// A drafting overlay: a `Canvas` issuing a few hundred drawing commands, the
+/// shape a CAD app's selection highlights, snap indicators, handles and section
+/// markers take.
+struct DraftingOverlayView: TestCaseView {
+    /// Perturbs the drawing so that the "animating" case actually changes.
+    var phase: Double = 0
+
+    init() {
+        self.init(phase: 0)
+    }
+
+    init(phase: Double) {
+        self.phase = phase
+    }
+
+    var body: some View {
+        BodyCounter.record()
+        let phase = phase
+        // Wrapped in a stack because `View.defaultComputeLayout` lays a body
+        // out as if it were a `VStack`, which only works for `TupleView`
+        // content; a body that is a bare `Canvas` lays out to zero.
+        return VStack(spacing: 0) {
+            Canvas { context, size in
+                for index in 0..<200 {
+                    let t = Double(index) / 200.0
+                    let x = t * size.width
+                    let y = (0.5 + 0.4 * Foundation.sin(t * 12 + phase)) * size.height
+                    var path = Path()
+                    path = path.addRectangle(
+                        Path.Rect(x: x, y: y, width: 6, height: 6)
+                    )
+                    context.fill(path, with: .color(.blue))
+                    context.stroke(path, with: .color(.black), lineWidth: 1)
+                }
+                for index in 0..<40 {
+                    context.draw(
+                        Text("d\(index)"),
+                        at: CGPoint(
+                            x: Double(index) * 18,
+                            y: 12
+                        )
+                    )
+                }
+            }
+        }
+    }
+}

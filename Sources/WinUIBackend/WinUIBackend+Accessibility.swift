@@ -39,6 +39,16 @@ extension WinUIBackend: BackendFeatures.Accessibility {
         of widget: Widget,
         to properties: BackendFeatures.AccessibilityProperties
     ) {
+        // Every branch below is an attached-property write across the WinRT
+        // projection, and `.combine`/`.ignore`/hidden additionally walk the
+        // whole subtree. This runs for every accessibility-annotated widget on
+        // every update pass, and the metadata almost never changes.
+        let entry = WidgetPropertyCache.shared.entry(for: widget)
+        guard entry.accessibility != properties else {
+            return
+        }
+        entry.accessibility = properties
+
         if let identifier = properties.identifier {
             AutomationProperties.setAutomationId(widget, identifier)
         }

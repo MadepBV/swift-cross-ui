@@ -12,9 +12,8 @@ import DummyBackend
     /// Drives a ``Canvas`` through a real backend so that the widget side of
     /// canvas rendering can be inspected.
     ///
-    /// `DummyBackend` doesn't implement `BackendFeatures.Paths`, so
-    /// `AppKitBackend` is the only backend available to the test suite that a
-    /// canvas can actually render through.
+    /// `AppKitBackend` is used here rather than `DummyBackend` so that the
+    /// widget side can be inspected as a real view hierarchy.
     @MainActor
     final class AppKitCanvasHarness {
         /// The backend under test.
@@ -80,9 +79,9 @@ final class CommandCountBox {
 /// Tests for ``Canvas``, ``GraphicsContext`` and the path construction that
 /// canvas drawing relies on.
 ///
-/// `DummyBackend` doesn't implement `BackendFeatures.Paths`, so a canvas can't
-/// be rendered through it. These tests therefore assert on the command list
-/// that a renderer produces and on the resolved path geometry, not on pixels.
+/// These tests assert on the command list that a renderer produces and on the
+/// resolved path geometry rather than on pixels. The backend calls a canvas
+/// makes are covered separately by ``CanvasRepaintTests``.
 @Suite("Testing for Canvas")
 struct CanvasTests {
     /// The size handed to every renderer under test.

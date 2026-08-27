@@ -178,14 +178,18 @@ final class TapGestureTarget: WinUI.Canvas {
         let wantsEvents =
             leftClickHandler != nil || rightClickHandler != nil
             || longPressHandler != nil
-        if wantsEvents {
-            let brush = SolidColorBrush()
-            brush.color = UWP.Color(a: 0, r: 0, g: 0, b: 0)
-            background = brush
-        } else {
-            background = nil
+        // Each handler's `didSet` calls this, so it used to activate a WinRT
+        // brush and write `Background` up to three times per update pass for a
+        // value that only changes when a gesture is attached or detached.
+        guard isHitTestable != wantsEvents else {
+            return
         }
+        isHitTestable = wantsEvents
+        background = wantsEvents ? SolidColorBrushCache.transparent : nil
     }
+
+    /// Whether ``updateHitTesting()`` has made this target hit-testable.
+    private var isHitTestable = false
 
     private func handlePointerPressed(_ args: WinUI.PointerRoutedEventArgs) {
         guard let point = try? args.getCurrentPoint(self) else {
@@ -567,14 +571,18 @@ final class PointerGestureTarget: WinUI.Canvas {
             dragChangedHandler != nil || dragEndedHandler != nil
             || tapHandler != nil || scrollHandler != nil
             || magnifyHandler != nil || moveHandler != nil
-        if wantsEvents {
-            let brush = SolidColorBrush()
-            brush.color = UWP.Color(a: 0, r: 0, g: 0, b: 0)
-            background = brush
-        } else {
-            background = nil
+        // Six handler `didSet`s call this, so it used to activate a WinRT brush
+        // and write `Background` six times per update pass for a value that only
+        // changes when a gesture is attached or detached.
+        guard isHitTestable != wantsEvents else {
+            return
         }
+        isHitTestable = wantsEvents
+        background = wantsEvents ? SolidColorBrushCache.transparent : nil
     }
+
+    /// Whether ``updateHitTesting()`` has made this target hit-testable.
+    private var isHitTestable = false
 
     /// Enables scale manipulations while a magnify handler is attached.
     ///

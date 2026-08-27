@@ -10,29 +10,49 @@ import ImageFormats
 /// cost of every subsequent pass over an already-built graph, so this driver
 /// builds the graph once and then measures repeated passes.
 ///
+/// The two phases are timed separately, and the number of backend calls a pass
+/// makes is reported alongside them. That call count is the number that
+/// predicts Windows behaviour: `DummyBackend` answers a call in nanoseconds,
+/// but every one of them is a WinRT/COM crossing on `WinUIBackend`, so a
+/// change that halves the call count halves a large part of the Windows frame
+/// time even when it barely moves the macOS timings.
+///
 /// Run with `SCUI_PROFILE=1 .build/release/LayoutPerformanceBenchmark`.
 @MainActor
 enum SteadyStateProfile {
+    /// One measured pass, split into its two phases.
+    struct Pass {
+        /// Recomputes the view graph's layout.
+        var layout: () -> Void
+        /// Commits the computed layout to the widget hierarchy, returning the
+        /// root's committed size.
+        var commit: () -> ViewSize
+    }
+
     struct Stats {
         var label: String
+        /// Whole-pass timings, in milliseconds.
         var samples: [Double]
-        var bodyEvaluationsPerPass: Double
-        /// The size the root view committed to. Reported so that a change to
-        /// the layout system can be shown not to have changed any layout.
+        /// Layout-phase timings, in milliseconds.
+        var layoutSamples: [Double]
+        /// Commit-phase timings, in milliseconds.
+        var commitSamples: [Double]
+        var bodyEvaluationsPerPass: Int
+        /// The number of backend calls one pass makes.
+        var backendCallsPerPass: Int
+        /// The size the root view committed to. Reported so that an
+        /// optimisation can be shown not to have changed any layout.
         var committedSize: ViewSize
 
-        var median: Double {
+        static func median(_ samples: [Double]) -> Double {
             let sorted = samples.sorted()
-            return sorted[sorted.count / 2]
+            return sorted.isEmpty ? 0 : sorted[sorted.count / 2]
         }
 
-        var mean: Double {
-            samples.reduce(0, +) / Double(samples.count)
-        }
-
-        var minimum: Double {
-            samples.min() ?? 0
-        }
+        var median: Double { Self.median(samples) }
+        var layoutMedian: Double { Self.median(layoutSamples) }
+        var commitMedian: Double { Self.median(commitSamples) }
+        var minimum: Double { samples.min() ?? 0 }
     }
 
     static func run() {
@@ -44,6 +64,35 @@ enum SteadyStateProfile {
         let proposal = ProposedViewSize(1600, 1100)
         let passes = profileIterationCount()
 
+        /// Builds a pass that lays a root view out at a fixed proposal and
+        /// commits it, taking a fresh view value from `nextView` each time.
+        @MainActor
+        func steadyPass<V: View>(
+            _ makeView: @escaping () -> V,
+            proposedSize: @escaping () -> ProposedViewSize = { proposal }
+        ) -> Pass {
+            let node = ViewGraphNode(
+                for: makeView(),
+                backend: backend,
+                snapshot: nil,
+                environment: environment
+            )
+            _ = node.computeLayout(proposedSize: proposedSize(), environment: environment)
+            _ = node.commit()
+            return Pass(
+                layout: {
+                    _ = node.computeLayout(
+                        with: makeView(),
+                        proposedSize: proposedSize(),
+                        environment: environment
+                    )
+                },
+                commit: {
+                    node.commit().size
+                }
+            )
+        }
+
         var results: [Stats] = []
 
         // MARK: Idle pass — nothing changed, the graph is just re-run.
@@ -51,55 +100,25 @@ enum SteadyStateProfile {
         // This is the case a CAD app hits when something re-triggers an update
         // while the model is unchanged, which is where the reported sluggishness
         // lives.
+        let idleViewport = CADView.makeViewport(frame: 0)
         results.append(
-            measure(label: "cad/idle", passes: passes) {
-                let viewport = CADView.makeViewport(frame: 0)
-                let node = ViewGraphNode(
-                    for: CADView(frame: 0, viewport: viewport),
-                    backend: backend,
-                    snapshot: nil,
-                    environment: environment
-                )
-                _ = node.computeLayout(proposedSize: proposal, environment: environment)
-                _ = node.commit()
-                return {
-                    _ = node.computeLayout(
-                        with: CADView(frame: 0, viewport: viewport),
-                        proposedSize: proposal,
-                        environment: environment
-                    )
-                    return node.commit().size
-                }
+            measure(label: "cad/idle", passes: passes, backend: backend) {
+                steadyPass { CADView(frame: 0, viewport: idleViewport) }
             }
         )
 
         // MARK: Animating pass — the inspector selection moves and the viewport
         // pixels change every frame, as they would while orbiting a model.
+        let viewports = (0..<16).map(CADView.makeViewport(frame:))
         results.append(
-            measure(label: "cad/animating", passes: passes) {
+            measure(label: "cad/animating", passes: passes, backend: backend) {
                 var frame = 0
-                let node = ViewGraphNode(
-                    for: CADView(frame: 0, viewport: CADView.makeViewport(frame: 0)),
-                    backend: backend,
-                    snapshot: nil,
-                    environment: environment
-                )
-                _ = node.computeLayout(proposedSize: proposal, environment: environment)
-                _ = node.commit()
-                // Pre-generate the frames so that buffer allocation isn't part
-                // of the measurement.
-                let viewports = (0..<16).map(CADView.makeViewport(frame:))
-                return {
+                return steadyPass {
                     frame += 1
-                    _ = node.computeLayout(
-                        with: CADView(
-                            frame: frame,
-                            viewport: viewports[frame % viewports.count]
-                        ),
-                        proposedSize: proposal,
-                        environment: environment
+                    return CADView(
+                        frame: frame,
+                        viewport: viewports[frame % viewports.count]
                     )
-                    return node.commit().size
                 }
             }
         )
@@ -107,81 +126,51 @@ enum SteadyStateProfile {
         // MARK: Resize pass — a new proposal every frame, which defeats the
         // per-proposal layout cache and is what a window drag costs.
         results.append(
-            measure(label: "cad/resize", passes: passes) {
+            measure(label: "cad/resize", passes: passes, backend: backend) {
                 var frame = 0
-                let viewport = CADView.makeViewport(frame: 0)
-                let node = ViewGraphNode(
-                    for: CADView(frame: 0, viewport: viewport),
-                    backend: backend,
-                    snapshot: nil,
-                    environment: environment
+                return steadyPass(
+                    { CADView(frame: 0, viewport: idleViewport) },
+                    proposedSize: {
+                        frame += 1
+                        return ProposedViewSize(
+                            1600 + Double(frame % 8),
+                            1100 + Double(frame % 8)
+                        )
+                    }
                 )
-                _ = node.computeLayout(proposedSize: proposal, environment: environment)
-                _ = node.commit()
-                return {
-                    frame += 1
-                    let size = ProposedViewSize(
-                        1600 + Double(frame % 8),
-                        1100 + Double(frame % 8)
-                    )
-                    _ = node.computeLayout(
-                        with: CADView(frame: 0, viewport: viewport),
-                        proposedSize: size,
-                        environment: environment
-                    )
-                    return node.commit().size
-                }
             }
         )
 
-        // MARK: The stock cases, but measured as steady-state passes rather
-        // than as graph construction.
+        // MARK: A deeply nested tree of stacks, which is where the layout
+        // system's per-level probing multiplies.
         results.append(
-            measure(label: "grid/idle", passes: passes) {
-                let node = ViewGraphNode(
-                    for: GridView(),
-                    backend: backend,
-                    snapshot: nil,
-                    environment: environment
-                )
-                _ = node.computeLayout(
-                    proposedSize: ProposedViewSize(800, 800),
-                    environment: environment
-                )
-                _ = node.commit()
-                return {
-                    _ = node.computeLayout(
-                        with: GridView(),
-                        proposedSize: ProposedViewSize(800, 800),
-                        environment: environment
-                    )
-                    return node.commit().size
-                }
+            measure(label: "grid/idle", passes: passes, backend: backend) {
+                steadyPass({ GridView() }, proposedSize: { ProposedViewSize(800, 800) })
             }
         )
 
-        // MARK: A long uniform list — a schedule or bar list, the other shape
+        // MARK: A long uniform list — a schedule or a bar list, the other shape
         // a CAD app leans on heavily.
         results.append(
-            measure(label: "list/idle", passes: max(passes / 4, 5)) {
-                let node = ViewGraphNode(
-                    for: LongListView(),
-                    backend: backend,
-                    snapshot: nil,
-                    environment: environment
-                )
-                _ = node.computeLayout(
-                    proposedSize: ProposedViewSize(800, nil),
-                    environment: environment
-                )
-                _ = node.commit()
-                return {
-                    _ = node.computeLayout(
-                        with: LongListView(),
-                        proposedSize: ProposedViewSize(800, nil),
-                        environment: environment
-                    )
-                    return node.commit().size
+            measure(label: "list/idle", passes: max(passes / 4, 5), backend: backend) {
+                steadyPass({ LongListView() }, proposedSize: { ProposedViewSize(800, nil) })
+            }
+        )
+
+        // MARK: A drafting overlay drawn through `Canvas`, which costs one
+        // backend widget per drawing command.
+        results.append(
+            measure(label: "canvas/idle", passes: max(passes / 2, 5), backend: backend) {
+                steadyPass { DraftingOverlayView(phase: 0) }
+            }
+        )
+
+        results.append(
+            measure(label: "canvas/animating", passes: max(passes / 2, 5), backend: backend) {
+                var frame = 0
+                return steadyPass {
+                    frame += 1
+                    return DraftingOverlayView(phase: Double(frame) * 0.05)
                 }
             }
         )
@@ -200,12 +189,13 @@ enum SteadyStateProfile {
         return 60
     }
 
-    /// Builds a graph with `setUp`, warms it, then times `passes` calls of the
-    /// closure that `setUp` returns.
+    /// Builds a graph with `setUp`, warms it, then times `passes` runs of the
+    /// pass that `setUp` returns.
     private static func measure(
         label: String,
         passes: Int,
-        setUp: () -> () -> ViewSize
+        backend: DummyBackend,
+        setUp: () -> Pass
     ) -> Stats {
         let pass = setUp()
 
@@ -213,29 +203,42 @@ enum SteadyStateProfile {
         // any first-pass-only work (widget creation, symbol resolution) out of
         // the way.
         for _ in 0..<5 {
-            _ = pass()
+            pass.layout()
+            _ = pass.commit()
         }
 
-        // Count body evaluations over a single pass, separately from the timed
-        // run so that the counter itself isn't measured.
+        // Body evaluations and backend calls are counted over a single
+        // untimed pass so that the counters themselves aren't measured.
         BodyCounter.reset()
-        _ = pass()
-        let bodyEvaluations = Double(BodyCounter.count)
+        backend.resetCallCounts()
+        pass.layout()
+        _ = pass.commit()
+        let bodyEvaluations = BodyCounter.count
+        let backendCalls = backend.totalCallCount
 
         var samples: [Double] = []
+        var layoutSamples: [Double] = []
+        var commitSamples: [Double] = []
         var size = ViewSize.zero
         samples.reserveCapacity(passes)
         for _ in 0..<passes {
             let start = DispatchTime.now().uptimeNanoseconds
-            size = pass()
+            pass.layout()
+            let afterLayout = DispatchTime.now().uptimeNanoseconds
+            size = pass.commit()
             let end = DispatchTime.now().uptimeNanoseconds
+            layoutSamples.append(Double(afterLayout - start) / 1_000_000)
+            commitSamples.append(Double(end - afterLayout) / 1_000_000)
             samples.append(Double(end - start) / 1_000_000)
         }
 
         return Stats(
             label: label,
             samples: samples,
+            layoutSamples: layoutSamples,
+            commitSamples: commitSamples,
             bodyEvaluationsPerPass: bodyEvaluations,
+            backendCallsPerPass: backendCalls,
             committedSize: size
         )
     }
@@ -259,20 +262,24 @@ enum SteadyStateProfile {
 
         print("")
         print(
-            pad("benchmark", 18) + padLeft("median ms", 12) + padLeft("mean ms", 12)
-                + padLeft("min ms", 12) + padLeft("bodies/pass", 14)
+            pad("benchmark", 18) + padLeft("pass ms", 10) + padLeft("layout ms", 11)
+                + padLeft("commit ms", 11) + padLeft("min ms", 10)
+                + padLeft("bodies", 9) + padLeft("backend calls", 15)
+                + padLeft("size", 14)
         )
-        print(String(repeating: "-", count: 68))
+        print(String(repeating: "-", count: 98))
         for result in results {
             print(
                 pad(result.label, 18)
-                    + padLeft(format(result.median), 12)
-                    + padLeft(format(result.mean), 12)
-                    + padLeft(format(result.minimum), 12)
-                    + padLeft("\(Int(result.bodyEvaluationsPerPass))", 14)
+                    + padLeft(format(result.median), 10)
+                    + padLeft(format(result.layoutMedian), 11)
+                    + padLeft(format(result.commitMedian), 11)
+                    + padLeft(format(result.minimum), 10)
+                    + padLeft("\(result.bodyEvaluationsPerPass)", 9)
+                    + padLeft("\(result.backendCallsPerPass)", 15)
                     + padLeft(
                         "\(Int(result.committedSize.width))x\(Int(result.committedSize.height))",
-                        18
+                        14
                     )
             )
         }
