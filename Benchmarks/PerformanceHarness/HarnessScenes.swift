@@ -228,3 +228,41 @@ struct LongList: View {
         }
     }
 }
+
+/// The same geometry as ``DraftingOverlay``, drawn as two commands instead of
+/// four hundred.
+///
+/// A controlled experiment against `canvas/animating`: identical number of
+/// geometry writes (200 rectangles filled, the same 200 stroked), but two
+/// backend widgets instead of four hundred. If a canvas's cost is the geometry
+/// it uploads, the two scenes cost the same; if it is the number of native
+/// elements being invalidated and re-rendered, this one is dramatically
+/// cheaper.
+struct MergedDraftingOverlay: View {
+    var phase: Double
+
+    var body: some View {
+        let phase = phase
+        return VStack(spacing: 0) {
+            Canvas { context, size in
+                var merged = Path()
+                for index in 0..<200 {
+                    let t = Double(index) / 200.0
+                    let x = t * size.width
+                    let y = (0.5 + 0.4 * Foundation.sin(t * 12 + phase)) * size.height
+                    merged = merged.addRectangle(
+                        Path.Rect(x: x, y: y, width: 6, height: 6)
+                    )
+                }
+                context.fill(merged, with: .color(.blue))
+                context.stroke(merged, with: .color(.black), lineWidth: 1)
+                for index in 0..<40 {
+                    context.draw(
+                        Text("d\(index)"),
+                        at: CGPoint(x: Double(index) * 18, y: 12)
+                    )
+                }
+            }
+        }
+    }
+}

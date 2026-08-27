@@ -56,6 +56,9 @@ struct PerformanceHarness {
         var layoutSamples: [Double]
         var commitSamples: [Double]
         var committedSize: ViewSize
+        /// What one pass asked of the backend, so that a phase's cost can be
+        /// attributed instead of guessed at.
+        var callCounts: [String: Int]
     }
 
     @MainActor
@@ -178,6 +181,16 @@ struct PerformanceHarness {
             }
         }
 
+        // The same geometry as canvas/animating through two widgets instead of
+        // four hundred. See `MergedDraftingOverlay`.
+        scenario("canvas/merged", passes: max(passCount / 2, 5)) {
+            var frame = 0
+            return steadyPass {
+                frame += 1
+                return MergedDraftingOverlay(phase: Double(frame) * 0.05)
+            }
+        }
+
         // A long uniform list, proposed an unbounded height as a scroll view
         // would.
         scenario("list/idle", passes: max(passCount / 4, 5)) {
@@ -204,6 +217,13 @@ struct PerformanceHarness {
             _ = pass.commit()
         }
 
+        // One untimed pass with counting on, so that the counters themselves
+        // are never part of a timing.
+        BackendCallStatistics.startCounting()
+        pass.layout()
+        _ = pass.commit()
+        let callCounts = BackendCallStatistics.stopCounting()
+
         var layoutSamples: [Double] = []
         var commitSamples: [Double] = []
         var size = ViewSize.zero
@@ -224,7 +244,8 @@ struct PerformanceHarness {
             passes: passes,
             layoutSamples: layoutSamples,
             commitSamples: commitSamples,
-            committedSize: size
+            committedSize: size,
+            callCounts: callCounts
         )
     }
 
@@ -301,6 +322,24 @@ struct PerformanceHarness {
                     samples: zip(result.layoutSamples, result.commitSamples).map(+)
                 )
             )
+        }
+
+        // What one pass asked of the backend. Same CSV, `count` in the phase
+        // column, so an existing parser sees rows it can ignore by phase.
+        for result in results {
+            for (event, count) in result.callCounts.sorted(by: { $0.key < $1.key }) {
+                lines.append(
+                    [
+                        result.scenario,
+                        "count:" + event,
+                        "1",
+                        "\(count)",
+                        "", "", "", "",
+                        "\(Int(result.committedSize.width))",
+                        "\(Int(result.committedSize.height))",
+                    ].joined(separator: ",")
+                )
+            }
         }
 
         let csv = lines.joined(separator: "\n") + "\n"

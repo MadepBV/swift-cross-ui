@@ -293,6 +293,8 @@ extension Canvas {
             font: environment.font,
             measurement: measurement
         )
+        BackendCallStatistics.record("canvas.rendererRun")
+        BackendCallStatistics.record("canvas.command", commands.count)
 
         reconcileChildren(
             of: container,
@@ -348,7 +350,10 @@ extension Canvas {
             reusableCount += 1
         }
 
+        BackendCallStatistics.record("canvas.childReused", reusableCount)
+
         while storage.children.count > reusableCount {
+            BackendCallStatistics.record("canvas.childDestroyed")
             backend.remove(
                 childAt: storage.children.count - 1,
                 from: container
@@ -357,6 +362,7 @@ extension Canvas {
         }
 
         for index in reusableCount..<commands.count {
+            BackendCallStatistics.record("canvas.childCreated")
             let child: CanvasStorage.Child
             switch commands[index].kind {
                 case .path:
@@ -486,6 +492,16 @@ extension Canvas {
         let pointsChanged = child.lastActions != path.actions
         let styleChanged = child.lastStrokeStyle != .some(strokeStyle)
         if pointsChanged || styleChanged {
+            if BackendCallStatistics.isCounting {
+                BackendCallStatistics.record("canvas.updatePath")
+                if let previous = child.lastActions,
+                    PathReconciliation.haveSameShape(previous, path.actions)
+                {
+                    BackendCallStatistics.record("canvas.updatePath.reconcilable")
+                } else {
+                    BackendCallStatistics.record("canvas.updatePath.rebuild")
+                }
+            }
             child.lastActions = path.actions
             backend.updatePath(
                 backendPath,
@@ -499,11 +515,13 @@ extension Canvas {
         let sizeVector = size.vector
         if child.lastSize != sizeVector {
             child.lastSize = sizeVector
+            BackendCallStatistics.record("canvas.setSize")
             backend.setSize(of: widget, to: sizeVector)
         }
 
         if child.lastPosition != .zero {
             child.lastPosition = .zero
+            BackendCallStatistics.record("canvas.setPosition")
             backend.setPosition(ofChildAt: index, in: container, to: .zero)
         }
 
@@ -513,6 +531,7 @@ extension Canvas {
             child.lastStrokeStyle = .some(strokeStyle)
             child.lastStrokeColor = strokeColor
             child.lastFillColor = fillColor
+            BackendCallStatistics.record("canvas.renderPath")
             backend.renderPath(
                 backendPath,
                 container: widget,
@@ -574,6 +593,7 @@ extension Canvas {
             child.lastText = content
             child.lastFont = font
             child.lastTextColor = color
+            BackendCallStatistics.record("canvas.updateTextView")
             backend.updateTextView(
                 widget,
                 content: content,
@@ -598,6 +618,7 @@ extension Canvas {
         {
             measured = cached
         } else {
+            BackendCallStatistics.record("canvas.measureText")
             measured = backend.size(
                 of: content,
                 whenDisplayedIn: widget,
