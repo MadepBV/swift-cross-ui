@@ -78,6 +78,13 @@ final class WidgetPropertyCache {
         /// The accessibility metadata last written to a widget.
         var accessibility: BackendFeatures.AccessibilityProperties?
 
+        /// The tooltip text last written to a tooltip container.
+        var tooltip: String?
+
+        /// The keyboard shortcut last written to a shortcut target, and whether
+        /// it was enabled. `.some(nil)` means "no shortcut".
+        var keyboardShortcut: (shortcut: SwiftCrossUI.KeyboardShortcut?, isEnabled: Bool)?
+
         init(widget: WinUI.FrameworkElement) {
             self.widget = widget
         }

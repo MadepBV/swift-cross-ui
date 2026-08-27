@@ -179,21 +179,14 @@ public enum LayoutSystem {
         _ children: inout [LayoutableChild],
         using nodes: any ViewGraphNodeChildren
     ) {
-        // `LayoutableChild` already records its view type, so the flags can be
-        // derived without erasing every node (which allocates an array of
-        // closure-bearing wrappers per call).
-        for index in children.indices {
-            guard let viewType = children[index].viewType else {
-                // Fall back to erasing the nodes for children built through the
-                // public initialiser, which doesn't record a view type.
-                markGroupingContainersByErasingNodes(&children, using: nodes)
-                return
-            }
-            let isGroupingContainer = isGroupingContainer(viewType)
-            if children[index].isGroupingContainer != isGroupingContainer {
-                children[index].isGroupingContainer = isGroupingContainer
-            }
+        // A layoutable child built from a node already recorded whether its
+        // view type is a grouping container, computed from the very type this
+        // would look up again, so there is nothing to do unless some child was
+        // built through the public initialiser (which records no type).
+        guard children.contains(where: { $0.viewType == nil }) else {
+            return
         }
+        markGroupingContainersByErasingNodes(&children, using: nodes)
     }
 
     @MainActor

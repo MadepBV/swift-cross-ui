@@ -815,6 +815,14 @@ public final class WinUIBackend:
 
     public func updateTooltipContainer(_ widget: Widget, tooltip: String) {
         let widget = widget as! TooltipContainer
+        // `HelpView` commits this unconditionally, so a window full of
+        // `.help(_:)`-annotated views used to write one tooltip per view per
+        // commit for text that essentially never changes.
+        let entry = WidgetPropertyCache.shared.entry(for: widget)
+        guard entry.tooltip != tooltip else {
+            return
+        }
+        entry.tooltip = tooltip
         widget.tooltip.content = tooltip
     }
 

@@ -19,6 +19,19 @@ extension WinUIBackend {
         shortcut: SwiftCrossUI.KeyboardShortcut?,
         environment: EnvironmentValues
     ) {
+        // `KeyboardShortcutModifier` commits this unconditionally, and a
+        // shortcut essentially never changes, so the three property writes
+        // below are skipped when nothing about it moved.
+        let entry = WidgetPropertyCache.shared.entry(for: target)
+        let wanted = (shortcut: shortcut, isEnabled: environment.isEnabled)
+        if let applied = entry.keyboardShortcut,
+            applied.shortcut == wanted.shortcut,
+            applied.isEnabled == wanted.isEnabled
+        {
+            return
+        }
+        entry.keyboardShortcut = wanted
+
         let accelerator = KeyboardShortcutRegistry.shared.accelerator(for: target)
 
         guard
