@@ -31,6 +31,8 @@ import ImageFormats
 ///
 /// - `SCUI_HARNESS_PASSES`: number of measured passes per scenario (default 60).
 /// - `SCUI_HARNESS_SCENARIOS`: comma-separated subset of scenario names to run.
+/// - `SCUI_HARNESS_OUTPUT`: path to write the CSV to. Required on Windows,
+///   where a GUI-subsystem binary has no console and `stdout` is discarded.
 @main
 struct PerformanceHarness {
     static func main() {
@@ -118,7 +120,7 @@ struct PerformanceHarness {
             guard selected.isEmpty || selected.contains(name) else {
                 return
             }
-            FileHandle.standardError.write(Data("running \(name)\n".utf8))
+            log("running \(name)")
             results.append(
                 measure(scenario: name, passes: passes ?? passCount, setUp: setUp)
             )
@@ -262,42 +264,92 @@ struct PerformanceHarness {
         String(format: "%.4f", value)
     }
 
-    /// Prints the results as CSV.
+    /// Reports the results as CSV.
     ///
     /// The first line names the format so that a parser can be pinned to a
     /// version of these columns.
+    ///
+    /// ## Where the CSV goes
+    ///
+    /// A WinUI app is a GUI-subsystem binary with no console attached, so
+    /// `stdout` goes nowhere even when the parent process redirects it —
+    /// the run produces an empty file and no error. `stderr` still works.
+    ///
+    /// So the CSV is written to, in order:
+    ///
+    /// 1. the file named by `SCUI_HARNESS_OUTPUT`, if it is set;
+    /// 2. `stdout`, which is what a terminal run wants;
+    /// 3. `stderr`, always, wrapped in `BEGIN`/`END` markers so that a run
+    ///    with no console still reports and a parser can find it among the
+    ///    progress lines.
+    ///
+    /// On Windows, pass `SCUI_HARNESS_OUTPUT` and read the file; that is the
+    /// only sink guaranteed to survive.
     private static func report(_ results: [Result]) {
-        print("scui-harness-csv v1")
-        print(
+        var lines: [String] = ["scui-harness-csv v1"]
+        lines.append(
             "scenario,phase,passes,median_ms,mean_ms,p95_ms,min_ms,max_ms,"
                 + "committed_width,committed_height"
         )
         for result in results {
-            emit(result, phase: "layout", samples: result.layoutSamples)
-            emit(result, phase: "commit", samples: result.commitSamples)
-            emit(
-                result,
-                phase: "pass",
-                samples: zip(result.layoutSamples, result.commitSamples).map(+)
+            lines.append(row(result, phase: "layout", samples: result.layoutSamples))
+            lines.append(row(result, phase: "commit", samples: result.commitSamples))
+            lines.append(
+                row(
+                    result,
+                    phase: "pass",
+                    samples: zip(result.layoutSamples, result.commitSamples).map(+)
+                )
             )
         }
+
+        let csv = lines.joined(separator: "\n") + "\n"
+
+        if let path = ProcessInfo.processInfo.environment["SCUI_HARNESS_OUTPUT"],
+            !path.isEmpty
+        {
+            do {
+                try Data(csv.utf8).write(to: URL(fileURLWithPath: path))
+                log("wrote CSV to \(path)")
+            } catch {
+                log("failed to write CSV to \(path): \(error)")
+            }
+        } else {
+            print(csv, terminator: "")
+        }
+
+        // Always mirror to stderr: it is the sink that works when there is no
+        // console, and the markers keep it apart from the progress lines.
+        log("scui-harness-csv BEGIN")
+        FileHandle.standardError.write(Data(csv.utf8))
+        log("scui-harness-csv END")
     }
 
-    private static func emit(_ result: Result, phase: String, samples: [Double]) {
+    /// Writes a progress line to stderr.
+    ///
+    /// - Parameter message: The line to write, without a trailing newline.
+    private static func log(_ message: String) {
+        FileHandle.standardError.write(Data((message + "\n").utf8))
+    }
+
+    /// Formats one result row.
+    private static func row(
+        _ result: Result,
+        phase: String,
+        samples: [Double]
+    ) -> String {
         let mean = samples.isEmpty ? 0 : samples.reduce(0, +) / Double(samples.count)
-        print(
-            [
-                result.scenario,
-                phase,
-                "\(result.passes)",
-                format(percentile(samples, 0.5)),
-                format(mean),
-                format(percentile(samples, 0.95)),
-                format(samples.min() ?? 0),
-                format(samples.max() ?? 0),
-                "\(Int(result.committedSize.width))",
-                "\(Int(result.committedSize.height))",
-            ].joined(separator: ",")
-        )
+        return [
+            result.scenario,
+            phase,
+            "\(result.passes)",
+            format(percentile(samples, 0.5)),
+            format(mean),
+            format(percentile(samples, 0.95)),
+            format(samples.min() ?? 0),
+            format(samples.max() ?? 0),
+            "\(Int(result.committedSize.width))",
+            "\(Int(result.committedSize.height))",
+        ].joined(separator: ",")
     }
 }
