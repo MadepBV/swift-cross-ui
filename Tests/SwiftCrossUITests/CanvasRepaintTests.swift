@@ -10,11 +10,21 @@ import DummyBackend
 /// commit happens whenever anything in the window updates, not only when the
 /// drawing changed. Each of those applications is a backend call — a COM
 /// crossing on Windows — so the canvas skips the ones whose inputs are
-/// unchanged. These tests pin the other half of that bargain: every kind of
-/// change must still reach the backend.
+/// unchanged, and a canvas that declares its inputs skips the renderer as well.
+/// These tests pin the other half of that bargain: every kind of change must
+/// still reach the backend.
 @Suite("Testing for Canvas repainting")
 @MainActor
 struct CanvasRepaintTests {
+    /// A mutable value that a renderer or a view builder can capture.
+    final class Box<Value> {
+        var value: Value
+
+        init(_ value: Value) {
+            self.value = value
+        }
+    }
+
     /// Drives a canvas through ``DummyBackend`` so that its backend calls can
     /// be counted.
     @MainActor
@@ -22,14 +32,41 @@ struct CanvasRepaintTests {
         let backend: DummyBackend
         let environment: EnvironmentValues
         let node: ViewGraphNode<VStack<TupleView1<Canvas>>, DummyBackend>
+        /// How many times the canvas' renderer has run.
+        let rendererRuns = Box(0)
 
-        /// Creates a harness for a canvas built by `makeCanvas`.
+        /// Rebuilds the canvas for each pass, so that a test can change what
+        /// the view value carries between passes.
+        private let makeCanvas: () -> Canvas
+
+        /// Creates a harness for a canvas with the given renderer.
+        ///
+        /// - Parameter renderer: The canvas' drawing closure.
+        convenience init(renderer: @escaping Canvas.Renderer) {
+            self.init(makeCanvas: { Canvas(renderer: $0) }, renderer: renderer)
+        }
+
+        /// Creates a harness whose canvas is rebuilt by `makeCanvas` on every
+        /// pass, so that a test can pick which `Canvas` initialiser is under
+        /// test and vary what it carries.
         ///
         /// The canvas is wrapped in a stack because a view's body is laid out
         /// as if it were a `VStack`, which needs `TupleView` content.
         ///
-        /// - Parameter renderer: The canvas' drawing closure.
-        init(renderer: @escaping Canvas.Renderer) {
+        /// - Parameters:
+        ///   - makeCanvas: Builds the canvas from a renderer.
+        ///   - renderer: The canvas' drawing closure.
+        init(
+            makeCanvas: @escaping (@escaping Canvas.Renderer) -> Canvas,
+            renderer: @escaping Canvas.Renderer
+        ) {
+            let runs = rendererRuns
+            let countingRenderer: Canvas.Renderer = { context, size in
+                runs.value += 1
+                renderer(&context, size)
+            }
+            self.makeCanvas = { makeCanvas(countingRenderer) }
+
             backend = DummyBackend()
             environment = backend
                 .computeRootEnvironment(
@@ -40,7 +77,7 @@ struct CanvasRepaintTests {
                     backend.createWindow(withDefaultSize: nil, id: "window")
                 )
             node = ViewGraphNode(
-                for: VStack(content: TupleView1(Canvas(renderer: renderer))),
+                for: VStack(content: TupleView1(makeCanvas(countingRenderer))),
                 backend: backend,
                 snapshot: nil,
                 environment: environment
@@ -55,20 +92,12 @@ struct CanvasRepaintTests {
         func pass() -> [String: Int] {
             backend.resetCallCounts()
             _ = node.computeLayout(
+                with: VStack(content: TupleView1(makeCanvas())),
                 proposedSize: ProposedViewSize(100, 50),
                 environment: environment
             )
             _ = node.commit()
             return backend.callCounts
-        }
-    }
-
-    /// A renderer input that a test can change between passes.
-    final class Box<Value> {
-        var value: Value
-
-        init(_ value: Value) {
-            self.value = value
         }
     }
 
@@ -151,5 +180,53 @@ struct CanvasRepaintTests {
         label.value = "second"
         let afterChange = harness.pass()
         #expect(afterChange["updateTextView", default: 0] >= 1)
+    }
+
+    @Test("A canvas that declares its inputs skips an unchanged drawing entirely")
+    func declaredInputsSkipTheRenderer() {
+        let inputs = Box(0.0)
+        let harness = Harness(
+            makeCanvas: { renderer in
+                Canvas(inputs: inputs.value, renderer: renderer)
+            },
+            renderer: { context, _ in
+                context.fill(Self.rectangle(x: inputs.value), with: .color(.red))
+            }
+        )
+
+        harness.pass()
+        let runsAfterFirstPass = harness.rendererRuns.value
+        #expect(runsAfterFirstPass >= 1)
+
+        harness.pass()
+        let third = harness.pass()
+
+        // Nothing the drawing depends on moved, so the renderer must not run
+        // again and no drawing widget may be touched.
+        #expect(harness.rendererRuns.value == runsAfterFirstPass)
+        #expect(third["updatePath", default: 0] == 0)
+        #expect(third["renderPath", default: 0] == 0)
+    }
+
+    @Test("A canvas redraws when its declared inputs change")
+    func declaredInputsRedrawOnChange() {
+        let inputs = Box(0.0)
+        let harness = Harness(
+            makeCanvas: { renderer in
+                Canvas(inputs: inputs.value, renderer: renderer)
+            },
+            renderer: { context, _ in
+                context.fill(Self.rectangle(x: inputs.value), with: .color(.red))
+            }
+        )
+
+        harness.pass()
+        harness.pass()
+        let runsWhileUnchanged = harness.rendererRuns.value
+
+        inputs.value = 30.0
+        let afterChange = harness.pass()
+        #expect(harness.rendererRuns.value > runsWhileUnchanged)
+        #expect(afterChange["updatePath", default: 0] == 1)
     }
 }

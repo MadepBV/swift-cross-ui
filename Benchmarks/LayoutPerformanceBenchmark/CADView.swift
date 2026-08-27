@@ -241,26 +241,56 @@ struct DraftingOverlayView: TestCaseView {
         // content; a body that is a bare `Canvas` lays out to zero.
         return VStack(spacing: 0) {
             Canvas { context, size in
-                for index in 0..<200 {
-                    let t = Double(index) / 200.0
-                    let x = t * size.width
-                    let y = (0.5 + 0.4 * Foundation.sin(t * 12 + phase)) * size.height
-                    var path = Path()
-                    path = path.addRectangle(
-                        Path.Rect(x: x, y: y, width: 6, height: 6)
-                    )
-                    context.fill(path, with: .color(.blue))
-                    context.stroke(path, with: .color(.black), lineWidth: 1)
-                }
-                for index in 0..<40 {
-                    context.draw(
-                        Text("d\(index)"),
-                        at: CGPoint(
-                            x: Double(index) * 18,
-                            y: 12
-                        )
-                    )
-                }
+                DraftingOverlayView.draw(into: &context, size: size, phase: phase)
+            }
+        }
+    }
+
+    /// Issues the overlay's drawing commands.
+    static func draw(
+        into context: inout GraphicsContext,
+        size: CGSize,
+        phase: Double
+    ) {
+        for index in 0..<200 {
+            let t = Double(index) / 200.0
+            let x = t * size.width
+            let y = (0.5 + 0.4 * Foundation.sin(t * 12 + phase)) * size.height
+            var path = Path()
+            path = path.addRectangle(
+                Path.Rect(x: x, y: y, width: 6, height: 6)
+            )
+            context.fill(path, with: .color(.blue))
+            context.stroke(path, with: .color(.black), lineWidth: 1)
+        }
+        for index in 0..<40 {
+            context.draw(
+                Text("d\(index)"),
+                at: CGPoint(x: Double(index) * 18, y: 12)
+            )
+        }
+    }
+}
+
+/// The same drafting overlay, but declaring what its drawing depends on so that
+/// the canvas can skip the renderer while nothing has moved.
+struct DeclaredDraftingOverlayView: TestCaseView {
+    var phase: Double = 0
+
+    init() {
+        self.init(phase: 0)
+    }
+
+    init(phase: Double) {
+        self.phase = phase
+    }
+
+    var body: some View {
+        BodyCounter.record()
+        let phase = phase
+        return VStack(spacing: 0) {
+            Canvas(inputs: phase) { context, size in
+                DraftingOverlayView.draw(into: &context, size: size, phase: phase)
             }
         }
     }

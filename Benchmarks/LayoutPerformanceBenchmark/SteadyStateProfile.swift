@@ -175,6 +175,14 @@ enum SteadyStateProfile {
             }
         )
 
+        // The same overlay, but declaring its inputs so that the canvas can
+        // skip the renderer entirely while nothing has moved.
+        results.append(
+            measure(label: "canvas/declared", passes: max(passes / 2, 5), backend: backend) {
+                steadyPass { DeclaredDraftingOverlayView(phase: 0) }
+            }
+        )
+
         report(results)
     }
 

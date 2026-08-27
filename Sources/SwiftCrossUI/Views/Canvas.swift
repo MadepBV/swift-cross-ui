@@ -85,6 +85,13 @@ public struct Canvas: View {
     /// The closure that draws the canvas' content.
     let renderer: Renderer
 
+    /// Everything the drawing depends on, when the canvas declares it.
+    ///
+    /// `nil` means the canvas hasn't declared its inputs, in which case the
+    /// renderer has to run on every commit because there's no way to know that
+    /// it would draw the same thing.
+    let inputs: (any Equatable)?
+
     public var body = EmptyView()
 
     /// Creates a canvas that draws itself with the given closure.
@@ -93,6 +100,44 @@ public struct Canvas: View {
     ///   on every layout commit; see the type's documentation.
     public init(renderer: @escaping Renderer) {
         self.renderer = renderer
+        self.inputs = nil
+    }
+
+    /// Creates a canvas that redraws only when its inputs change.
+    ///
+    /// A canvas normally re-runs its renderer on every commit, and a commit
+    /// happens whenever anything in the window updates — not only when the
+    /// drawing changed. For a renderer that walks a model to issue hundreds of
+    /// commands, that is the dominant cost of having the canvas on screen at
+    /// all.
+    ///
+    /// Declaring the inputs lets the canvas skip the renderer, the command
+    /// recording and the widget reconciliation entirely while they, the
+    /// canvas' size, and the font and foreground colour it inherits are all
+    /// unchanged:
+    ///
+    /// ```swift
+    /// Canvas(inputs: DrawingInputs(selection: selection, zoom: zoom)) { context, size in
+    ///     // ...
+    /// }
+    /// ```
+    ///
+    /// - Important: `inputs` must cover everything the renderer reads. Anything
+    ///   left out will not be redrawn when it changes. Reference types are
+    ///   compared by whatever `Equatable` conformance they have, so a mutable
+    ///   model object is only a valid input if its identity is genuinely what
+    ///   the drawing depends on.
+    ///
+    /// - Parameters:
+    ///   - inputs: Everything the renderer reads, in a value that changes
+    ///     whenever the drawing should.
+    ///   - renderer: The closure that issues drawing commands.
+    public init<Inputs: Equatable>(
+        inputs: Inputs,
+        renderer: @escaping Renderer
+    ) {
+        self.renderer = renderer
+        self.inputs = inputs
     }
 
     public func children<Backend: BaseAppBackend>(
@@ -220,6 +265,27 @@ extension Canvas {
                     backend: backend
                 )
             }
+        }
+
+        // A canvas that has declared its inputs can skip the renderer, the
+        // recording and the reconciliation below while nothing it draws from
+        // has moved. See `init(inputs:renderer:)`.
+        let font = environment.resolvedFont
+        let foregroundColor = environment.suggestedForegroundColor
+            .resolve(in: environment)
+        if let inputs {
+            if let recorded = storage.recordedInputs,
+                Canvas.areEquivalent(recorded, inputs),
+                storage.recordedSize == size,
+                storage.recordedFont == font,
+                storage.recordedForegroundColor == foregroundColor
+            {
+                return
+            }
+            storage.recordedInputs = inputs
+            storage.recordedSize = size
+            storage.recordedFont = font
+            storage.recordedForegroundColor = foregroundColor
         }
 
         let commands = record(
@@ -618,6 +684,23 @@ extension Canvas {
         return CGSize(width: Double(size.x), height: Double(size.y))
     }
 
+    /// Compares two values whose `Equatable` conformances are only known at
+    /// runtime.
+    ///
+    /// - Parameters:
+    ///   - lhs: The recorded inputs.
+    ///   - rhs: The current inputs.
+    /// - Returns: Whether they're the same value of the same type.
+    private static func areEquivalent(_ lhs: any Equatable, _ rhs: any Equatable) -> Bool {
+        func compare<T: Equatable>(_ lhs: T) -> Bool {
+            guard let rhs = rhs as? T else {
+                return false
+            }
+            return lhs == rhs
+        }
+        return compare(lhs)
+    }
+
     /// Converts a layout dimension into a proposal for a backend text view.
     ///
     /// - Parameter value: The dimension.
@@ -692,4 +775,14 @@ final class CanvasStorage: ViewGraphNodeChildren {
 
     /// A text view kept around solely to measure text with.
     var measurementWidget: Any?
+
+    /// The inputs the current drawing was recorded for, for a canvas that has
+    /// declared them.
+    var recordedInputs: (any Equatable)?
+    /// The size the current drawing was recorded at.
+    var recordedSize: ViewSize?
+    /// The font the current drawing was recorded with.
+    var recordedFont: Font.Resolved?
+    /// The foreground colour the current drawing was recorded with.
+    var recordedForegroundColor: Color.Resolved?
 }
