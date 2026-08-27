@@ -1957,23 +1957,121 @@ public final class WinUIBackend:
         path.strokeStyle = source.strokeStyle
 
         if pointsChanged {
-            path.group.children.clear()
-            applyActions(source.actions, to: path.group.children)
+            updateGeometry(of: path, to: source.actions)
         }
 
-        path.group.fillRule =
-            switch source.fillRule {
-                case .evenOdd:
-                    .evenOdd
-                case .winding:
-                    .nonzero
-            }
+        // Writing the fill rule is a COM call, and it essentially never changes.
+        if path.appliedFillRule != source.fillRule {
+            path.appliedFillRule = source.fillRule
+            path.group.fillRule =
+                switch source.fillRule {
+                    case .evenOdd:
+                        .evenOdd
+                    case .winding:
+                        .nonzero
+                }
+        }
     }
 
+    /// Brings a path's WinRT geometry up to date with a new set of actions.
+    ///
+    /// Rebuilding the geometry means activating a WinRT object per segment and
+    /// appending it, then walking the collection again to drop empty figures —
+    /// every one of those a COM crossing. An overlay that animates redraws the
+    /// *same shape with moved points* on every pointer sample, so the objects
+    /// already there are the right ones; only their coordinates are stale.
+    ///
+    /// This updates them in place when the new actions have the same kinds in
+    /// the same order as the ones the tree was built from, which is what makes
+    /// the tree's shape identical, and rebuilds otherwise.
+    private func updateGeometry(
+        of path: GeometryGroupHolder,
+        to actions: [SwiftCrossUI.Path.Action]
+    ) {
+        // An identical path is a no-op. `Canvas` already diffs its actions
+        // before calling, but `Shape` and symbol rendering don't.
+        if path.appliedActions == actions, !path.appliedActions.isEmpty {
+            return
+        }
+
+        if reconcileGeometry(of: path, to: actions) {
+            path.appliedActions = actions
+            return
+        }
+
+        path.group.children.clear()
+        let recorder = PathReconciliation.canReconcile(actions)
+            ? PathTargetRecorder()
+            : nil
+        applyActions(actions, to: path.group.children, recorder: recorder)
+        path.appliedActions = actions
+        path.actionTargets = recorder?.targets ?? []
+    }
+
+    /// Updates a path's existing WinRT objects in place.
+    ///
+    /// - Returns: Whether it could. `false` means the tree has to be rebuilt.
+    private func reconcileGeometry(
+        of path: GeometryGroupHolder,
+        to actions: [SwiftCrossUI.Path.Action]
+    ) -> Bool {
+        let previous = path.appliedActions
+        guard
+            !actions.isEmpty,
+            path.actionTargets.count == actions.count,
+            previous.count == actions.count,
+            PathReconciliation.haveSameShape(previous, actions)
+        else {
+            return false
+        }
+
+        // Mirrors the point bookkeeping in `applyActions`, because a figure's
+        // start point comes from wherever the previous action left off: a
+        // segment whose own coordinates are unchanged may still need its
+        // figure's start point rewritten.
+        var previousLastPoint = SIMD2<Double>(0.0, 0.0)
+        var newLastPoint = SIMD2<Double>(0.0, 0.0)
+
+        for index in actions.indices {
+            let old = previous[index]
+            let new = actions[index]
+            let incomingPointMoved = previousLastPoint != newLastPoint
+
+            guard
+                PathGeometryReconciler.apply(
+                    new,
+                    changed: old != new,
+                    incomingPoint: Point(
+                        x: Float(newLastPoint.x),
+                        y: Float(newLastPoint.y)
+                    ),
+                    incomingPointMoved: incomingPointMoved,
+                    to: path.actionTargets[index]
+                )
+            else {
+                return false
+            }
+
+            previousLastPoint = PathReconciliation.endPoint(
+                after: old,
+                current: previousLastPoint
+            )
+            newLastPoint = PathReconciliation.endPoint(
+                after: new,
+                current: newLastPoint
+            )
+        }
+
+        return true
+    }
+
+    /// - Returns: The figure to append segments to, and whether it had to be
+    ///   created — in which case its start point came from `lastPoint`, which
+    ///   an in-place update has to rewrite when that point moves.
     func requirePathFigure(
         _ collection: WinUI.GeometryCollection,
         lastPoint: Point
-    ) -> PathFigure {
+    ) -> (figure: PathFigure, wasCreated: Bool) {
         var pathGeometry: PathGeometry
         if collection.size > 0,
            let castedLast = collection.getAt(collection.size - 1) as? PathGeometry
@@ -1990,17 +2088,23 @@ public final class WinUIBackend:
             // here because PathFigureCollection uses unsigned integers for its indices so
             // `size - 1` would underflow (causing a fatalError) if it's empty.
             figure = pathGeometry.figures.getAt(pathGeometry.figures.size - 1)!
+            return (figure, false)
         } else {
             figure = PathFigure()
             figure.startPoint = lastPoint
             pathGeometry.figures.append(figure)
+            return (figure, true)
         }
-
-        return figure
     }
 
-    func applyActions(_ actions: [SwiftCrossUI.Path.Action], to geometry: WinUI.GeometryCollection)
-    {
+    /// - Parameter recorder: Collects the object each action wrote into, so
+    ///   that a later upload of the same shape can update them in place. Pass
+    ///   `nil` when the shape isn't one ``PathGeometryReconciler`` handles.
+    func applyActions(
+        _ actions: [SwiftCrossUI.Path.Action],
+        to geometry: WinUI.GeometryCollection,
+        recorder: PathTargetRecorder? = nil
+    ) {
         var lastPoint = Point(x: 0.0, y: 0.0)
 
         for action in actions {
@@ -2017,43 +2121,67 @@ public final class WinUIBackend:
                             let newFigure = PathFigure()
                             newFigure.startPoint = lastPoint
                             pathGeometry.figures.append(newFigure)
+                            recorder?.record(.figureStart(newFigure))
                         } else {
                             figure.startPoint = lastPoint
+                            recorder?.record(.figureStart(figure))
                         }
+                    } else {
+                        // Nothing to move yet; the point is carried into the
+                        // figure that the next drawing action creates.
+                        recorder?.record(.none)
                     }
                 case .lineTo(let point):
                     let wfPoint = Point(x: Float(point.x), y: Float(point.y))
                     defer { lastPoint = wfPoint }
 
-                    let figure = requirePathFigure(geometry, lastPoint: lastPoint)
+                    let (figure, startedFigure) = requirePathFigure(
+                        geometry,
+                        lastPoint: lastPoint
+                    )
 
                     let segment = LineSegment()
                     segment.point = wfPoint
                     figure.segments.append(segment)
+                    recorder?.record(
+                        .line(segment, startedFigure: startedFigure ? figure : nil)
+                    )
                 case .quadCurve(let control, let end):
                     let wfControl = Point(x: Float(control.x), y: Float(control.y))
                     let wfEnd = Point(x: Float(end.x), y: Float(end.y))
                     defer { lastPoint = wfEnd }
 
-                    let figure = requirePathFigure(geometry, lastPoint: lastPoint)
+                    let (figure, startedFigure) = requirePathFigure(
+                        geometry,
+                        lastPoint: lastPoint
+                    )
 
                     let segment = QuadraticBezierSegment()
                     segment.point1 = wfControl
                     segment.point2 = wfEnd
                     figure.segments.append(segment)
+                    recorder?.record(
+                        .quad(segment, startedFigure: startedFigure ? figure : nil)
+                    )
                 case .cubicCurve(let control1, let control2, let end):
                     let wfControl1 = Point(x: Float(control1.x), y: Float(control1.y))
                     let wfControl2 = Point(x: Float(control2.x), y: Float(control2.y))
                     let wfEnd = Point(x: Float(end.x), y: Float(end.y))
                     defer { lastPoint = wfEnd }
 
-                    let figure = requirePathFigure(geometry, lastPoint: lastPoint)
+                    let (figure, startedFigure) = requirePathFigure(
+                        geometry,
+                        lastPoint: lastPoint
+                    )
 
                     let segment = BezierSegment()
                     segment.point1 = wfControl1
                     segment.point2 = wfControl2
                     segment.point3 = wfEnd
                     figure.segments.append(segment)
+                    recorder?.record(
+                        .cubic(segment, startedFigure: startedFigure ? figure : nil)
+                    )
                 case .rectangle(let rect):
                     let rectGeo = RectangleGeometry()
                     rectGeo.rect = Rect(
@@ -2063,12 +2191,14 @@ public final class WinUIBackend:
                         height: Float(rect.height)
                     )
                     geometry.append(rectGeo)
+                    recorder?.record(.rectangle(rectGeo))
                 case .circle(let center, let radius):
                     let ellipse = EllipseGeometry()
                     ellipse.radiusX = radius
                     ellipse.radiusY = radius
                     ellipse.center = Point(x: Float(center.x), y: Float(center.y))
                     geometry.append(ellipse)
+                    recorder?.record(.ellipse(ellipse))
                 case .arc(
                 let center,
                 let radius,
@@ -2086,7 +2216,11 @@ public final class WinUIBackend:
                     )
                     defer { lastPoint = endPoint }
 
-                    let figure = requirePathFigure(geometry, lastPoint: lastPoint)
+                    let (figure, _) = requirePathFigure(geometry, lastPoint: lastPoint)
+                    // Whether an arc needs a connecting line depends on where
+                    // the previous action left off, so moving a point can change
+                    // the structure. Not reconciled; see `canReconcile`.
+                    recorder?.record(.unsupported)
 
                     if startPoint != lastPoint {
                         if figure.segments.size > 0 {
@@ -2151,10 +2285,12 @@ public final class WinUIBackend:
                         // Start a new PathGeometry so that transforms don't apply going forward
                         geometry.append(PathGeometry())
                     }
+                    recorder?.record(.unsupported)
                 case .subpath(let actions):
                     let subGeo = GeometryGroup()
                     applyActions(actions, to: subGeo.children)
                     geometry.append(subGeo)
+                    recorder?.record(.unsupported)
             }
         }
 
@@ -2680,6 +2816,23 @@ public class CustomWindow: WinUI.Window {
 public final class GeometryGroupHolder {
     var group = GeometryGroup()
     var strokeStyle: StrokeStyle?
+
+    /// The actions the WinRT geometry currently represents.
+    ///
+    /// Compared against the next upload so that an unchanged path costs
+    /// nothing, and so that an upload of the same shape with moved points can
+    /// be reconciled rather than rebuilt.
+    var appliedActions: [SwiftCrossUI.Path.Action] = []
+
+    /// The object each applied action wrote into, index-aligned with
+    /// ``appliedActions``.
+    ///
+    /// Empty when the geometry was built from a path that
+    /// ``PathGeometryReconciler`` doesn't handle, which forces a rebuild.
+    var actionTargets: [PathActionTarget] = []
+
+    /// The fill rule currently applied, so that it isn't rewritten every time.
+    var appliedFillRule: SwiftCrossUI.Path.FillRule?
 }
 
 /// Keeps the composition clip behind each rounded element so that the clip

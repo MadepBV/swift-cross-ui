@@ -3,7 +3,7 @@ import Foundation // for sin and cos
 // ``StrokeCap``, ``StrokeJoin`` and ``StrokeStyle`` live in `StrokeStyle.swift`.
 
 /// An enum describing how a path is shaded.
-public enum FillRule: Sendable {
+public enum FillRule: Hashable, Sendable {
     /// A region is shaded if it is enclosed an odd number of times.
     case evenOdd
     /// A region is shaded if it is enclosed at all.
