@@ -210,7 +210,60 @@ enum SteadyStateProfile {
             }
         )
 
+        reportEnvironmentCosts(environment: environment)
+
         report(results)
+    }
+
+    /// Times the two things done to an `EnvironmentValues` in the layout path,
+    /// so that a change to how it is stored can be judged rather than guessed.
+    ///
+    /// A copy happens when the value is stored (a node keeps its parent's
+    /// environment); a mutation happens whenever a container derives a child
+    /// environment. Swift passes parameters `@guaranteed`, so merely passing an
+    /// environment down does neither.
+    private static func reportEnvironmentCosts(environment: EnvironmentValues) {
+        let iterations = 200_000
+
+        /// Keeps a value alive so that the optimiser can't discard the work.
+        final class Sink {
+            var environment: EnvironmentValues?
+        }
+        let sink = Sink()
+
+        func time(_ label: String, _ body: () -> Void) {
+            // Warm up.
+            for _ in 0..<(iterations / 10) { body() }
+            let start = DispatchTime.now().uptimeNanoseconds
+            for _ in 0..<iterations { body() }
+            let end = DispatchTime.now().uptimeNanoseconds
+            let nanoseconds = Double(end - start) / Double(iterations)
+            let padded =
+                label.count >= 30
+                ? label
+                : label + String(repeating: " ", count: 30 - label.count)
+            print("  " + padded + String(format: "%7.1f ns", nanoseconds))
+        }
+
+        print("")
+        print("EnvironmentValues, per operation")
+        print(String(repeating: "-", count: 46))
+        time("copy (store)") {
+            sink.environment = environment
+        }
+        time("with, stored property") {
+            sink.environment = environment.with(\.layoutSpacing, 4)
+        }
+        time("with, extensible storage") {
+            sink.environment = environment.with(\.isTextSelectionEnabled, true)
+        }
+        time("with x3, stored properties") {
+            sink.environment =
+                environment
+                .with(\.layoutOrientation, .vertical)
+                .with(\.layoutAlignment, .center)
+                .with(\.layoutSpacing, 4)
+        }
     }
 
     /// How many measured passes to run. Overridable so that a noisy machine can
