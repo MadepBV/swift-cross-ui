@@ -217,6 +217,16 @@ struct AccessibilityView<Child: View>: TypeSafeView {
         // Accessibility is an optional backend feature. Rather than trapping
         // on a backend that doesn't implement it (as `@CastBackend` would),
         // we simply don't expose any metadata.
+        //
+        // Whether a backend supports it is a property of its type, and this
+        // runs on every commit of every accessibility-annotated view, so the
+        // answer is memoised: a backend that doesn't consume accessibility
+        // costs a dictionary lookup here rather than a cast to a composed
+        // existential. WP-014 scoped assistive-technology fidelity out of this
+        // port, so that is the case that matters.
+        guard AccessibilitySupport.isSupported(by: Backend.self) else {
+            return
+        }
         guard
             let backend = backend as? any BaseAppBackend
                 & BackendFeatures.Accessibility
@@ -266,11 +276,54 @@ extension AccessibilityView: AccessibilityPropertyProvider {
     var accumulatedAccessibilityProperties:
         BackendFeatures.AccessibilityProperties
     {
+        // Whether the child is itself an accessibility modifier is a property
+        // of its type, and nesting them is the exception, so the check is
+        // memoised rather than casting to an existential on every commit.
+        guard AccessibilitySupport.wrapsProvider(Child.self) else {
+            return properties
+        }
         guard
             let inner = body.view0 as? any AccessibilityPropertyProvider
         else {
             return properties
         }
         return inner.accumulatedAccessibilityProperties.merging(properties)
+    }
+}
+
+/// Answers, once per type, the two conformance questions that accessibility
+/// asks on every commit.
+@MainActor
+enum AccessibilitySupport {
+    private static var backendSupport: [ObjectIdentifier: Bool] = [:]
+    private static var providerChildren: [ObjectIdentifier: Bool] = [:]
+
+    /// Whether a backend consumes accessibility metadata.
+    ///
+    /// - Parameter type: The backend's type.
+    /// - Returns: Whether it implements ``BackendFeatures/Accessibility``.
+    static func isSupported(by type: any BaseAppBackend.Type) -> Bool {
+        let key = ObjectIdentifier(type)
+        if let cached = backendSupport[key] {
+            return cached
+        }
+        let isSupported = type is any BackendFeatures.Accessibility.Type
+        backendSupport[key] = isSupported
+        return isSupported
+    }
+
+    /// Whether a view is itself an accessibility modifier, and so contributes
+    /// properties to the modifier wrapping it.
+    ///
+    /// - Parameter type: The view's type.
+    /// - Returns: Whether it provides accessibility properties.
+    static func wrapsProvider(_ type: any View.Type) -> Bool {
+        let key = ObjectIdentifier(type)
+        if let cached = providerChildren[key] {
+            return cached
+        }
+        let isProvider = type is any AccessibilityPropertyProvider.Type
+        providerChildren[key] = isProvider
+        return isProvider
     }
 }

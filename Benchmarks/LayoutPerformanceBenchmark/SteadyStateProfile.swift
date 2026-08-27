@@ -199,6 +199,17 @@ enum SteadyStateProfile {
             }
         )
 
+        // Rows carrying accessibility metadata on a backend that doesn't
+        // consume it, which is the case WP-014 scoped this port to.
+        results.append(
+            measure(label: "a11y/idle", passes: max(passes / 4, 5), backend: backend) {
+                steadyPass(
+                    { AccessibleListView() },
+                    proposedSize: { ProposedViewSize(800, nil) }
+                )
+            }
+        )
+
         report(results)
     }
 

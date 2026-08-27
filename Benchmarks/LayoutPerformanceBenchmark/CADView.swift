@@ -368,3 +368,23 @@ struct ExpensiveBodyView: TestCaseView {
         }
     }
 }
+
+/// A list whose rows carry accessibility metadata, as the app's do at 806 call
+/// sites, on a backend that doesn't consume it.
+struct AccessibleListView: TestCaseView {
+    var body: some View {
+        BodyCounter.record()
+        return VStack(alignment: .leading, spacing: 1) {
+            ForEach(Array(0..<400)) { index in
+                PropertyRow(
+                    name: CADView.propertyNames[index % CADView.propertyNames.count],
+                    value: CADView.propertyValues[index % CADView.propertyValues.count],
+                    highlighted: false
+                )
+                .accessibilityLabel("Bar \(index)")
+                .accessibilityHint("Selects the bar")
+                .accessibilityIdentifier("bar-\(index)")
+            }
+        }
+    }
+}
