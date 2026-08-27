@@ -98,6 +98,12 @@ public struct GeometryReader<Content: View>: TypeSafeView, View {
             backend.insert(contentNode.widget.into(), into: container, at: 0)
         }
 
+        // Unlike every other container, a geometry reader's content genuinely
+        // differs between the layout system's probes, because it is built from
+        // the size being proposed. Say so, or the node would keep the body it
+        // evaluated for the first probe.
+        contentNode.invalidateCachedBody()
+
         let contentResult = contentNode.computeLayout(
             with: view,
             proposedSize: ProposedViewSize(size),

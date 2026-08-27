@@ -98,6 +98,10 @@ struct PerformanceHarness {
             _ = node.commit()
             return Pass(
                 layout: {
+                    // A scene begins a pass whenever it enters the graph; this
+                    // driver stands in for one, so it has to do the same or it
+                    // would measure a body cache that a real app never gets.
+                    LayoutPass.begin()
                     _ = node.computeLayout(
                         with: makeView(),
                         proposedSize: proposedSize(),

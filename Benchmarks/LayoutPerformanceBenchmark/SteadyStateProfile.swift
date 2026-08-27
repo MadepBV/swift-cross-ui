@@ -81,6 +81,10 @@ enum SteadyStateProfile {
             _ = node.commit()
             return Pass(
                 layout: {
+                    // A scene begins a pass whenever it enters the graph; this
+                    // driver stands in for one, so it has to do the same or it
+                    // would measure a body cache that a real app never gets.
+                    LayoutPass.begin()
                     _ = node.computeLayout(
                         with: makeView(),
                         proposedSize: proposedSize(),
@@ -180,6 +184,18 @@ enum SteadyStateProfile {
         results.append(
             measure(label: "canvas/declared", passes: max(passes / 2, 5), backend: backend) {
                 steadyPass { DeclaredDraftingOverlayView(phase: 0) }
+            }
+        )
+
+        // Bodies that actually do something, so that evaluating a body more
+        // than once per pass shows up in the timings rather than hiding behind
+        // trivial view construction.
+        results.append(
+            measure(label: "bodies/idle", passes: max(passes / 4, 5), backend: backend) {
+                steadyPass(
+                    { ExpensiveBodyView(revision: 1) },
+                    proposedSize: { ProposedViewSize(800, nil) }
+                )
             }
         )
 

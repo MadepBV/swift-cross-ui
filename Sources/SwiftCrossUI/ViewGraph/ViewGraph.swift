@@ -63,6 +63,11 @@ public class ViewGraph<Root: View> {
         proposedSize: ProposedViewSize,
         environment: EnvironmentValues
     ) -> ViewLayoutResult {
+        // Entering the graph from outside starts a new pass, which is what
+        // tells every node that the body it evaluated last time may have been
+        // evaluated under a different environment. See ``LayoutPass``.
+        LayoutPass.begin()
+
         parentEnvironment = environment
         latestProposal = proposedSize
 

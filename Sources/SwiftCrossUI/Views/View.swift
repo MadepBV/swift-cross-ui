@@ -235,6 +235,13 @@ extension View {
         )
     }
 
+    /// The default `View.commit` implementation.
+    ///
+    /// Uses the body evaluated during this pass's layout rather than
+    /// evaluating it again. The body is only needed to reach the children's
+    /// nodes — a layoutable child's commit closure never reads the view value
+    /// — so re-running user code here produced nothing that wasn't already to
+    /// hand, once per composite view per commit, all the way down the tree.
     public func defaultCommit<Backend: BaseAppBackend>(
         _ widget: Backend.Widget,
         children: any ViewGraphNodeChildren,
@@ -242,7 +249,7 @@ extension View {
         environment: EnvironmentValues,
         backend: Backend
     ) {
-        let vStack = VStack(content: body)
+        let vStack = VStack(content: ViewObservationTracking.body(of: self))
         return vStack.commit(
             widget,
             children: children,

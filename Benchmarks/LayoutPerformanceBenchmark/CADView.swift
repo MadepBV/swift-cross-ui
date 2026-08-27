@@ -295,3 +295,76 @@ struct DeclaredDraftingOverlayView: TestCaseView {
         }
     }
 }
+
+/// Counts how much user body code has actually run.
+///
+/// The other scenes have trivial bodies, which hides the cost of evaluating a
+/// body more than once per pass. A CAD app's bodies are not trivial: they
+/// format quantities, filter model collections and build derived structures, so
+/// this scene's body does a measurable amount of work and reports how much.
+@MainActor
+enum BodyWorkCounter {
+    static var units = 0
+
+    static func reset() {
+        units = 0
+    }
+}
+
+/// A row whose body does the sort of work a real inspector row does: formatting
+/// numbers and building strings from a model.
+struct ExpensiveRow: View {
+    var index: Int
+    var revision: Int
+
+    var body: some View {
+        BodyCounter.record()
+
+        // Stands in for what a real inspector row's body does: look a few
+        // quantities up and format them. String interpolation dominates, as it
+        // does in the app.
+        var accumulator = 0
+        var parts: [String] = []
+        parts.reserveCapacity(6)
+        for step in 0..<6 {
+            accumulator &+= (index &* 2_654_435_761 &+ step &* revision) & 0xffff
+            parts.append("\(accumulator % 1000)")
+        }
+        BodyWorkCounter.units += 6
+
+        let label = "Bar \(index) \(parts[0])/\(parts[1])"
+        let value = "\(parts[2])x\(parts[3]) \(parts[4])mm \(parts[5])kg"
+
+        return HStack(spacing: 4) {
+            Text(label)
+                .foregroundColor(.gray)
+            Text(value)
+                .foregroundColor(.black)
+        }
+        .padding(2)
+    }
+}
+
+/// A panel of rows whose bodies do real work, so that the number of times the
+/// framework evaluates a body is visible in the timings.
+struct ExpensiveBodyView: TestCaseView {
+    var revision: Int = 1
+
+    init() {
+        self.init(revision: 1)
+    }
+
+    init(revision: Int) {
+        self.revision = revision
+    }
+
+    var body: some View {
+        BodyCounter.record()
+        let revision = revision
+        return VStack(alignment: .leading, spacing: 1) {
+            ForEach(Array(0..<300)) { index in
+                ExpensiveRow(index: index, revision: revision)
+            }
+        }
+    }
+}

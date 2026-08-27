@@ -76,6 +76,33 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
     /// property reads. See ``ViewObservationTracking`` for why that matters.
     private var isLeaf = false
 
+    /// The body evaluated for this update pass, if one has been.
+    ///
+    /// Type-erased because the node can only hand it back through
+    /// ``ObservationTrackingNode/body(evaluatedBy:)``, whose `Content` is a
+    /// fresh generic parameter. In practice it is always `NodeView.Content`.
+    private var cachedBody: Any?
+
+    /// The pass ``cachedBody`` was evaluated during, so that a body is never
+    /// reused across passes: a new pass may be running under a different
+    /// environment, or after a state change.
+    private var cachedBodyToken: UInt64?
+
+    /// Whether the parent has already handed this node a view value during the
+    /// current update pass.
+    ///
+    /// A container rebuilds its layoutable children for each of its own layout
+    /// computations, and each of those hands the child node the value it
+    /// captured. Within one pass that is the same value every time, because
+    /// the parent's body is evaluated once per pass and the captured values
+    /// come from it, so only the first hand-over can actually have changed
+    /// anything.
+    ///
+    /// The exception is a caller that genuinely produces a different view per
+    /// layout computation — a ``GeometryReader``, whose content depends on the
+    /// size it is proposed. Those call ``invalidateCachedBody()`` to say so.
+    private var hasReceivedViewThisPass = false
+
     /// Bridges `Observation` change notifications to this node's updates.
     ///
     /// Created on demand by ``observationRegistration`` so that nodes which
@@ -204,6 +231,10 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
     /// current view gets updated due to a state change and has potential to trigger its parent to
     /// update as well, or the current view's child has propagated such an update upwards).
     private func bottomUpUpdate() {
+        // Whatever prompted this changed something a body may have read, and it
+        // is an entry into the graph from outside, so it starts a new pass.
+        LayoutPass.begin()
+
         // First we compute what size the view will be after the update. If it will change size,
         // propagate the update to this node's parent instead of updating straight away.
         let currentSize = currentLayout?.size
@@ -293,6 +324,13 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
         if let newView {
             previousView = view
             view = newView
+            // Only the first hand-over of a pass can have changed anything;
+            // see `hasReceivedViewThisPass`.
+            if !hasReceivedViewThisPass || cachedBodyToken != LayoutPass.token {
+                hasReceivedViewThisPass = true
+                cachedBody = nil
+                cachedBodyToken = nil
+            }
         } else {
             previousView = nil
         }
@@ -357,8 +395,23 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
 
     /// Empties the layout cache, keeping its storage so that the next pass
     /// doesn't have to allocate.
+    ///
+    /// The body evaluated for the pass goes with it: the two are valid over
+    /// exactly the same window, from the first layout computation of a pass
+    /// until it is committed or invalidated.
     private func invalidateResultCache() {
         resultCache.removeAll(keepingCapacity: true)
+        invalidateCachedBody()
+    }
+
+    /// Discards the body evaluated for this pass, if any.
+    ///
+    /// For callers that hand the node a genuinely different view value part way
+    /// through a pass; see ``hasReceivedViewThisPass``.
+    public func invalidateCachedBody() {
+        cachedBody = nil
+        cachedBodyToken = nil
+        hasReceivedViewThisPass = false
     }
 
     /// Commits the view's most recently computed layout and any view state changes
@@ -399,17 +452,18 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
                 backend: self.backend
             )
         }
-        if isLeaf {
-            // Leaf views read the bindings they were handed while committing
-            // (a `TextField` reads its text here, for instance), so their
-            // commits are tracked too. Composite views evaluate their bodies
-            // during layout, which is where their tracking is installed, so
-            // there's nothing to track here for them.
-            ViewObservationTracking.withNode(self) {
+        // The node is installed for both kinds of view so that a composite
+        // view's `defaultCommit` can reuse the body evaluated during layout,
+        // but only a leaf's commit is *tracked*: leaf views read the bindings
+        // they were handed while committing (a `TextField` reads its text
+        // here, for instance), whereas a composite view's tracking is
+        // installed around its body evaluation during layout.
+        ViewObservationTracking.withNode(self) {
+            if isLeaf {
                 ViewObservationTracking.tracking(commit)
+            } else {
+                commit()
             }
-        } else {
-            commit()
         }
         invalidateResultCache()
 
@@ -420,6 +474,16 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
 }
 
 extension ViewGraphNode: ObservationTrackingNode {
+    func body<Content>(evaluatedBy evaluate: () -> Content) -> Content {
+        if cachedBodyToken == LayoutPass.token, let cachedBody = cachedBody as? Content {
+            return cachedBody
+        }
+        let body = evaluate()
+        cachedBody = body
+        cachedBodyToken = LayoutPass.token
+        return body
+    }
+
     /// The node's observation registration, created on first access.
     ///
     /// The registration schedules updates through the backend's main thread,

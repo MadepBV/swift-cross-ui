@@ -93,9 +93,35 @@ enum ViewObservationTracking {
     /// Evaluates a view's body while recording the `@Observable` properties it
     /// reads.
     ///
+    /// The body is evaluated once per update pass and reused for the rest of
+    /// it; see ``ObservationTrackingNode/body(evaluatedBy:)``. Reuse doesn't
+    /// lose tracking: an observation closure fires at most once and stays armed
+    /// until it does, and the node clears the cached body wherever it clears
+    /// its layout cache, so the next pass re-evaluates and re-registers.
+    ///
     /// - Parameter view: The view whose body should be evaluated.
     /// - Returns: The view's body.
     static func trackedBody<V: View>(of view: V) -> V.Content {
-        tracking { view.body }
+        guard let node = currentNode else {
+            return tracking { view.body }
+        }
+        return node.body(evaluatedBy: { tracking { view.body } })
+    }
+
+    /// A view's body, reusing the one evaluated during this pass's layout if
+    /// there is one.
+    ///
+    /// Used by ``View/defaultCommit(_:children:layout:environment:backend:)``,
+    /// which needs a body only to reach its children's nodes — a layoutable
+    /// child's commit closure never reads the view value — so re-running user
+    /// code there produced nothing but the value that was already to hand.
+    ///
+    /// - Parameter view: The view whose body is wanted.
+    /// - Returns: The view's body.
+    static func body<V: View>(of view: V) -> V.Content {
+        guard let node = currentNode else {
+            return view.body
+        }
+        return node.body(evaluatedBy: { view.body })
     }
 }

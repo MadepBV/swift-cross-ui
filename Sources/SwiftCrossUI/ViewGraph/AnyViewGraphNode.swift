@@ -36,6 +36,8 @@ public class AnyViewGraphNode<NodeView: View> {
     private var _getBackend: () -> any BaseAppBackend
     /// The type-erased getter for the node's last proposed size.
     private var _getLastProposedSize: () -> ProposedViewSize
+    /// The node's type-erased body invalidation method.
+    private var _invalidateCachedBody: () -> Void
 
     /// Type-erases a view graph node.
     public init<Backend: BaseAppBackend>(_ node: ViewGraphNode<NodeView, Backend>) {
@@ -57,6 +59,7 @@ public class AnyViewGraphNode<NodeView: View> {
         _getLastProposedSize = {
             node.lastProposedSize
         }
+        _invalidateCachedBody = node.invalidateCachedBody
     }
 
     /// Creates a new view graph node and immediately type-erases it.
@@ -96,6 +99,16 @@ public class AnyViewGraphNode<NodeView: View> {
     /// view's children. Also commits any view state changes.
     public func commit() -> ViewLayoutResult {
         _commit()
+    }
+
+    /// Discards the body the node evaluated for this pass, if any.
+    ///
+    /// Only needed by callers that hand the node a genuinely different view
+    /// value more than once within a single update pass, which a
+    /// ``GeometryReader`` does because its content depends on the size it is
+    /// proposed.
+    public func invalidateCachedBody() {
+        _invalidateCachedBody()
     }
 
     /// Gets the node's wrapped view.
