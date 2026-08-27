@@ -1,4 +1,6 @@
+import Foundation
 @_spi(Backends) import SwiftCrossUI
+import UWP
 import WinUI
 @preconcurrency import WindowsFoundation
 
@@ -15,18 +17,18 @@ enum PathActionTarget {
     /// and is rewritten through that figure's start point.
     case none
     /// The action set a figure's start point.
-    case figureStart(WinUI.PathFigure)
+    case figureStart(PathFigure)
     /// The action appended a rectangle to the geometry collection.
-    case rectangle(WinUI.RectangleGeometry)
+    case rectangle(RectangleGeometry)
     /// The action appended an ellipse to the geometry collection.
-    case ellipse(WinUI.EllipseGeometry)
+    case ellipse(EllipseGeometry)
     /// The action appended a line segment, and created the figure holding it
     /// if `startedFigure` is non-`nil`.
-    case line(WinUI.LineSegment, startedFigure: WinUI.PathFigure?)
+    case line(LineSegment, startedFigure: PathFigure?)
     /// The action appended a quadratic segment.
-    case quad(WinUI.QuadraticBezierSegment, startedFigure: WinUI.PathFigure?)
+    case quad(QuadraticBezierSegment, startedFigure: PathFigure?)
     /// The action appended a cubic segment.
-    case cubic(WinUI.BezierSegment, startedFigure: WinUI.PathFigure?)
+    case cubic(BezierSegment, startedFigure: PathFigure?)
     /// The action's effect on the tree's shape isn't fixed by its kind alone,
     /// so a path containing one is never reconciled.
     case unsupported
@@ -83,7 +85,7 @@ enum PathGeometryReconciler {
     ) -> Bool {
         /// Rewrites a figure's start point if this action created the figure
         /// and the point it was given has moved.
-        func updateStart(_ figure: WinUI.PathFigure?) {
+        func updateStart(_ figure: PathFigure?) {
             if let figure, incomingPointMoved {
                 figure.startPoint = incomingPoint
             }
