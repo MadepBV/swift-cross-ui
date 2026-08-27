@@ -158,14 +158,6 @@ enum SolidColorBrushCache {
     /// Brushes keyed by their packed ARGB value.
     private static var brushes: [UInt32: WinUI.SolidColorBrush] = [:]
 
-    /// A fully transparent brush.
-    ///
-    /// Gesture targets paint themselves with one so that their empty areas are
-    /// hit-testable.
-    static var transparent: WinUI.SolidColorBrush {
-        brush(for: SwiftCrossUI.Color.Resolved(red: 0, green: 0, blue: 0, opacity: 0))
-    }
-
     /// A brush for a colour.
     ///
     /// - Parameter color: The colour the brush should paint.

@@ -1,5 +1,5 @@
 /// A color scheme to apply to views.
-public enum ColorScheme: Sendable {
+public enum ColorScheme: Hashable, Sendable {
     /// Light mode (usually black on white).
     case light
     /// Dark mode (usually white on black).

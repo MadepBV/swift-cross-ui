@@ -709,9 +709,10 @@ public final class WinUIBackend:
         }
         // The measurement below writes Width and Height directly. The `defer`
         // above puts them back, but only after WinUI has seen the intermediate
-        // values, so drop anything remembered about this widget rather than
-        // assume the restore leaves it in the state the cache describes.
-        WidgetPropertyCache.shared.invalidate(widget)
+        // values, so forget the remembered size rather than assume the restore
+        // leaves the element in the state the cache describes. Only the size is
+        // touched here, so the text, font and colour entries stay valid.
+        WidgetPropertyCache.shared.entry(for: widget).size = nil
 
         widget.width = .nan
         widget.height = .nan

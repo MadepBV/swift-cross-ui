@@ -185,11 +185,21 @@ final class TapGestureTarget: WinUI.Canvas {
             return
         }
         isHitTestable = wantsEvents
-        background = wantsEvents ? SolidColorBrushCache.transparent : nil
+        background = wantsEvents ? Self.hitTestBrush : nil
     }
 
     /// Whether ``updateHitTesting()`` has made this target hit-testable.
     private var isHitTestable = false
+
+    /// The transparent brush that makes a target's empty areas hit-testable.
+    ///
+    /// Shared between targets: nothing ever mutates it, which is the same
+    /// reason XAML theme resources share brushes.
+    private static let hitTestBrush: SolidColorBrush = {
+        let brush = SolidColorBrush()
+        brush.color = UWP.Color(a: 0, r: 0, g: 0, b: 0)
+        return brush
+    }()
 
     private func handlePointerPressed(_ args: WinUI.PointerRoutedEventArgs) {
         guard let point = try? args.getCurrentPoint(self) else {
@@ -578,11 +588,21 @@ final class PointerGestureTarget: WinUI.Canvas {
             return
         }
         isHitTestable = wantsEvents
-        background = wantsEvents ? SolidColorBrushCache.transparent : nil
+        background = wantsEvents ? Self.hitTestBrush : nil
     }
 
     /// Whether ``updateHitTesting()`` has made this target hit-testable.
     private var isHitTestable = false
+
+    /// The transparent brush that makes a target's empty areas hit-testable.
+    ///
+    /// Shared between targets: nothing ever mutates it, which is the same
+    /// reason XAML theme resources share brushes.
+    private static let hitTestBrush: SolidColorBrush = {
+        let brush = SolidColorBrush()
+        brush.color = UWP.Color(a: 0, r: 0, g: 0, b: 0)
+        return brush
+    }()
 
     /// Enables scale manipulations while a magnify handler is attached.
     ///
