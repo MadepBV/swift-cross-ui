@@ -665,6 +665,21 @@ public final class AppKitBackend: FullAppBackend {
         proposedHeight: Int?,
         environment: EnvironmentValues
     ) -> SIMD2<Int> {
+        // Measuring is the largest single cost in a layout pass once a real
+        // backend is attached, and the layout system asks for the same
+        // measurement repeatedly. See ``TextMeasurementCache``.
+        let cacheKey = TextMeasurementCache.Key(
+            text: text,
+            proposedWidth: proposedWidth,
+            proposedHeight: proposedHeight,
+            font: environment.resolvedFont,
+            alignment: environment.multilineTextAlignment,
+            lineLimit: environment.lineLimitSettings
+        )
+        if let cached = TextMeasurementCache.measurement(for: cacheKey) {
+            return cached
+        }
+
         let proposedSize = NSSize(
             width: proposedWidth.map(Double.init) ?? .greatestFiniteMagnitude,
             height: proposedHeight.map(Double.init) ?? .greatestFiniteMagnitude
@@ -686,10 +701,12 @@ public final class AppKitBackend: FullAppBackend {
             }
         }
 
-        return SIMD2(
+        let size = SIMD2(
             Int(rect.size.width.rounded(.awayFromZero)),
             Int(height.rounded(.awayFromZero))
         )
+        TextMeasurementCache.record(size, for: cacheKey)
+        return size
     }
 
     public func createTextView() -> Widget {
@@ -709,6 +726,21 @@ public final class AppKitBackend: FullAppBackend {
         environment: EnvironmentValues
     ) {
         let field = textView as! NSTextField
+
+        // Rebuilding the attributed string means a new paragraph style, a font
+        // lookup and a colour resolution, and this runs on every layout
+        // computation of every label. See ``TextViewStateCache``.
+        let state = TextViewStateCache.State(
+            content: content,
+            font: environment.resolvedFont,
+            color: environment.suggestedForegroundColor.resolve(in: environment),
+            alignment: environment.multilineTextAlignment,
+            isSelectable: environment.isTextSelectionEnabled
+        )
+        guard !TextViewStateCache.isUpToDate(state, for: field) else {
+            return
+        }
+
         field.attributedStringValue = Self.attributedString(for: content, in: environment)
         if field.isSelectable && !environment.isTextSelectionEnabled {
             field.abortEditing()

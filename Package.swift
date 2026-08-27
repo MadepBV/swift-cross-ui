@@ -139,6 +139,7 @@ let package = Package(
         .library(name: "Gtk", type: libraryType, targets: ["Gtk"]),
         .library(name: "Gtk3", type: libraryType, targets: ["Gtk3"]),
         .executable(name: "GtkExample", targets: ["GtkExample"]),
+        .executable(name: "PerformanceHarness", targets: ["PerformanceHarness"]),
         // .library(name: "CursesBackend", type: libraryType, targets: ["CursesBackend"]),
         // .library(name: "QtBackend", type: libraryType, targets: ["QtBackend"]),
         // .library(name: "LVGLBackend", type: libraryType, targets: ["LVGLBackend"]),
@@ -329,6 +330,15 @@ let package = Package(
             ] + additionalLayoutPerformanceBenchmarkDependencies,
             path: "Benchmarks/LayoutPerformanceBenchmark",
             swiftSettings: layoutPerformanceSwiftSettings
+        ),
+        .executableTarget(
+            name: "PerformanceHarness",
+            dependencies: [
+                .product(name: "ImageFormats", package: "swift-image-formats"),
+                "SwiftCrossUI",
+                "DefaultBackend",
+            ],
+            path: "Benchmarks/PerformanceHarness"
         ),
         .macro(
             name: "SwiftCrossUIMacrosPlugin",
