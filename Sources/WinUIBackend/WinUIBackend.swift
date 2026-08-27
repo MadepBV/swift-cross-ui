@@ -2832,7 +2832,7 @@ public final class GeometryGroupHolder {
     var actionTargets: [PathActionTarget] = []
 
     /// The fill rule currently applied, so that it isn't rewritten every time.
-    var appliedFillRule: SwiftCrossUI.Path.FillRule?
+    var appliedFillRule: SwiftCrossUI.FillRule?
 }
 
 /// Keeps the composition clip behind each rounded element so that the clip
