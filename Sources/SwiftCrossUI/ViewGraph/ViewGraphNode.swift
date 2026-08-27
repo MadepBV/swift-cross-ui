@@ -42,7 +42,14 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
     public var currentLayout: ViewLayoutResult?
     /// A cache of update results keyed by the proposed size they were for. Gets
     /// cleared before the results' sizes become invalid.
-    var resultCache: [ProposedViewSize: ViewLayoutResult]
+    ///
+    /// A node only ever sees a handful of distinct proposals within one pass (a
+    /// stack probes its children's minimum and maximum sizes before proposing a
+    /// final one), so this is a linear scan over a tiny array rather than a
+    /// dictionary: hashing a proposal costs more than comparing three of them,
+    /// and the array keeps its storage across passes instead of allocating a
+    /// fresh dictionary on every commit.
+    private var resultCache: [(proposal: ProposedViewSize, result: ViewLayoutResult)]
     /// The most recent size proposed by the parent view. Used when updating the wrapped
     /// view as a result of a state change rather than the parent view updating. Proposals
     /// that get cached responses don't update this size, as this size should stay in sync
@@ -97,7 +104,7 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
         }
 
         currentLayout = nil
-        resultCache = [:]
+        resultCache = []
         lastProposedSize = .zero
         parentEnvironment = environment
         cancellables = []
@@ -188,7 +195,7 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
         // by the next body evaluation, so an update that gets satisfied by the
         // layout cache would leave this node permanently unobserved. Clearing
         // the cache guarantees that the body runs again and re-registers.
-        resultCache = [:]
+        invalidateResultCache()
 
         bottomUpUpdate()
     }
@@ -207,18 +214,24 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
 
         self.currentLayout = newLayout
         if newLayout.size != currentSize {
-            resultCache[lastProposedSize] = newLayout
+            cacheResult(newLayout, for: lastProposedSize)
             parentEnvironment.onResize(newLayout.size)
         } else {
             _ = self.commit()
         }
     }
 
+    /// This node's resize handler, created once.
+    ///
+    /// It only captures `self` weakly, so it never changes; allocating a fresh
+    /// closure on every layout computation of every node was pure overhead.
+    private lazy var onResizeHandler: @MainActor (ViewSize) -> Void = { [weak self] _ in
+        guard let self else { return }
+        self.bottomUpUpdate()
+    }
+
     private func updateEnvironment(_ environment: EnvironmentValues) -> EnvironmentValues {
-        environment.with(\.onResize) { [weak self] _ in
-            guard let self else { return }
-            self.bottomUpUpdate()
-        }
+        environment.with(\.onResize, onResizeHandler)
     }
 
     /// Recomputes the view's body and computes its layout and the layout of
@@ -266,7 +279,7 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
             // end up using a layout computed with caching while computing a layout
             // without caching.
             return currentLayout
-        } else if environment.allowLayoutCaching, let cachedResult = resultCache[proposedSize] {
+        } else if environment.allowLayoutCaching, let cachedResult = cachedResult(for: proposedSize) {
             // If this layout pass is a probing pass (not a final pass), then we
             // can reuse any layouts that we've computed since the cache was last
             // cleared. The cache gets cleared on commit.
@@ -311,10 +324,41 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
         // layout computations and the following commit, because groups of updates
         // following that pattern are assumed to be occurring within a single overarching
         // view update. Under that assumption, we can cache view layout results.
-        resultCache[proposedSize] = result
+        cacheResult(result, for: proposedSize)
 
         currentLayout = result
         return result
+    }
+
+    /// The cached layout for a proposal, if one was computed since the cache was
+    /// last invalidated.
+    ///
+    /// - Parameter proposal: The proposal to look up.
+    /// - Returns: The cached layout, or `nil` if there isn't one.
+    private func cachedResult(for proposal: ProposedViewSize) -> ViewLayoutResult? {
+        for entry in resultCache where entry.proposal == proposal {
+            return entry.result
+        }
+        return nil
+    }
+
+    /// Caches a layout against the proposal it was computed for.
+    ///
+    /// - Parameters:
+    ///   - result: The layout to cache.
+    ///   - proposal: The proposal it was computed for.
+    private func cacheResult(_ result: ViewLayoutResult, for proposal: ProposedViewSize) {
+        for index in resultCache.indices where resultCache[index].proposal == proposal {
+            resultCache[index].result = result
+            return
+        }
+        resultCache.append((proposal, result))
+    }
+
+    /// Empties the layout cache, keeping its storage so that the next pass
+    /// doesn't have to allocate.
+    private func invalidateResultCache() {
+        resultCache.removeAll(keepingCapacity: true)
     }
 
     /// Commits the view's most recently computed layout and any view state changes
@@ -367,7 +411,7 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
         } else {
             commit()
         }
-        resultCache = [:]
+        invalidateResultCache()
 
         backend.showUpdate(of: widget)
 

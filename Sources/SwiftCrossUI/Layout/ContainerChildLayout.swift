@@ -90,21 +90,3 @@ protocol ContainerChildLayout: AnyObject {
         _ participant: LayoutSystem.LayoutableChild
     ) -> (position: SIMD2<Int>, result: ViewLayoutResult)
 }
-
-extension EnvironmentValues {
-    /// The layout that the innermost enclosing container wants grouping
-    /// containers to hand their children to, if any.
-    ///
-    /// Only ``ForEach`` and ``Group`` read this. Containers that lay their own
-    /// children out clear it before proposing to them, so it never reaches
-    /// further than the grouping containers directly beneath the container that
-    /// published it.
-    var containerChildLayout: (any ContainerChildLayout)? {
-        get { self[ContainerChildLayoutKey.self] }
-        set { self[ContainerChildLayoutKey.self] = newValue }
-    }
-}
-
-private struct ContainerChildLayoutKey: EnvironmentKey {
-    static var defaultValue: (any ContainerChildLayout)? { nil }
-}

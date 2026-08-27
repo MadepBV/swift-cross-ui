@@ -247,8 +247,12 @@ public enum LayoutSystem {
         // A container that lays its own children out must not let an enclosing
         // participation layout reach past it, otherwise a `ForEach` nested
         // inside one of that container's children would join the enclosing
-        // layout instead of this one.
-        let environment = environment.with(\.containerChildLayout, nil)
+        // layout instead of this one. Copying the environment isn't cheap, so
+        // only do it when there's actually a layout to clear.
+        let environment =
+            environment.containerChildLayout == nil
+            ? environment
+            : environment.with(\.containerChildLayout, nil)
 
         let spacing = environment.layoutSpacing
         let orientation = environment.layoutOrientation
@@ -449,14 +453,17 @@ public enum LayoutSystem {
         var priorities = [Double](repeating: 0, count: children.count)
         var minimums = [Double](repeating: 0, count: children.count)
         var totalReservedSpace = 0.0
+        // Built once rather than twice per child: copying the environment
+        // retains every reference-counted field it holds.
+        let probingEnvironment = environment.with(\.allowLayoutCaching, true)
         let flexibilities = children.enumerated().map { i, child in
             let minimumResult = child.computeLayout(
                 proposedSize: minimumProposedSize,
-                environment: environment.with(\.allowLayoutCaching, true)
+                environment: probingEnvironment
             )
             let maximumResult = child.computeLayout(
                 proposedSize: maximumProposedSize,
-                environment: environment.with(\.allowLayoutCaching, true)
+                environment: probingEnvironment
             )
             isHidden[i] = !minimumResult.participatesInStackLayouts
             priorities[i] = minimumResult.preferences.layoutPriority
@@ -546,7 +553,10 @@ public enum LayoutSystem {
         }
 
         // See the matching comment in `computeStackLayout`.
-        let environment = environment.with(\.containerChildLayout, nil)
+        let environment =
+            environment.containerChildLayout == nil
+            ? environment
+            : environment.with(\.containerChildLayout, nil)
 
         let size = layout.size
         backend.setSize(of: container, to: size.vector)

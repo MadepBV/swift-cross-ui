@@ -58,10 +58,11 @@ public struct HStack<Content: View>: View {
             children: layoutableChildren(backend: backend, children: children),
             cache: &cache,
             proposedSize: proposedSize,
-            environment: environment
-                .with(\.layoutOrientation, .horizontal)
-                .with(\.layoutAlignment, alignment.asStackAlignment)
-                .with(\.layoutSpacing, spacing),
+            environment: environment.withStackLayout(
+                orientation: .horizontal,
+                alignment: alignment.asStackAlignment,
+                spacing: spacing
+            ),
             backend: backend
         )
         tupleChildren?.stackLayoutCache = cache
@@ -82,10 +83,11 @@ public struct HStack<Content: View>: View {
             children: layoutableChildren(backend: backend, children: children),
             cache: &cache,
             layout: layout,
-            environment: environment
-                .with(\.layoutOrientation, .horizontal)
-                .with(\.layoutAlignment, alignment.asStackAlignment)
-                .with(\.layoutSpacing, spacing),
+            environment: environment.withStackLayout(
+                orientation: .horizontal,
+                alignment: alignment.asStackAlignment,
+                spacing: spacing
+            ),
             backend: backend
         )
         tupleChildren?.stackLayoutCache = cache

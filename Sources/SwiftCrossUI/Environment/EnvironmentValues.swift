@@ -55,6 +55,37 @@ public struct EnvironmentValues {
     /// proposal received by each view must be its intended final proposal.
     var allowLayoutCaching: Bool = false
 
+    /// The current stack orientation.
+    ///
+    /// Inherited by ``ForEach`` and ``Group`` so that they can be used without
+    /// affecting layout.
+    ///
+    /// Stored directly rather than in ``values`` because every stack reads all
+    /// three stack layout properties and replaces all three for its children,
+    /// on every layout computation and every commit. Going through the
+    /// extensible storage would mean a dictionary lookup and a dynamic cast per
+    /// read, and a copy-on-write of the whole dictionary per write.
+    public var layoutOrientation: Orientation = .vertical
+
+    /// The current stack alignment.
+    ///
+    /// Inherited by ``ForEach`` and ``Group`` so that they can be used without
+    /// affecting layout.
+    public var layoutAlignment: StackAlignment = .center
+
+    /// The current stack spacing.
+    ///
+    /// Inherited by ``ForEach`` and ``Group`` so that they can be used without
+    /// affecting layout.
+    public var layoutSpacing: Int = 10
+
+    /// The layout that an enclosing container has published for the children of
+    /// grouping containers such as ``ForEach`` and ``Group``.
+    ///
+    /// Stored directly for the same reason as the stack layout properties: it's
+    /// read once and cleared once per stack layout.
+    var containerChildLayout: (any ContainerChildLayout)?
+
     /// Backing storage for observable subscript
     ///
     /// Typed as `AnyObject` rather than `any ObservableObject` so that classes
@@ -264,29 +295,35 @@ public struct EnvironmentValues {
         environment[keyPath: keyPath] = newValue
         return environment
     }
+
+    /// Returns a copy with the stack layout parameters replaced.
+    ///
+    /// A stack sets all three on every layout computation and every commit.
+    /// Chaining `with(_:_:)` would copy the environment once per property, and
+    /// the environment is a large struct full of reference-counted fields.
+    ///
+    /// - Parameters:
+    ///   - orientation: The stack's orientation.
+    ///   - alignment: The stack's alignment.
+    ///   - spacing: The stack's spacing.
+    /// - Returns: A copy of the environment with the stack layout parameters
+    ///   replaced.
+    func withStackLayout(
+        orientation: Orientation,
+        alignment: StackAlignment,
+        spacing: Int
+    ) -> Self {
+        var environment = self
+        environment.layoutOrientation = orientation
+        environment.layoutAlignment = alignment
+        environment.layoutSpacing = spacing
+        return environment
+    }
 }
 
 extension EnvironmentValues {
     /// The app storage provider to use for `@AppStorage` property wrappers.
     @Entry public var appStorageProvider: any AppStorageProvider = DefaultAppStorageProvider()
-
-    /// The current stack orientation.
-    ///
-    /// Inherited by ``ForEach`` and ``Group`` so that they can be used without
-    /// affecting layout.
-    @Entry public var layoutOrientation: Orientation = .vertical
-
-    /// The current stack alignment.
-    ///
-    /// Inherited by ``ForEach`` and ``Group`` so that they can be used without
-    /// affecting layout.
-    @Entry public var layoutAlignment: StackAlignment = .center
-
-    /// The current stack spacing.
-    ///
-    /// Inherited by ``ForEach`` and ``Group`` so that they can be used without
-    /// affecting layout.
-    @Entry public var layoutSpacing: Int = 10
 
     /// The current font.
     @Entry public var font: Font = .body
