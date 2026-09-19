@@ -12,9 +12,12 @@ import Foundation // for CGPoint and Date
 /// - When ``isPrecise`` is `true` (a trackpad or other precise device) they
 ///   are in points, and the interaction has a lifetime that ``phase``
 ///   describes.
-/// - When ``isPrecise`` is `false` (a notched mouse wheel) they are in
-///   notches, or in lines on platforms that accelerate wheel scrolling, and
-///   ``phase`` is always ``PointerEventPhase/changed``.
+/// - When ``isPrecise`` is `false` they are in wheel notches (including
+///   fractional notches), or in lines on platforms that accelerate wheel
+///   scrolling, and ``phase`` is always ``PointerEventPhase/changed``.
+///   Windows wheel messages retain these units even when a high-resolution
+///   wheel or precision touchpad sends small deltas; finer packet resolution
+///   alone does not make the values point distances.
 ///
 /// A positive ``deltaY`` means the wheel rolled away from the user, or the
 /// fingers moved up the trackpad with natural scrolling off. Zooming at the
@@ -35,7 +38,8 @@ public struct PointerScrollEvent: Sendable {
     /// The vertical scroll amount. See the type's discussion for units.
     public var deltaY: Double
 
-    /// Whether the deltas come from a precise device such as a trackpad.
+    /// Whether the deltas are point distances, rather than wheel/line units.
+    /// A high-resolution device can still report fractional wheel units.
     public var isPrecise: Bool
 
     /// Where a precise scroll is in its lifetime.
@@ -53,7 +57,7 @@ public struct PointerScrollEvent: Sendable {
     ///   - location: Where the pointer was.
     ///   - deltaX: The horizontal scroll amount.
     ///   - deltaY: The vertical scroll amount.
-    ///   - isPrecise: Whether the deltas come from a precise device.
+    ///   - isPrecise: Whether the deltas are point distances.
     ///   - phase: Where a precise scroll is in its lifetime.
     ///   - modifiers: The modifier keys held down.
     ///   - time: When the event happened.

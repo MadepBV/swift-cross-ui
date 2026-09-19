@@ -35,7 +35,12 @@ public struct EventModifiers: OptionSet, Hashable, Sendable {
 
     /// Every modifier key.
     public static let all: EventModifiers = [
-        .capsLock, .shift, .control, .option, .command, .numericPad,
+        .capsLock,
+        .shift,
+        .control,
+        .option,
+        .command,
+        .numericPad,
     ]
 
     /// The Function key.

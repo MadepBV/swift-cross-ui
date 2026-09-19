@@ -98,11 +98,11 @@ public struct GeometryReader<Content: View>: TypeSafeView, View {
             backend.insert(contentNode.widget.into(), into: container, at: 0)
         }
 
-        // Unlike every other container, a geometry reader's content genuinely
-        // differs between the layout system's probes, because it is built from
-        // the size being proposed. Say so, or the node would keep the body it
-        // evaluated for the first probe.
-        contentNode.invalidateCachedBody()
+        // The entire content subtree can change between probes, because it is
+        // built from the proposed size. Invalidate both bodies and layouts so
+        // nested views receive the final geometry and probing environment even
+        // when a fixed-size wrapper gives them the same proposal as before.
+        contentNode.invalidateCachedSubtree()
 
         let contentResult = contentNode.computeLayout(
             with: view,

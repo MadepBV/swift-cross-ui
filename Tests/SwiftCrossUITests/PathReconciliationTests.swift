@@ -87,8 +87,14 @@ struct PathReconciliationTests {
     @Test("The current point advances the way the drawing actions move it")
     func currentPointAdvances() {
         let start = SIMD2<Double>(7, 7)
-        #expect(PathReconciliation.endPoint(after: .moveTo(SIMD2(1, 2)), current: start) == SIMD2(1, 2))
-        #expect(PathReconciliation.endPoint(after: .lineTo(SIMD2(3, 4)), current: start) == SIMD2(3, 4))
+        #expect(PathReconciliation.endPoint(after: .moveTo(SIMD2(1, 2)), current: start) == SIMD2(
+            1,
+            2
+        ))
+        #expect(PathReconciliation.endPoint(after: .lineTo(SIMD2(3, 4)), current: start) == SIMD2(
+            3,
+            4
+        ))
         #expect(
             PathReconciliation.endPoint(
                 after: .quadCurve(control: SIMD2(0, 0), end: SIMD2(5, 6)),
@@ -153,7 +159,11 @@ struct PathReconciliationTests {
     @Test("A shape change is refused rather than reconciled wrongly")
     func shapeChangeIsRefused() {
         let before: [Path.Action] = [.moveTo(SIMD2(0, 0)), .lineTo(SIMD2(1, 1))]
-        let after: [Path.Action] = [.moveTo(SIMD2(0, 0)), .lineTo(SIMD2(1, 1)), .lineTo(SIMD2(2, 2))]
+        let after: [Path.Action] = [
+            .moveTo(SIMD2(0, 0)),
+            .lineTo(SIMD2(1, 1)),
+            .lineTo(SIMD2(2, 2))
+        ]
 
         let model = GeometryModel()
         model.build(before)
@@ -332,9 +342,9 @@ final class GeometryModel {
                     updateStart(startedFigure)
                     if changed { segment.points = [control, end] }
                 case (
-                    .cubicCurve(let control1, let control2, let end),
-                    .segment(let segment, let startedFigure)
-                ):
+                .cubicCurve(let control1, let control2, let end),
+                .segment(let segment, let startedFigure)
+            ):
                     updateStart(startedFigure)
                     if changed { segment.points = [control1, control2, end] }
                 case (.rectangle(let rect), .rectangle(let shape)):
@@ -381,17 +391,17 @@ final class GeometryModel {
     /// Includes the orderings that decide whether a figure gets created, reused
     /// or started afresh, which is where the reconciling walk is subtlest.
     static let shapes: [[Int]] = [
-        [1, 1, 1],              // a bare polyline: the first line creates the figure
-        [0, 1, 1, 1],           // a move then a polyline
-        [0, 1, 1, 0, 1, 1],     // two subpaths in one geometry
-        [0, 0, 1],              // consecutive moves before anything is drawn
-        [4],                    // a lone rectangle
-        [4, 4, 4],              // several rectangles
-        [5, 5],                 // circles
-        [4, 1, 1],              // a rectangle forces the next line into a new geometry
-        [0, 1, 4, 0, 1],        // interleaved whole shapes and figures
-        [0, 2, 3, 1],           // curves
-        [0, 1, 1, 4, 5, 0, 1],  // a bit of everything
+        [1, 1, 1], // a bare polyline: the first line creates the figure
+        [0, 1, 1, 1], // a move then a polyline
+        [0, 1, 1, 0, 1, 1], // two subpaths in one geometry
+        [0, 0, 1], // consecutive moves before anything is drawn
+        [4], // a lone rectangle
+        [4, 4, 4], // several rectangles
+        [5, 5], // circles
+        [4, 1, 1], // a rectangle forces the next line into a new geometry
+        [0, 1, 4, 0, 1], // interleaved whole shapes and figures
+        [0, 2, 3, 1], // curves
+        [0, 1, 1, 4, 5, 0, 1], // a bit of everything
     ]
 
     /// Builds an action list with the given kinds and freshly random values.

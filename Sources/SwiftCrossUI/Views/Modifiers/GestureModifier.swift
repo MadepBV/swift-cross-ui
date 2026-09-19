@@ -216,7 +216,7 @@ public struct GestureModifier<Content: View>: TypeSafeView {
         guard
             hasHandlers,
             let pointerBackend = backend
-                as? any BaseAppBackend & BackendFeatures.PointerGestures
+            as? any BaseAppBackend & BackendFeatures.PointerGestures
         else {
             return child
         }
@@ -340,7 +340,7 @@ public struct GestureModifier<Content: View>: TypeSafeView {
         guard
             hasHandlers,
             let pointerBackend = backend
-                as? any BaseAppBackend & BackendFeatures.PointerGestures
+            as? any BaseAppBackend & BackendFeatures.PointerGestures
         else {
             return
         }

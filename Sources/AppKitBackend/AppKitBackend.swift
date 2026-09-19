@@ -1,5 +1,14 @@
 import AppKit
+import UniformTypeIdentifiers
 @_spi(Backends) import SwiftCrossUI
+
+extension AppKitBackend: BackendFeatures.ApplicationTerminationRequests {
+    public func setApplicationTerminationRequestHandler(
+        _ handler: (@MainActor @Sendable () async -> Bool)?
+    ) {
+        appDelegate.terminationRequests.setHandler(handler)
+    }
+}
 
 extension App {
     public typealias Backend = AppKitBackend
@@ -29,6 +38,9 @@ public final class AppKitBackend: FullAppBackend {
     ]
     public let canOverrideWindowColorScheme = true
     public let restoresWindowFrames = true
+    // `size(of:whenDisplayedIn:...)` measures with `NSString.boundingRect`, which
+    // reads the environment's attributes and never the widget it is handed.
+    public let measuresTextIndependentlyOfWidget = true
 
     var borderedButtonPadding: SIMD2<Int>?
 
@@ -234,7 +246,7 @@ public final class AppKitBackend: FullAppBackend {
     }
 
     public func close(window: Window) {
-        window.close()
+        window.requestAuthorizedClose()
     }
 
     public func setCloseHandler(
@@ -1472,7 +1484,7 @@ public final class AppKitBackend: FullAppBackend {
         panel.showsHiddenFiles = fileDialogOptions.showHiddenFiles
         panel.allowsOtherFileTypes = fileDialogOptions.allowOtherContentTypes
 
-        // TODO: allowedContentTypes
+        configureContentTypes(fileDialogOptions.allowedContentTypes, on: panel)
 
         panel.allowsMultipleSelection = openDialogOptions.allowMultipleSelections
         panel.canChooseFiles = openDialogOptions.allowSelectingFiles
@@ -1511,7 +1523,7 @@ public final class AppKitBackend: FullAppBackend {
         panel.showsHiddenFiles = fileDialogOptions.showHiddenFiles
         panel.allowsOtherFileTypes = fileDialogOptions.allowOtherContentTypes
 
-        // TODO: allowedContentTypes
+        configureContentTypes(fileDialogOptions.allowedContentTypes, on: panel)
 
         panel.nameFieldLabel = saveDialogOptions.nameFieldLabel ?? panel.nameFieldLabel
         panel.nameFieldStringValue = saveDialogOptions.defaultFileName ?? ""
@@ -1533,6 +1545,19 @@ public final class AppKitBackend: FullAppBackend {
         } else {
             let response = panel.runModal()
             handleResponse(response)
+        }
+    }
+
+    private func configureContentTypes(_ types: [ContentType], on panel: NSSavePanel) {
+        if #available(macOS 11.0, *) {
+            var seen: Set<String> = []
+            panel.allowedContentTypes = types.flatMap { type in
+                type.fileExtensions.compactMap { UTType(filenameExtension: $0) }
+                    + type.mimeTypes.compactMap { UTType(mimeType: $0) }
+            }.filter { seen.insert($0.identifier).inserted }
+        } else {
+            let extensions = types.flatMap(\.fileExtensions)
+            panel.allowedFileTypes = extensions.isEmpty ? nil : extensions
         }
     }
 
@@ -1897,6 +1922,7 @@ class NSSplitViewResizingDelegate: NSObject, NSSplitViewDelegate {
 public class NSCustomWindow: NSWindow {
     var customDelegate = Delegate()
     var persistentUndoManager = UndoManager()
+    let closeRequestCoordinator = WindowCloseRequestCoordinator()
 
     /// A reference to the sheet currently presented on top of this window, if any.
     /// If the sheet itself has another sheet presented on top of it, then that doubly
@@ -1926,7 +1952,13 @@ public class NSCustomWindow: NSWindow {
             self.closeHandler = closeHandler
         }
 
+        func windowShouldClose(_ sender: NSWindow) -> Bool {
+            guard let window = sender as? NSCustomWindow else { return true }
+            return !window.shouldDeferClose()
+        }
+
         func windowWillClose(_ notification: Notification) {
+            (notification.object as? NSCustomWindow)?.closeRequestCoordinator.windowDidClose()
             closeHandler?()
 
             guard let window = notification.object as? NSCustomWindow else { return }
@@ -1971,11 +2003,23 @@ extension Notification.Name {
     )
 }
 
+@MainActor
 final class NSCustomApplicationDelegate: NSObject, NSApplicationDelegate {
     var onOpenURLs: (([URL]) -> Void)?
+    let terminationRequests = ApplicationTerminationRequestCoordinator()
 
     func application(_ application: NSApplication, open urls: [URL]) {
         onOpenURLs?(urls)
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Normal Quit bypasses windowShouldClose. AppKit requires one deferred
+        // reply; retrying terminate/closing windows would prompt recursively or
+        // dispose documents before the application's decision is complete.
+        let deferred = terminationRequests.shouldDeferTermination { [weak sender] permitted in
+            sender?.reply(toApplicationShouldTerminate: permitted)
+        }
+        return deferred ? .terminateLater : .terminateNow
     }
 }
 

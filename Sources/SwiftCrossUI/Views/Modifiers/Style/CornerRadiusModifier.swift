@@ -1,4 +1,14 @@
 extension View {
+    /// Clips drawing to this view's rectangular bounds without changing layout.
+    ///
+    /// Uses the same backend capability as `cornerRadius(_:)`, with a zero
+    /// radius. AppKit and WinUI clip overflowing descendants, including when
+    /// a bound becomes zero. Backends without CornerRadius support retain the
+    /// content and layout without clipping, as they do for cornerRadius.
+    public func clipped() -> some View {
+        CornerRadiusModifier(content: self, cornerRadius: 0)
+    }
+
     public func cornerRadius(_ radius: Int) -> some View {
         CornerRadiusModifier(content: self, cornerRadius: radius)
     }

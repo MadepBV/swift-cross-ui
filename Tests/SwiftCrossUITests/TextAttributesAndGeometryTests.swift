@@ -697,4 +697,3 @@ extension GraphicsContext.Shading {
         }
     }
 }
-

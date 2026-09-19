@@ -5,6 +5,75 @@ import Foundation
 ///
 /// This is where updates are initiated when a view's state updates, and where state is persisted
 /// even when a view gets recomputed by its parent.
+///
+/// ## On skipping unchanged subtrees
+///
+/// Every pass re-walks the whole graph. A short-circuit — a node returning its
+/// committed layout without descending, once it can show that its view value,
+/// its environment and its own state have all held still — was built and
+/// withdrawn, and the reason is worth recording so it isn't rediscovered the
+/// hard way.
+///
+/// It worked, and on a window resize it cut a pass from 11,353 node visits to
+/// 1,519 and from 21 ms to 0.18 ms. It was withdrawn because of *when* a node
+/// learns it is out of date. A `@State` mutation reaches its node through
+/// ``Publisher/observeAsUIUpdater(backend:action:)``, which schedules the
+/// update rather than running it, so a node is marked out of date when that
+/// scheduled update *runs*, not when the state changes. A pass landing in
+/// between would short-circuit straight past the node that changed and commit
+/// stale content. Today that is invisible, because every pass re-walks and
+/// re-reads the state regardless.
+///
+/// Making this safe needs the out-of-date mark to be set synchronously with the
+/// mutation. There is a hook for that — ``Publisher/send()`` publishes on the
+/// mutating thread, and ``Publisher/observe(with:)`` takes a synchronous
+/// closure, so a node could mark itself out of date beside the scheduled update
+/// rather than inside it. The scheduling in
+/// ``Publisher/observeAsUIUpdater(backend:action:)`` exists to coalesce and
+/// throttle the *re-render*, not to defer the bookkeeping.
+///
+/// What blocks it is isolation. Marking `send()` `@MainActor` so the mark is
+/// provably safe cascades: `send()` forces `StateImpl.postSet()`, which forces
+/// `StateImpl.wrappedValue`'s setter and `projectedValue`, which forces
+/// `@State`, `@AppStorage`, `@FocusState` and `@Published`'s `wrappedValue` and
+/// `projectedValue` — i.e. the framework's whole public state layer becomes
+/// main-actor-only, and that propagates into app code. Measured by annotating
+/// and rebuilding, three rounds deep, each round pushing the annotation one
+/// level further out. It is not a narrow fix.
+///
+/// (An earlier note here claimed this was a single error in
+/// ``Publisher/link(toUpstream:)``. That was wrong: the build fast-failed in
+/// `Publisher.swift` before type-checking the senders. The real senders are
+/// `StateImpl.postSet()`, `Published.valueDidChange(publish:)` and
+/// `FocusedValue`, and they cascade as above.)
+///
+/// ``EnvironmentValues`` mutation is likewise not main-actor-only, and is not
+/// expected to become so — the `@Entry` macro emits nonisolated accessors, so
+/// around thirty public properties mutate from nonisolated context
+/// structurally. But a short-circuit does not need that: the environment signal
+/// is established once per pass at the root, from the three events a window
+/// already observes, rather than by comparing environments anywhere. Don't
+/// re-derive the revision-counter dead end.
+///
+/// ## The other constraint, which is about cost rather than correctness
+///
+/// The win comes from short-circuiting *probing* visits high in the tree, where
+/// skipping one node prunes everything beneath it. Serving those across passes
+/// means keeping a layout per probed proposal, and a ``ViewLayoutResult`` drags
+/// a ``PreferenceValues`` along with it — closures and arrays, so retaining
+/// several per node costs real reference counting. Measured, on
+/// `window/resize`: an eight-entry cache short-circuited 915 of 11,353 visits
+/// and took the pass from 21 ms to 0.18 ms, but cost ~20% on every scenario
+/// where it never fired (cad/idle 20.7→24.9, list/idle 24.3→27.3,
+/// window/update 20.7→24.7); keeping only the committed layout removed that
+/// regression and dropped the win to 120 short-circuits. A future attempt has
+/// to hold probe results as something cheaper than a full layout result — the
+/// probing path reads only size, stack participation and layout priority off
+/// them.
+///
+/// The behaviour any future attempt has to preserve is pinned by
+/// `ShortCircuitTests`, whose deep-state-change case is exactly the one that
+/// caught this.
 @MainActor
 public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
     /// The view's single widget for the entirety of its lifetime in the view graph.
@@ -86,7 +155,9 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
     /// The pass ``cachedBody`` was evaluated during, so that a body is never
     /// reused across passes: a new pass may be running under a different
     /// environment, or after a state change.
-    private var cachedBodyToken: UInt64?
+    /// The pass during which the parent last handed this node a view value,
+    /// so that only the first hand-over of a pass is treated as significant.
+    private var lastHandOverPass: UInt64?
 
     /// Whether the parent has already handed this node a view value during the
     /// current update pass.
@@ -100,7 +171,7 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
     ///
     /// The exception is a caller that genuinely produces a different view per
     /// layout computation — a ``GeometryReader``, whose content depends on the
-    /// size it is proposed. Those call ``invalidateCachedBody()`` to say so.
+    /// size it is proposed. Those call ``invalidateCachedSubtree()`` to say so.
     private var hasReceivedViewThisPass = false
 
     /// Bridges `Observation` change notifications to this node's updates.
@@ -235,6 +306,7 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
         // is an entry into the graph from outside, so it starts a new pass.
         LayoutPass.begin()
 
+
         // First we compute what size the view will be after the update. If it will change size,
         // propagate the update to this node's parent instead of updating straight away.
         let currentSize = currentLayout?.size
@@ -299,23 +371,35 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
             hasHadFirstUpdate = true
         }
 
+        BackendCallStatistics.record("viewgraph.computeLayout")
+
+
+
         if proposedSize == lastProposedSize && !resultCache.isEmpty
             && (!parentEnvironment.allowLayoutCaching || environment.allowLayoutCaching),
             let currentLayout
         {
-            // If the previous proposal is the same as the current one, and our
-            // cache hasn't been invalidated, then we can reuse the current layout.
-            // But only if the previous layout was computed without caching, or the
-            // current layout is being computed with caching, cause otherwise we could
-            // end up using a layout computed with caching while computing a layout
-            // without caching.
+            // If the previous proposal is the same as the current one, and we
+            // computed it during this pass, then we can reuse the current
+            // layout. But only if the previous layout was computed without
+            // caching, or the current layout is being computed with caching,
+            // cause otherwise we could end up using a layout computed with
+            // caching while computing a layout without caching.
+            BackendCallStatistics.record("viewgraph.computeLayout.reusedCurrent")
             return currentLayout
-        } else if environment.allowLayoutCaching, let cachedResult = cachedResult(for: proposedSize) {
+        } else if environment.allowLayoutCaching,
+            let cachedResult = cachedResult(for: proposedSize)
+        {
             // If this layout pass is a probing pass (not a final pass), then we
-            // can reuse any layouts that we've computed since the cache was last
-            // cleared. The cache gets cleared on commit.
+            // can reuse any layouts we've computed during it. Restricted to
+            // this pass because the cache now outlives the pass that filled it;
+            // reuse across passes goes through the short-circuit above, which
+            // has proven the inputs are unchanged.
+            BackendCallStatistics.record("viewgraph.computeLayout.cacheHit")
             return cachedResult
         }
+
+        BackendCallStatistics.record("viewgraph.computeLayout.recomputed")
 
         parentEnvironment = environment
         lastProposedSize = proposedSize
@@ -326,10 +410,10 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
             view = newView
             // Only the first hand-over of a pass can have changed anything;
             // see `hasReceivedViewThisPass`.
-            if !hasReceivedViewThisPass || cachedBodyToken != LayoutPass.token {
+            if !hasReceivedViewThisPass || lastHandOverPass != LayoutPass.token {
                 hasReceivedViewThisPass = true
+                lastHandOverPass = LayoutPass.token
                 cachedBody = nil
-                cachedBodyToken = nil
             }
         } else {
             previousView = nil
@@ -344,6 +428,11 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
             // whole layout computation can't swallow a descendant's property
             // reads. Composite views instead get tracked around their body
             // evaluation alone (see `View.defaultComputeLayout`).
+            // Everything below is reached from here, so this is where we tell
+            // our children what we know. Their values come out of our body, and
+            // their environment is ours plus whatever that body applied, so
+            // both are unchanged exactly when we hand down the same values —
+            // and the environment additionally needs ours to have held still.
             let computeLayout = {
                 self.view.computeLayout(
                     self.widget,
@@ -410,8 +499,24 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
     /// through a pass; see ``hasReceivedViewThisPass``.
     public func invalidateCachedBody() {
         cachedBody = nil
-        cachedBodyToken = nil
+        lastHandOverPass = nil
         hasReceivedViewThisPass = false
+    }
+
+    /// Discards bodies and layouts derived from an earlier value of this subtree.
+    ///
+    /// Geometry-dependent content can change more than once during a layout pass.
+    /// Its descendants must receive the new values even when their proposed sizes
+    /// stay the same. Clearing only this node's body leaves those descendants'
+    /// bodies or layout results cached from an earlier geometry probe.
+    ///
+    /// Nodes, widgets, and their state are retained. Other subtrees keep their
+    /// normal per-pass caches.
+    func invalidateCachedSubtree() {
+        invalidateResultCache()
+        for child in children.erasedNodes {
+            child.transform(with: CachedSubtreeInvalidator())
+        }
     }
 
     /// Commits the view's most recently computed layout and any view state changes
@@ -474,13 +579,37 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
 }
 
 extension ViewGraphNode: ObservationTrackingNode {
+    /// Returns the body for this pass, evaluating it if it hasn't been.
+    ///
+    /// - Important: The cache is deliberately keyed on ``LayoutPass/token``, so
+    ///   a body never survives the pass it was evaluated in. Widening that —
+    ///   letting a body persist across passes while its node is "unchanged" —
+    ///   requires proving the node's *environment* is unchanged too, because a
+    ///   body reads the environment through its dynamic property wrappers
+    ///   (`@Environment`, `@AppStorage`, `@FocusedValue`) and a reused body
+    ///   bakes in the values it read. `View.body` takes no environment
+    ///   parameter, so those wrappers are the only route.
+    ///
+    ///   A revision counter on ``EnvironmentValues`` would supply that proof,
+    ///   but note the invariant it would rest on: **no reference-typed
+    ///   environment value may be read by layout or by a body.** A revision can
+    ///   only change when the struct is mutated, so anything reached through a
+    ///   reference it holds — the `Box` behind
+    ///   ``EnvironmentValues/openWindowFunctionsByID``, an object in
+    ///   ``EnvironmentValues/subscript(observable:)``, an
+    ///   `any ContainerChildLayout` — can change its contents with the revision
+    ///   standing still. None of those are read by layout today. A future
+    ///   environment value that is a mutable reference type and *is* read by
+    ///   layout would silently freeze every view that reads it.
     func body<Content>(evaluatedBy evaluate: () -> Content) -> Content {
-        if cachedBodyToken == LayoutPass.token, let cachedBody = cachedBody as? Content {
+        if lastHandOverPass == LayoutPass.token, let cachedBody = cachedBody as? Content {
+            BackendCallStatistics.record("viewgraph.body.reused")
             return cachedBody
         }
+        BackendCallStatistics.record("viewgraph.body.evaluated")
         let body = evaluate()
         cachedBody = body
-        cachedBodyToken = LayoutPass.token
+        lastHandOverPass = LayoutPass.token
         return body
     }
 
@@ -502,5 +631,13 @@ extension ViewGraphNode: ObservationTrackingNode {
         }
         _observationRegistration = registration
         return registration
+    }
+}
+
+/// Opens erased child nodes without rebuilding them while invalidating caches.
+@MainActor
+private struct CachedSubtreeInvalidator: ErasedViewGraphNodeTransformer {
+    func transform<V: View, Backend: BaseAppBackend>(node: ViewGraphNode<V, Backend>) {
+        node.invalidateCachedSubtree()
     }
 }

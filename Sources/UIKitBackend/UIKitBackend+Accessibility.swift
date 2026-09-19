@@ -73,7 +73,7 @@ extension UIKitBackend: BackendFeatures.Accessibility {
                 let describesSomething =
                     properties.label != nil || properties.value != nil
                 if describesSomething && !view.isAccessibilityElement,
-                    case .none = Self.searchForElements(under: view)
+                   case .none = Self.searchForElements(under: view)
                 {
                     view.isAccessibilityElement = true
                 }
@@ -258,8 +258,8 @@ extension UIKitBackend: BackendFeatures.Accessibility {
             return textView.text
         }
         if let button = view as? UIButton,
-            let title = button.title(for: .normal),
-            !title.isEmpty
+           let title = button.title(for: .normal),
+           !title.isEmpty
         {
             return title
         }

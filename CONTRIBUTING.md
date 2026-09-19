@@ -63,6 +63,21 @@ The project has some Gtk3Backend-specific tests which are disabled by default gi
 SCUI_TEST_GTK3BACKEND=1 ./Scripts/test.sh
 ```
 
+The two native AppKit key-command focus tests also require an explicitly enabled,
+unlocked macOS desktop. They create their own windows, temporarily activate the
+CLI test host, and restore its delegate and activation policy afterward. The
+portable command tests run by default; Swift Testing reports these two desktop
+tests as skipped unless enabled:
+
+```sh
+SCUI_TEST_NATIVE_KEY_FOCUS=1 swift test --test-product swift-cross-uiPackageTests --filter KeyCommandTests
+```
+
+An enabled run requires a real active/key window and native forward/backward Tab
+traversal. A locked or headless desktop fails those assertions rather than
+silently skipping them. Check the final Swift Testing completion summary for all
+10 focused tests; process exit status alone does not establish native coverage.
+
 ## 5. Special files
 
 Here are a few rules regarding special files;

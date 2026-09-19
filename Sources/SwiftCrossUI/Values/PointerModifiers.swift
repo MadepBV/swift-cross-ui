@@ -37,7 +37,11 @@ public struct PointerModifiers: OptionSet, Hashable, Sendable {
 
     /// Every modifier.
     public static let all: PointerModifiers = [
-        .shift, .control, .option, .command, .capsLock,
+        .shift,
+        .control,
+        .option,
+        .command,
+        .capsLock,
     ]
 }
 

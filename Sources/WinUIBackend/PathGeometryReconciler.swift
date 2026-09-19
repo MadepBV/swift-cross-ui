@@ -110,9 +110,9 @@ enum PathGeometryReconciler {
                     segment.point2 = point(end)
                 }
             case (
-                .cubicCurve(let control1, let control2, let end),
-                .cubic(let segment, let startedFigure)
-            ):
+            .cubicCurve(let control1, let control2, let end),
+            .cubic(let segment, let startedFigure)
+        ):
                 updateStart(startedFigure)
                 if changed {
                     segment.point1 = point(control1)

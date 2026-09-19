@@ -243,9 +243,9 @@ extension ForEach: TypeSafeView, View where Child: View {
         // computations. Rebuilding them costs two closure allocations per
         // element per probe, which dominates a long list's layout.
         if !children.layoutableChildren.isEmpty,
-            !children.isFirstUpdate,
-            children.layoutableChildren.count == elements.count,
-            children.nodes.count == elements.count
+           !children.isFirstUpdate,
+           children.layoutableChildren.count == elements.count,
+           children.nodes.count == elements.count
         {
             return LayoutSystem.computeStackLayout(
                 container: widget,

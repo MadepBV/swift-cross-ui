@@ -1,4 +1,4 @@
-import Foundation  // for CGPoint
+import Foundation // for CGPoint
 
 extension View {
     /// Defines the destination of a drag-and-drop operation that handles the

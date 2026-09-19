@@ -237,8 +237,8 @@ struct CanvasTests {
 
         #expect(commands.count == 2)
         guard commands.count == 2,
-            case .fill(let first) = commands[0],
-            case .fill(let second) = commands[1]
+              case .fill(let first) = commands[0],
+              case .fill(let second) = commands[1]
         else {
             Issue.record("expected two fills")
             return
@@ -411,7 +411,7 @@ struct CanvasTests {
         }
 
         guard let fill = CanvasTests.onlyFill(commands),
-            let clipBounds = fill.clipPaths.first?.approximateBoundingBox
+              let clipBounds = fill.clipPaths.first?.approximateBoundingBox
         else {
             Issue.record("expected one clipped fill")
             return
@@ -459,7 +459,7 @@ struct CanvasTests {
         }
 
         guard let text = CanvasTests.onlyText(commands),
-            case .point(let position, let anchor) = text.placement
+              case .point(let position, let anchor) = text.placement
         else {
             Issue.record("expected one point-anchored text command")
             return
@@ -480,7 +480,7 @@ struct CanvasTests {
         }
 
         guard let text = CanvasTests.onlyText(commands),
-            case .rect(let rect) = text.placement
+              case .rect(let rect) = text.placement
         else {
             Issue.record("expected one rect-placed text command")
             return
@@ -693,8 +693,8 @@ struct CanvasTests {
 
             let children = harness.container.subviews
             guard children.count == 2,
-                let fill = children[0] as? AppKitBackend.NSBezierPathView,
-                let stroke = children[1] as? AppKitBackend.NSBezierPathView
+                  let fill = children[0] as? AppKitBackend.NSBezierPathView,
+                  let stroke = children[1] as? AppKitBackend.NSBezierPathView
             else {
                 Issue.record("expected two path views")
                 return
@@ -720,7 +720,7 @@ struct CanvasTests {
 
             guard
                 let view = harness.container.subviews.first
-                    as? AppKitBackend.NSBezierPathView
+                as? AppKitBackend.NSBezierPathView
             else {
                 Issue.record("expected a path view")
                 return
@@ -831,14 +831,14 @@ struct CanvasTests {
 
             let children = harness.container.subviews
             guard children.count == 2,
-                let topLeading = CanvasTests.position(
-                    of: children[0],
-                    in: harness.container
-                ),
-                let centered = CanvasTests.position(
-                    of: children[1],
-                    in: harness.container
-                )
+                  let topLeading = CanvasTests.position(
+                      of: children[0],
+                      in: harness.container
+                  ),
+                  let centered = CanvasTests.position(
+                      of: children[1],
+                      in: harness.container
+                  )
             else {
                 Issue.record("expected two positioned text views")
                 return
@@ -893,7 +893,7 @@ struct CanvasTests {
         )
 
         guard let cubicEnd = cubicPoints.first?.last,
-            let quadraticEnd = quadraticPoints.first?.last
+              let quadraticEnd = quadraticPoints.first?.last
         else {
             Issue.record("expected both curves to trim to a subpath")
             return
@@ -916,7 +916,7 @@ struct CanvasTests {
         let points = Path.flatten(arc.trim(from: 0.0, to: 0.25).actions)
 
         guard let first = points.first?.first,
-            let last = points.first?.last
+              let last = points.first?.last
         else {
             Issue.record("expected a trimmed arc")
             return

@@ -133,9 +133,9 @@ public struct DragGesture: Gesture {
                 && lhs.predictedEndLocation.x == rhs.predictedEndLocation.x
                 && lhs.predictedEndLocation.y == rhs.predictedEndLocation.y
                 && lhs.predictedEndTranslation.width
-                    == rhs.predictedEndTranslation.width
+                == rhs.predictedEndTranslation.width
                 && lhs.predictedEndTranslation.height
-                    == rhs.predictedEndTranslation.height
+                == rhs.predictedEndTranslation.height
                 && lhs.modifiers == rhs.modifiers
                 && lhs.button == rhs.button
         }

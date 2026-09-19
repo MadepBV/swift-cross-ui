@@ -75,22 +75,51 @@ struct PropertyPanel: View {
 /// The strings and colours the scenes are built from.
 enum HarnessData {
     static let propertyNames = [
-        "Diameter", "Length", "Bending radius", "Cover", "Grade",
-        "Shape code", "Spacing", "Count", "Weight", "Layer",
+        "Diameter",
+        "Length",
+        "Bending radius",
+        "Cover",
+        "Grade",
+        "Shape code",
+        "Spacing",
+        "Count",
+        "Weight",
+        "Layer",
     ]
 
     static let propertyValues = [
-        "16 mm", "1 250 mm", "64 mm", "35 mm", "B500B",
-        "21", "150 mm", "48", "19.7 kg", "Slab / top",
+        "16 mm",
+        "1 250 mm",
+        "64 mm",
+        "35 mm",
+        "B500B",
+        "21",
+        "150 mm",
+        "48",
+        "19.7 kg",
+        "Slab / top",
     ]
 
     static let sidebarTitles = [
-        "Foundation", "Slab", "Column", "Beam", "Wall",
-        "Stair", "Ramp", "Corbel", "Pile cap", "Capping beam",
+        "Foundation",
+        "Slab",
+        "Column",
+        "Beam",
+        "Wall",
+        "Stair",
+        "Ramp",
+        "Corbel",
+        "Pile cap",
+        "Capping beam",
     ]
 
     static let swatchColors: [Color] = [
-        .blue, .green, .orange, .purple, .red, .yellow,
+        .blue,
+        .green,
+        .orange,
+        .purple,
+        .red,
+        .yellow,
     ]
 
     /// Builds a viewport-sized RGBA buffer.

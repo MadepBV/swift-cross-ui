@@ -45,17 +45,45 @@ final class WidgetPropertyCache {
         var childPositions: [Int: SIMD2<Int>] = [:]
 
         /// The last text written to a text block.
-        var text: String?
+        var text: String? {
+            didSet { naturalSize = nil }
+        }
         /// The last text selection setting written to a text block.
         var isTextSelectionEnabled: Bool?
         /// The last font applied to a text block or control.
-        var font: SwiftCrossUI.Font.Resolved?
+        var font: SwiftCrossUI.Font.Resolved? {
+            didSet { naturalSize = nil }
+        }
         /// The last foreground colour applied to a text block or control.
         var foregroundColor: SwiftCrossUI.Color.Resolved?
         /// The last enabled state applied to a control.
         var isEnabled: Bool?
         /// The last colour scheme applied to a control.
-        var colorScheme: SwiftCrossUI.ColorScheme?
+        var colorScheme: SwiftCrossUI.ColorScheme? {
+            didSet { naturalSize = nil }
+        }
+
+        /// The widget's natural size, and the layout pass it was measured
+        /// during.
+        ///
+        /// Measuring a widget means writing `Width` and `Height`, running a
+        /// synchronous WinUI measure and reading `DesiredSize` back — nine COM
+        /// crossings and a real layout pass — and the layout system asks a
+        /// widget for its natural size up to three times within one update
+        /// pass (a minimum probe, a maximum probe and the proposal its
+        /// container settles on).
+        ///
+        /// The pass token is what makes reuse safe without a web of
+        /// invalidation rules. A layout pass runs synchronously on the UI
+        /// thread, so WinUI cannot render, re-theme or otherwise re-measure a
+        /// widget part way through one: within a pass, the only thing that can
+        /// change a widget's measurement is a write this backend makes itself.
+        /// Those writes clear the entry — see the `didSet`s above, and the
+        /// explicit clears wherever content is written against a *different*
+        /// widget's entry (a button's label, a picker's options). Everything
+        /// else, first render included, is picked up by the next pass, which is
+        /// also the earliest moment a new measurement could be acted on.
+        var naturalSize: (token: UInt64, size: SIMD2<Int>)?
 
         /// The last background colour written to a colourable rectangle.
         var backgroundColor: SwiftCrossUI.Color.Resolved?
@@ -166,7 +194,7 @@ enum SolidColorBrushCache {
         let uwpColor = color.uwpColor
         let key =
             UInt32(uwpColor.a) << 24 | UInt32(uwpColor.r) << 16 | UInt32(uwpColor.g) << 8
-            | UInt32(uwpColor.b)
+                | UInt32(uwpColor.b)
         if let brush = brushes[key] {
             return brush
         }
@@ -206,14 +234,43 @@ enum TextMeasurementCache {
         var lineLimit: SwiftCrossUI.LineLimit?
     }
 
+    /// How many measurements one generation holds before it is retired.
+    ///
+    /// A window's distinct measurements are (label count) × (the handful of
+    /// proposals each label is probed with), which runs into the thousands for
+    /// a document-shaped window; the bound only exists so that unbounded text
+    /// — a field's contents change on every keystroke — can't grow the table
+    /// forever.
+    private static let generationCapacity = 8192
+
+    /// The measurements recorded since the last generation was retired.
     private static var measurements: [Key: SIMD2<Int>] = [:]
+
+    /// The generation before ``measurements``, kept until it is displaced.
+    ///
+    /// Two generations rather than one because emptying the table outright
+    /// makes a window that needs more than ``generationCapacity`` distinct
+    /// measurements re-measure *everything* on the pass after each overflow,
+    /// which is the worst possible moment: the windows big enough to overflow
+    /// are exactly the ones that can least afford a full re-measure. With a
+    /// second generation, an overflow costs at most a promotion per key that
+    /// is still in use, and a steady-state window keeps hitting.
+    private static var previousMeasurements: [Key: SIMD2<Int>] = [:]
 
     /// The cached measurement for a key, if there is one.
     ///
     /// - Parameter key: The measurement's inputs.
     /// - Returns: The measured size, or `nil` if it hasn't been measured yet.
     static func measurement(for key: Key) -> SIMD2<Int>? {
-        measurements[key]
+        if let size = measurements[key] {
+            return size
+        }
+        guard let size = previousMeasurements[key] else {
+            return nil
+        }
+        // Promote it, so that a key still in use survives the next retirement.
+        record(size, for: key)
+        return size
     }
 
     /// Records a measurement.
@@ -222,11 +279,10 @@ enum TextMeasurementCache {
     ///   - size: The measured size.
     ///   - key: The measurement's inputs.
     static func record(_ size: SIMD2<Int>, for key: Key) {
-        // Text content is unbounded (a text field's contents change on every
-        // keystroke), so the cache is bounded and simply emptied when it grows
-        // too large rather than maintaining a recency order.
-        if measurements.count >= 8192 {
-            measurements.removeAll(keepingCapacity: true)
+        if measurements.count >= generationCapacity {
+            previousMeasurements = measurements
+            measurements = [:]
+            measurements.reserveCapacity(generationCapacity)
         }
         measurements[key] = size
     }
@@ -237,5 +293,6 @@ enum TextMeasurementCache {
     /// ``Key`` changes, such as the system's text scale.
     static func invalidate() {
         measurements.removeAll(keepingCapacity: true)
+        previousMeasurements.removeAll(keepingCapacity: false)
     }
 }

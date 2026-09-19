@@ -122,4 +122,34 @@ public final class WindowGroupNode<Content: View>: SceneGraphNode {
             )
         }
     }
+
+    /// Drives one update of every window in the group at an explicit proposed
+    /// size.
+    ///
+    /// Exists for the performance harness; see
+    /// ``WindowReference/updateForBenchmarking(_:proposedWindowSize:backend:environment:)``.
+    ///
+    /// - Parameters:
+    ///   - proposedSize: The size to lay each window's content out at.
+    ///   - isSceneUpdate: Whether to hand the windows a new scene value, as a
+    ///     scene-level update does. A resize passes `false`, because a resize
+    ///     changes only the proposed size.
+    ///   - backend: The backend to use.
+    ///   - environment: The current environment.
+    @_spi(Backends)
+    public func updateForBenchmarking<Backend: BaseAppBackend>(
+        proposedSize: SIMD2<Int>,
+        isSceneUpdate: Bool,
+        backend: Backend,
+        environment: EnvironmentValues
+    ) {
+        for windowReference in windowReferences.values {
+            windowReference.updateForBenchmarking(
+                isSceneUpdate ? scene : nil,
+                proposedWindowSize: proposedSize,
+                backend: backend,
+                environment: environment
+            )
+        }
+    }
 }

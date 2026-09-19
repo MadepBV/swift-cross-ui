@@ -117,6 +117,55 @@ struct PerformanceHarness {
             )
         }
 
+        /// Builds a pass that drives a whole window update, which is the path a
+        /// real app runs, rather than the view graph on its own.
+        ///
+        /// ``WindowReference`` lays the whole graph out at a proposal of
+        /// `.zero` to derive the window's minimum size before it lays it out at
+        /// the real proposal, and each of those begins its own ``LayoutPass``.
+        /// The view-graph scenarios above drive one layout and one commit, so
+        /// they can't show that second walk; these can.
+        ///
+        /// A window update runs both of its phases inside `update`, so the
+        /// whole update is timed as the `layout` phase and the `commit` phase
+        /// is empty. Read the `pass` row for these scenarios.
+        ///
+        /// - Parameters:
+        ///   - makeView: Builds the window's content.
+        ///   - isSceneUpdate: Whether each pass hands the window a new scene
+        ///     value (a scene-level update) or only a new proposed size (a
+        ///     resize).
+        ///   - proposedSize: The size to lay the content out at, per pass.
+        @MainActor
+        func windowPass<V: View>(
+            _ makeView: @escaping () -> V,
+            isSceneUpdate: Bool = true,
+            proposedSize: @escaping () -> SIMD2<Int> = { windowSize }
+        ) -> Pass {
+            let node = WindowGroupNode(
+                from: WindowGroup("performance-harness-window") { makeView() },
+                backend: backend,
+                environment: rootEnvironment
+            )
+            node.updateForBenchmarking(
+                proposedSize: proposedSize(),
+                isSceneUpdate: true,
+                backend: backend,
+                environment: rootEnvironment
+            )
+            return Pass(
+                layout: {
+                    node.updateForBenchmarking(
+                        proposedSize: proposedSize(),
+                        isSceneUpdate: isSceneUpdate,
+                        backend: backend,
+                        environment: rootEnvironment
+                    )
+                },
+                commit: { .zero }
+            )
+        }
+
         var results: [Result] = []
 
         func scenario(_ name: String, passes: Int? = nil, _ setUp: () -> Pass) {
@@ -191,6 +240,30 @@ struct PerformanceHarness {
             }
         }
 
+        // The same CAD window, driven through the scene layer the way a real
+        // app drives it. Compare against `cad/idle`: the difference is the
+        // second full walk of the graph that a window update performs.
+        scenario("window/update", passes: max(passCount / 2, 5)) {
+            windowPass { CADWindow(frame: 0, viewport: idleViewport) }
+        }
+
+        // A window being resized: the content is unchanged and only the
+        // proposal moves, which is what dragging a window edge does.
+        scenario("window/resize", passes: max(passCount / 2, 5)) {
+            var frame = 0
+            return windowPass(
+                { CADWindow(frame: 0, viewport: idleViewport) },
+                isSceneUpdate: false,
+                proposedSize: {
+                    frame += 1
+                    return SIMD2(
+                        windowSize.x + frame % 8,
+                        windowSize.y + frame % 8
+                    )
+                }
+            )
+        }
+
         // A long uniform list, proposed an unbounded height as a scroll view
         // would.
         scenario("list/idle", passes: max(passCount / 4, 5)) {
@@ -251,7 +324,7 @@ struct PerformanceHarness {
 
     private static func passCountFromEnvironment() -> Int {
         if let raw = ProcessInfo.processInfo.environment["SCUI_HARNESS_PASSES"],
-            let value = Int(raw), value > 0
+           let value = Int(raw), value > 0
         {
             return value
         }
@@ -334,7 +407,10 @@ struct PerformanceHarness {
                         "count:" + event,
                         "1",
                         "\(count)",
-                        "", "", "", "",
+                        "",
+                        "",
+                        "",
+                        "",
                         "\(Int(result.committedSize.width))",
                         "\(Int(result.committedSize.height))",
                     ].joined(separator: ",")
@@ -345,7 +421,7 @@ struct PerformanceHarness {
         let csv = lines.joined(separator: "\n") + "\n"
 
         if let path = ProcessInfo.processInfo.environment["SCUI_HARNESS_OUTPUT"],
-            !path.isEmpty
+           !path.isEmpty
         {
             do {
                 try Data(csv.utf8).write(to: URL(fileURLWithPath: path))

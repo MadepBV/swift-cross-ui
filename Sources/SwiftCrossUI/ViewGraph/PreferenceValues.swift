@@ -10,6 +10,7 @@ public struct PreferenceValues: Sendable {
         presentationBackground: nil,
         interactiveDismissDisabled: nil,
         windowDismissBehavior: nil,
+        onWindowCloseRequested: nil,
         preferredWindowMinimizeBehavior: nil,
         windowResizeBehavior: nil,
         layoutPriority: defaultLayoutPriority
@@ -39,6 +40,9 @@ public struct PreferenceValues: Sendable {
 
     /// Controls whether the user can close the enclosing window.
     public var windowDismissBehavior: WindowInteractionBehavior?
+
+    /// Asynchronous authorization before the enclosing window closes.
+    public var onWindowCloseRequested: (@MainActor @Sendable () async -> Bool)?
 
     /// Controls whether the user can minimize the enclosing window.
     public var preferredWindowMinimizeBehavior: WindowInteractionBehavior?
@@ -133,6 +137,9 @@ extension PreferenceValues {
             }
             if windowDismissBehavior == nil {
                 windowDismissBehavior = child.windowDismissBehavior
+            }
+            if onWindowCloseRequested == nil {
+                onWindowCloseRequested = child.onWindowCloseRequested
             }
             if preferredWindowMinimizeBehavior == nil {
                 preferredWindowMinimizeBehavior = child.preferredWindowMinimizeBehavior

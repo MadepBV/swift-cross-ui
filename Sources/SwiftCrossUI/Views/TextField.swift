@@ -26,6 +26,15 @@ public struct TextField: ElementaryView, View {
     /// `nil` for the initializers that bind straight to a string.
     private var representsBoundValue: ((String) -> Bool)? = nil
 
+    /// A value snapshot distinguishes an incomplete native edit from a model
+    /// change. Its box is node-local and does not publish during layout.
+    private struct DraftState {
+        let value = Box<FormattedFieldValue?>(nil)
+    }
+    @State private var draftState = DraftState()
+    private var captureFormattedValue: (() -> FormattedFieldValue?)? = nil
+    private var canParseInput: ((String) -> Bool)? = nil
+
     /// Creates an editable text field.
     ///
     /// The title is what the field shows while it's empty, unless a `prompt` is
@@ -152,6 +161,12 @@ public struct TextField: ElementaryView, View {
     /// mirroring the behaviour of SwiftUI's
     /// `TextField(_:value:formatter:)` when its formatter fails.
     ///
+    /// For `Equatable` value types, incomplete native edits also survive
+    /// layout and body updates while the bound value and format are unchanged.
+    /// A changed value or format reconciles the field with its binding. This
+    /// does not add submission or end-editing normalization. Other input types
+    /// retain the parsed/formatted-output comparison described above.
+    ///
     /// - Parameters:
     ///   - placeholder: The label to show when the field is empty.
     ///   - value: A binding to the value to edit.
@@ -177,11 +192,19 @@ public struct TextField: ElementaryView, View {
             }
         )
 
-        // The parsed values get compared via their formatted output because
-        // `ParseableFormatStyle` doesn't require its input to be `Equatable`.
+        self.captureFormattedValue = {
+            FormattedFieldValue(value.wrappedValue, format: AnyHashable(format))
+        }
+        self.canParseInput = { (try? strategy.parse($0)) != nil }
+
+        // Exact equality prevents a real model change from being hidden by a
+        // rounding format. Unconstrained inputs retain the original fallback.
         self.representsBoundValue = { string in
             guard let parsed = try? strategy.parse(string) else {
                 return false
+            }
+            if let parsed = parsed as? any Equatable {
+                return formattedFieldValuesEqual(parsed, value.wrappedValue)
             }
             return format.format(parsed) == format.format(value.wrappedValue)
         }
@@ -282,6 +305,7 @@ public struct TextField: ElementaryView, View {
             placeholder: placeholder,
             environment: environment,
             onChange: { newValue in
+                let previousValue = captureFormattedValue?()
                 #if DEBUG
                     // We perform this check in debug mode to catch backends that cause
                     // unnecessary binding writes, but avoid doing so in release mode
@@ -301,14 +325,14 @@ public struct TextField: ElementaryView, View {
                 #endif
 
                 self.text = newValue
+                rememberEdit(newValue, previousValue: previousValue)
             },
             onSubmit: environment.onSubmit ?? {}
         )
 
         let text = text
         let content = backend.getContent(ofTextField: widget)
-        let contentIsUpToDate = representsBoundValue?(content) ?? false
-        if text != content && !contentIsUpToDate {
+        if shouldReplaceContent(content, with: text) {
             backend.setContent(ofTextField: widget, to: text)
         }
 
@@ -332,6 +356,7 @@ public struct TextField: ElementaryView, View {
         backend: Backend
     ) {
         backend.updateTextEditor(widget, environment: environment) { newValue in
+            let previousValue = captureFormattedValue?()
             #if DEBUG
                 // Debug-only for the reason spelled out in `commit`.
                 if self.text == newValue {
@@ -346,15 +371,71 @@ public struct TextField: ElementaryView, View {
             #endif
 
             self.text = newValue
+            rememberEdit(newValue, previousValue: previousValue)
         }
 
         let text = text
         let content = backend.getContent(ofTextEditor: widget)
-        let contentIsUpToDate = representsBoundValue?(content) ?? false
-        if text != content && !contentIsUpToDate {
+        if shouldReplaceContent(content, with: text) {
             backend.setContent(ofTextEditor: widget, to: text)
         }
 
         backend.setSize(of: widget, to: layout.size.vector)
     }
+
+    /// Native edits can arrive again before the next layout. Acknowledge the
+    /// result immediately, but never bless a parsed value rejected or changed
+    /// by the binding's setter. Incomplete input is retained only if that
+    /// setter left the bound value unchanged.
+    private func rememberEdit(_ content: String, previousValue: FormattedFieldValue?) {
+        guard let current = captureFormattedValue?() else { return }
+        if representsBoundValue?(content) == true
+            || (canParseInput?(content) == false && previousValue?.matches(current) == true)
+        {
+            draftState.value.value = current
+        } else {
+            draftState.value.value = nil
+        }
+    }
+
+    private func shouldReplaceContent(_ content: String, with formatted: String) -> Bool {
+        let current = captureFormattedValue?()
+        let previous = draftState.value.value
+        // Record before writing native content: some backends synchronously
+        // report programmatic text changes through their current callback.
+        draftState.value.value = current
+        let unchanged = current.map { previous?.matches($0) == true } ?? false
+        let formatChanged = current.map { current in
+            previous.map { $0.format != current.format } ?? false
+        } ?? false
+        return content != formatted && !unchanged
+            && (formatChanged || representsBoundValue?(content) != true)
+    }
+}
+
+/// Retains a comparable value, rather than just its possibly rounded display.
+/// A mutable reference cannot serve as a historical snapshot; unsupported
+/// inputs conservatively use the pre-existing reconciliation path.
+private struct FormattedFieldValue {
+    let value: any Equatable
+    let format: AnyHashable
+
+    init?<Value>(_ value: Value, format: AnyHashable) {
+        guard !(type(of: value) is AnyClass), !(type(of: format.base) is AnyClass),
+            let value = value as? any Equatable
+        else {
+            return nil
+        }
+        self.value = value
+        self.format = format
+    }
+
+    func matches(_ other: Self) -> Bool {
+        format == other.format && formattedFieldValuesEqual(value, other.value)
+    }
+}
+
+private func formattedFieldValuesEqual<Value: Equatable>(_ lhs: Value, _ rhs: Any) -> Bool {
+    guard let rhs = rhs as? Value else { return false }
+    return lhs == rhs
 }

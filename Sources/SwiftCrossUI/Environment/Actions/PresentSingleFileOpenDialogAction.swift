@@ -25,7 +25,10 @@ public struct PresentSingleFileOpenDialogAction: Sendable {
     ///   - allowSelectingFiles: Whether to allow selecting files (as opposed
     ///     to directories) in the dialog. Defaults to `true`.
     ///   - allowSelectingDirectories: Whether to allow selecting directories
-    ///     in the dialog. Defaults to `true`.
+    ///     in the dialog. Defaults to `false`.
+    ///   - allowedContentTypes: The file types offered by the picker.
+    ///   - allowOtherContentTypes: Whether files outside the offered types
+    ///     may be selected. Defaults to `true` for compatibility.
     /// - Returns: The URL of the user's chosen file, or `nil` if the user
     ///   cancelled the dialog.
     public func callAsFunction(
@@ -35,7 +38,9 @@ public struct PresentSingleFileOpenDialogAction: Sendable {
         initialDirectory: URL? = nil,
         showHiddenFiles: Bool = false,
         allowSelectingFiles: Bool = true,
-        allowSelectingDirectories: Bool = false
+        allowSelectingDirectories: Bool = false,
+        allowedContentTypes: [ContentType] = [],
+        allowOtherContentTypes: Bool = true
     ) async -> URL? {
         guard let backend = backend as? any BackendFeatures.FileOpenDialogs else {
             logger.warnOnce("\(type(of: backend)) does not support file open dialogs")
@@ -51,9 +56,9 @@ public struct PresentSingleFileOpenDialogAction: Sendable {
                         fileDialogOptions: FileDialogOptions(
                             title: title,
                             defaultButtonLabel: defaultButtonLabel,
-                            allowedContentTypes: [],
+                            allowedContentTypes: allowedContentTypes,
                             showHiddenFiles: showHiddenFiles,
-                            allowOtherContentTypes: true,
+                            allowOtherContentTypes: allowOtherContentTypes,
                             initialDirectory: initialDirectory
                         ),
                         openDialogOptions: OpenDialogOptions(
@@ -65,7 +70,7 @@ public struct PresentSingleFileOpenDialogAction: Sendable {
                     ) { result in
                         switch result {
                             case .success(let url):
-                                continuation.resume(returning: url[0])
+                                continuation.resume(returning: url.first)
                             case .cancelled:
                                 continuation.resume(returning: nil)
                         }

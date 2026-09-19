@@ -83,7 +83,7 @@ struct KeyboardShortcutModifier<Content: View>: TypeSafeView {
     ) -> Backend.Widget {
         guard
             let shortcutBackend = backend
-                as? any BaseAppBackend & BackendFeatures.KeyboardShortcuts
+            as? any BaseAppBackend & BackendFeatures.KeyboardShortcuts
         else {
             return children.child0.widget.into()
         }
@@ -129,7 +129,7 @@ struct KeyboardShortcutModifier<Content: View>: TypeSafeView {
 
         guard
             let shortcutBackend = backend
-                as? any BaseAppBackend & BackendFeatures.KeyboardShortcuts
+            as? any BaseAppBackend & BackendFeatures.KeyboardShortcuts
         else {
             return
         }

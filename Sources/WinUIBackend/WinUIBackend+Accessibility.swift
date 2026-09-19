@@ -105,7 +105,7 @@ extension WinUIBackend: BackendFeatures.Accessibility {
     /// - Parameter widget: The element whose descendants to hide.
     private static func hideDescendants(of widget: WinUI.UIElement) {
         guard let panel = widget as? WinUI.Panel,
-            let children = panel.children
+              let children = panel.children
         else {
             return
         }
@@ -141,7 +141,7 @@ extension WinUIBackend: BackendFeatures.Accessibility {
         into parts: inout [String]
     ) {
         guard let panel = widget as? WinUI.Panel,
-            let children = panel.children
+              let children = panel.children
         else {
             return
         }

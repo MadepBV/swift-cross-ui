@@ -116,7 +116,8 @@ public struct Text: Sendable {
     ///   - format: The format style used to convert `input` into a string.
     @available(macOS 12.0, iOS 15.0, tvOS 15.0, watchOS 8.0, macCatalyst 15.0, *)
     public init<F: FormatStyle>(_ input: F.FormatInput, format: F)
-    where F.FormatInput: Equatable, F.FormatOutput == String {
+        where F.FormatInput: Equatable, F.FormatOutput == String
+    {
         self.string = format.format(input)
     }
 }
@@ -408,12 +409,19 @@ extension Text: ElementaryView {
         let environment = attributes.apply(to: environment)
         let transformedString = environment.applyingTextTransforms(to: string)
 
-        // TODO: Avoid this. Move it to commit once we figure out a solution for Gtk.
-        // Even in dry runs we must update the underlying text view widget
-        // because GtkBackend currently relies on querying the widget for text
-        // properties and such (via Pango).
-        backend
-            .updateTextView(widget, content: transformedString, environment: environment)
+        // Gtk measures *through* the widget (it takes its Pango layout context
+        // from it), so for those backends the text view has to hold the string
+        // before the measurement below can be asked for. Backends that measure
+        // with their own scratch element don't, and write the widget on commit
+        // instead: a container asks a label for its size several times per pass,
+        // and each of these is a backend call — a few thousand per pass for a
+        // window of a few hundred labels. See
+        // ``BackendFeatures/TextViews/measuresTextIndependentlyOfWidget``.
+        if !backend.measuresTextIndependentlyOfWidget {
+            BackendCallStatistics.record("text.updateTextView")
+            backend
+                .updateTextView(widget, content: transformedString, environment: environment)
+        }
 
         // UI frameworks often handle the zero proposal specially. We want to
         // have standard text sizing behaviour so it's better for us to never
@@ -429,6 +437,7 @@ extension Text: ElementaryView {
         //
         // A zero height proposal should result in the text using at least one
         // line of height (if non-empty).
+        BackendCallStatistics.record("text.measure")
         var size = backend.size(
             of: transformedString,
             whenDisplayedIn: widget,
@@ -459,6 +468,19 @@ extension Text: ElementaryView {
         environment: EnvironmentValues,
         backend: Backend
     ) {
+        // The counterpart of the guarded call in `computeLayout`: whichever of
+        // the two runs, the widget ends the pass holding this text. Committing
+        // it here costs one call per label per pass instead of one per layout
+        // computation.
+        if backend.measuresTextIndependentlyOfWidget {
+            let environment = attributes.apply(to: environment)
+            BackendCallStatistics.record("text.updateTextView")
+            backend.updateTextView(
+                widget,
+                content: environment.applyingTextTransforms(to: string),
+                environment: environment
+            )
+        }
         backend.setSize(of: widget, to: layout.size.vector)
     }
 }

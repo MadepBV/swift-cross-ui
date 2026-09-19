@@ -230,7 +230,11 @@ struct ButtonStyleShapeAndGestureTests {
         // Purely a compilation test: these are the spellings the port must
         // keep accepting, and `.buttonStyle(_:)` takes them all.
         let styles: [any ButtonStyle] = [
-            .automatic, .bordered, .borderedProminent, .borderless, .plain,
+            .automatic,
+            .bordered,
+            .borderedProminent,
+            .borderless,
+            .plain,
             .link,
         ]
 
@@ -1018,7 +1022,10 @@ struct ButtonStyleShapeAndGestureTests {
             // only resolve once layout runs.
             harness.widget.layoutSubtreeIfNeeded()
 
-            guard let target = Self.firstView(ofType: NSCustomTapGestureTarget.self, in: harness.widget)
+            guard let target = Self.firstView(
+                ofType: NSCustomTapGestureTarget.self,
+                in: harness.widget
+            )
             else {
                 Issue.record("expected a tap gesture target")
                 return

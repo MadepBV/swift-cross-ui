@@ -134,10 +134,10 @@ struct FocusModifier<Content: View>: TypeSafeView {
     /// Creates the backend's focus target.
     ///
     /// Exists purely to bind the opened existential to a generic parameter.
-    private func createTarget<Backend>(
+    private func createTarget<Backend: BaseAppBackend & BackendFeatures.Focus>(
         _ children: Children,
         backend: Backend
-    ) -> Backend.Widget where Backend: BaseAppBackend & BackendFeatures.Focus {
+    ) -> Backend.Widget {
         backend.createFocusTarget(wrapping: children.child0.widget.into())
     }
 
@@ -176,11 +176,11 @@ struct FocusModifier<Content: View>: TypeSafeView {
     /// Updates the backend's focus target.
     ///
     /// Exists purely to bind the opened existential to a generic parameter.
-    private func updateTarget<Backend>(
+    private func updateTarget<Backend: BaseAppBackend & BackendFeatures.Focus>(
         _ widget: Any,
         backend: Backend,
         environment: EnvironmentValues
-    ) where Backend: BaseAppBackend & BackendFeatures.Focus {
+    ) {
         let binding = self.binding
         backend.updateFocusTarget(
             widget as! Backend.Widget,

@@ -137,10 +137,10 @@ public struct GridRow<Content: View>: View {
         for (index, result) in cellResults.enumerated() {
             let x =
                 placement.offsets[index]
-                + horizontalAlignment.position(
-                    ofChild: result.size.width,
-                    in: placement.widths[index]
-                )
+                    + horizontalAlignment.position(
+                        ofChild: result.size.width,
+                        in: placement.widths[index]
+                    )
             let y = verticalAlignment.position(
                 ofChild: result.size.height,
                 in: layout.size.height

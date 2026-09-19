@@ -1,4 +1,4 @@
-import Foundation  // for CGFloat
+import Foundation // for CGFloat
 
 extension View {
     /// Adds padding to a view.

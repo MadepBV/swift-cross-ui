@@ -17,6 +17,7 @@ public struct ColorPicker<Label: View> {
     private var selection: Binding<Color>
     /// Whether the user can choose a partially transparent color.
     private var supportsOpacity: Bool
+    @Environment(\.labelsHidden) private var labelsHidden
 
     /// Displays a color input with a custom label.
     ///
@@ -56,13 +57,16 @@ public struct ColorPicker<Label: View> {
 extension ColorPicker: View {
     public var body: some View {
         HStack {
-            label
+            if !labelsHidden {
+                label
+            }
 
             ColorPickerImplementation(
                 selection: selection,
                 supportsOpacity: supportsOpacity
             )
         }
+        .retainingHiddenControlLabel(label, hidden: labelsHidden)
     }
 }
 

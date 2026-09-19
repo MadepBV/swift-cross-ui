@@ -13,7 +13,11 @@
 @MainActor
 @_spi(Backends) public enum LayoutPass {
     /// The current pass' token.
-    private(set) static var token: UInt64 = 0
+    ///
+    /// Readable by backends so that work whose result is only valid within one
+    /// pass — a measurement a backend is asked for repeatedly while a container
+    /// probes its children, say — can be memoised against it.
+    public private(set) static var token: UInt64 = 0
 
     /// Begins a new pass, invalidating every cached body.
     ///

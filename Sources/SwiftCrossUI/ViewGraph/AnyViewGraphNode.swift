@@ -38,6 +38,8 @@ public class AnyViewGraphNode<NodeView: View> {
     private var _getLastProposedSize: () -> ProposedViewSize
     /// The node's type-erased body invalidation method.
     private var _invalidateCachedBody: () -> Void
+    /// The node's type-erased subtree cache invalidation method.
+    private var _invalidateCachedSubtree: () -> Void
 
     /// Type-erases a view graph node.
     public init<Backend: BaseAppBackend>(_ node: ViewGraphNode<NodeView, Backend>) {
@@ -60,6 +62,7 @@ public class AnyViewGraphNode<NodeView: View> {
             node.lastProposedSize
         }
         _invalidateCachedBody = node.invalidateCachedBody
+        _invalidateCachedSubtree = node.invalidateCachedSubtree
     }
 
     /// Creates a new view graph node and immediately type-erases it.
@@ -109,6 +112,12 @@ public class AnyViewGraphNode<NodeView: View> {
     /// proposed.
     public func invalidateCachedBody() {
         _invalidateCachedBody()
+    }
+
+    /// Discards cached bodies and layouts throughout this node's subtree,
+    /// retaining all nodes, widgets, and state.
+    func invalidateCachedSubtree() {
+        _invalidateCachedSubtree()
     }
 
     /// Gets the node's wrapped view.

@@ -108,10 +108,10 @@ struct SymbolImageTests {
     /// with how often they appear, and which must never quietly degrade to an
     /// outline: an outline warning triangle reads as an informational note.
     static let semanticFillNames = [
-        "checkmark.circle.fill",  // 27 uses: success
-        "exclamationmark.triangle.fill",  // 26 uses: warning
-        "exclamationmark.circle.fill",  // 18 uses: error
-        "lock.fill",  // 16 uses: locked
+        "checkmark.circle.fill", // 27 uses: success
+        "exclamationmark.triangle.fill", // 26 uses: warning
+        "exclamationmark.circle.fill", // 18 uses: error
+        "lock.fill", // 16 uses: locked
     ]
 
     @Test("The .fill names that carry meaning are drawn solid")
@@ -310,7 +310,7 @@ struct SymbolImageTests {
         )
         guard
             case .geometry(let geometry) = LucideSymbolProvider.shared
-                .resolve(request)
+            .resolve(request)
         else {
             Issue.record("An unknown name should still draw something")
             return

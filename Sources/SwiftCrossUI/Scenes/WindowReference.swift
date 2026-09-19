@@ -22,6 +22,15 @@ final class WindowReference<SceneType: WindowingScene> {
     /// The window's preferred color scheme, cached from the last update.
     private var preferredColorScheme: ColorScheme?
 
+    /// The window's content size limits, and the ``LayoutPass`` token as of the
+    /// end of the update that measured them.
+    ///
+    /// Deriving these means laying the whole graph out at proposals the window
+    /// never uses, so an update that can prove nothing has changed since reuses
+    /// them instead. See the use site for what makes that safe.
+    private var cachedSizeLimits:
+        (minimum: ViewSize, maximum: ViewSize?, token: UInt64)?
+
     /// Observation of the scene's content closure.
     ///
     /// The closure handed to `WindowGroup { ... }` runs outside any view
@@ -74,7 +83,13 @@ final class WindowReference<SceneType: WindowingScene> {
         backend.setResizeHandler(ofWindow: window) { [weak self] newSize in
             guard let self else { return }
             self.update(
-                self.scene,
+                // A resize changes the size the content is proposed and
+                // nothing else, so the scene value is the one already stored.
+                // Passing it as `newScene` would re-run the scene's content
+                // closure and re-register its observation on every frame of a
+                // window drag, and would defeat the size-limit cache, all to
+                // rebuild a value equal to the one already held.
+                nil,
                 proposedWindowSize: newSize,
                 needsWindowSizeCommit: false,
                 backend: backend,
@@ -125,6 +140,39 @@ final class WindowReference<SceneType: WindowingScene> {
             backend: backend,
             environment: environment,
             windowSizeIsFinal: !isProgramaticallyResizable
+        )
+    }
+
+    /// Drives one update at an explicit proposed size.
+    ///
+    /// Exists for the performance harness, which needs to measure a window
+    /// update — and in particular a window *resize*, where only the proposed
+    /// size changes — without faking a backend resize event. The framework
+    /// itself never calls this; it goes through
+    /// ``update(_:proposedWindowSize:needsWindowSizeCommit:backend:environment:windowSizeIsFinal:)``
+    /// like everything else.
+    ///
+    /// - Parameters:
+    ///   - newScene: The scene, or `nil` to reuse the previous scene value (as
+    ///     a resize does).
+    ///   - proposedWindowSize: The size to lay the window's content out at.
+    ///   - backend: The backend to use.
+    ///   - environment: The current environment.
+    func updateForBenchmarking<Backend: BaseAppBackend>(
+        _ newScene: SceneType?,
+        proposedWindowSize: SIMD2<Int>,
+        backend: Backend,
+        environment: EnvironmentValues
+    ) {
+        update(
+            newScene,
+            proposedWindowSize: proposedWindowSize,
+            needsWindowSizeCommit: false,
+            backend: backend,
+            environment: environment,
+            // Measuring one update means measuring exactly one, so don't let a
+            // clamped size restart it part way through.
+            windowSizeIsFinal: true
         )
     }
 
@@ -207,40 +255,73 @@ final class WindowReference<SceneType: WindowingScene> {
             newContent = nil
         }
 
-        let probingResult = viewGraph.computeLayout(
-            with: newContent,
-            proposedSize: .zero,
-            environment: environment
-                .with(\.allowLayoutCaching, true)
-        )
-        let minimumWindowSize = probingResult.size
-        updateEnvironment(
-            &environment,
-            viewLayoutResult: probingResult,
-            outerColorScheme: outerColorScheme,
-            backend: backend
-        )
+        // The window's size limits come from laying the whole graph out at
+        // proposals the window will never actually use — `.zero` for the
+        // minimum, and `.infinity` for the maximum under `.contentSize`. Those
+        // sizes are a function of the content and the environment, and not of
+        // the size the window is being proposed, so a resize (which changes
+        // only the proposal) can reuse the ones it measured last time.
+        //
+        // Reuse is only safe while nothing in the graph can have changed since
+        // they were measured, which is precisely what an unchanged
+        // ``LayoutPass`` token says: a token only advances when the graph is
+        // entered from outside, so if no pass has begun since the end of the
+        // last update then no state change, observation change or resize
+        // handler has run in between. Content being recomputed advances it too,
+        // via the passes below, and is ruled out separately because a new
+        // content value can change the limits without any pass having run.
+        //
+        // Note that the cache holds the probes' *results*, never their bodies:
+        // a body evaluated while `isProbingLayout` is true is not valid for the
+        // final pass, so the final pass below still evaluates its own.
+        let canReuseSizeLimits =
+            newContent == nil
+            && cachedSizeLimits?.token == LayoutPass.token
 
-        // With `.contentSize`, the window's maximum size is the maximum size of its
-        // content. With `.contentMinSize` (and `.automatic`), there is no maximum
-        // size.
+        let minimumWindowSize: ViewSize
         let maximumWindowSize: ViewSize?
-        switch environment.windowResizability {
-            case .contentSize:
-                let result = viewGraph.computeLayout(
-                    with: newScene?.content(),
-                    proposedSize: .infinity,
-                    environment: environment.with(\.allowLayoutCaching, true)
-                )
-                updateEnvironment(
-                    &environment,
-                    viewLayoutResult: result,
-                    outerColorScheme: outerColorScheme,
-                    backend: backend
-                )
-                maximumWindowSize = result.size
-            case .automatic, .contentMinSize:
-                maximumWindowSize = nil
+        if canReuseSizeLimits, let cached = cachedSizeLimits {
+            minimumWindowSize = cached.minimum
+            maximumWindowSize = cached.maximum
+            // The environment update that the probes would have performed is a
+            // no-op here: `preferredColorScheme` is unchanged (nothing has run
+            // that could change it), and the caller already applied the cached
+            // value to `environment` above.
+        } else {
+            let probingResult = viewGraph.computeLayout(
+                with: newContent,
+                proposedSize: .zero,
+                environment: environment
+                    .with(\.allowLayoutCaching, true)
+            )
+            minimumWindowSize = probingResult.size
+            updateEnvironment(
+                &environment,
+                viewLayoutResult: probingResult,
+                outerColorScheme: outerColorScheme,
+                backend: backend
+            )
+
+            // With `.contentSize`, the window's maximum size is the maximum size of its
+            // content. With `.contentMinSize` (and `.automatic`), there is no maximum
+            // size.
+            switch environment.windowResizability {
+                case .contentSize:
+                    let result = viewGraph.computeLayout(
+                        with: newScene?.content(),
+                        proposedSize: .infinity,
+                        environment: environment.with(\.allowLayoutCaching, true)
+                    )
+                    updateEnvironment(
+                        &environment,
+                        viewLayoutResult: result,
+                        outerColorScheme: outerColorScheme,
+                        backend: backend
+                    )
+                    maximumWindowSize = result.size
+                case .automatic, .contentMinSize:
+                    maximumWindowSize = nil
+            }
         }
 
         let clampedWindowSize = ViewSize(
@@ -312,12 +393,32 @@ final class WindowReference<SceneType: WindowingScene> {
             setBehaviors(backend: backend)
         }
 
+        if let backend = backend as? any BackendFeatures.WindowCloseRequests {
+            func setCloseRequestHandler<NewBackend: BackendFeatures.WindowCloseRequests>(
+                backend: NewBackend
+            ) {
+                backend.setCloseRequestHandler(
+                    ofWindow: window as! NewBackend.Window,
+                    to: finalContentResult.preferences.onWindowCloseRequested
+                )
+            }
+            setCloseRequestHandler(backend: backend)
+        } else if finalContentResult.preferences.onWindowCloseRequested != nil {
+            logger.warnOnce("\(type(of: backend)) doesn't support window close authorization")
+        }
+
         // Generally just used to update the window color scheme
         backend.updateWindow(window, environment: environment)
 
         // Delay committing the view graph so that the View.inspectWindow(_:)
         // modifiers can be used to overwrite certain SwiftCrossUI behaviors
         viewGraph.commit()
+
+        // Remember the size limits against the token this update finished on,
+        // so that the next update can tell whether anything has entered the
+        // graph since. Recorded after the commit because a commit can still
+        // begin a pass.
+        cachedSizeLimits = (minimumWindowSize, maximumWindowSize, LayoutPass.token)
 
         if isFirstUpdate {
             backend.show(window: window)

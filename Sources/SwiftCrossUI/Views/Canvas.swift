@@ -113,7 +113,7 @@ public struct Canvas: View {
     ///
     /// Declaring the inputs lets the canvas skip the renderer, the command
     /// recording and the widget reconciliation entirely while they, the
-    /// canvas' size, and the font and foreground colour it inherits are all
+    /// canvas' size, and the drawing environment it inherits are all
     /// unchanged:
     ///
     /// ```swift
@@ -270,22 +270,22 @@ extension Canvas {
         // A canvas that has declared its inputs can skip the renderer, the
         // recording and the reconciliation below while nothing it draws from
         // has moved. See `init(inputs:renderer:)`.
-        let font = environment.resolvedFont
-        let foregroundColor = environment.suggestedForegroundColor
-            .resolve(in: environment)
         if let inputs {
+            let drawingEnvironment = CanvasStorage.DrawingEnvironment(environment)
             if let recorded = storage.recordedInputs,
-                Canvas.areEquivalent(recorded, inputs),
-                storage.recordedSize == size,
-                storage.recordedFont == font,
-                storage.recordedForegroundColor == foregroundColor
+               Canvas.areEquivalent(recorded, inputs),
+               storage.recordedSize == size,
+               storage.recordedEnvironment == drawingEnvironment
             {
                 return
             }
             storage.recordedInputs = inputs
             storage.recordedSize = size
-            storage.recordedFont = font
-            storage.recordedForegroundColor = foregroundColor
+            storage.recordedEnvironment = drawingEnvironment
+        } else {
+            // An unconditional renderer may replace the drawing. Switching
+            // back to declared inputs must not reuse the older drawing's key.
+            storage.recordedInputs = nil
         }
 
         let commands = record(
@@ -345,7 +345,7 @@ extension Canvas {
         var reusableCount = 0
         let sharedCount = min(commands.count, storage.children.count)
         while reusableCount < sharedCount,
-            commands[reusableCount].kind == storage.children[reusableCount].kind
+              commands[reusableCount].kind == storage.children[reusableCount].kind
         {
             reusableCount += 1
         }
@@ -489,13 +489,17 @@ extension Canvas {
         let widget = child.widget as! Backend.Widget
         let backendPath = child.backendPath as! Backend.Path
 
-        let pointsChanged = child.lastActions != path.actions
-        let styleChanged = child.lastStrokeStyle != .some(strokeStyle)
-        if pointsChanged || styleChanged {
+        // AppKit maps points using the canvas bounds to flip its Y axis.
+        // Resizing therefore changes backend coordinates even when the drawing
+        // commands themselves still contain the same points.
+        let pointsChanged = child.lastActions != path.actions || child.lastBounds != bounds
+        let styleChanged = child.lastStrokeStyle != (strokeStyle ?? path.strokeStyle)
+        let pathChanged = pointsChanged || styleChanged || child.lastFillRule != path.fillRule
+        if pathChanged {
             if BackendCallStatistics.isCounting {
                 BackendCallStatistics.record("canvas.updatePath")
                 if let previous = child.lastActions,
-                    PathReconciliation.haveSameShape(previous, path.actions)
+                   PathReconciliation.haveSameShape(previous, path.actions)
                 {
                     BackendCallStatistics.record("canvas.updatePath.reconcilable")
                 } else {
@@ -503,6 +507,8 @@ extension Canvas {
                 }
             }
             child.lastActions = path.actions
+            child.lastBounds = bounds
+            child.lastFillRule = path.fillRule
             backend.updatePath(
                 backendPath,
                 path,
@@ -525,10 +531,12 @@ extension Canvas {
             backend.setPosition(ofChildAt: index, in: container, to: .zero)
         }
 
-        if styleChanged || child.lastStrokeColor != strokeColor
+        // Updating a path does not necessarily repaint its widget: UIKit
+        // copies it into a layer and AppKit explicitly requests display here.
+        if pathChanged || child.lastStrokeColor != strokeColor
             || child.lastFillColor != fillColor
         {
-            child.lastStrokeStyle = .some(strokeStyle)
+            child.lastStrokeStyle = strokeStyle ?? path.strokeStyle
             child.lastStrokeColor = strokeColor
             child.lastFillColor = fillColor
             BackendCallStatistics.record("canvas.renderPath")
@@ -586,13 +594,17 @@ extension Canvas {
         // ``CanvasStorage/Child/lastSize``.
         let font = textEnvironment.resolvedFont
         let color = textEnvironment.suggestedForegroundColor.resolve(in: textEnvironment)
+        let textMetricsChanged = child.lastText != content || child.lastFont != font
         let textChanged =
-            child.lastText != content || child.lastFont != font
-            || child.lastTextColor != color
+            textMetricsChanged || child.lastTextColor != color
+                || child.lastTextAlignment != textEnvironment.multilineTextAlignment
+                || child.lastTextSelectionEnabled != textEnvironment.isTextSelectionEnabled
         if textChanged {
             child.lastText = content
             child.lastFont = font
             child.lastTextColor = color
+            child.lastTextAlignment = textEnvironment.multilineTextAlignment
+            child.lastTextSelectionEnabled = textEnvironment.isTextSelectionEnabled
             BackendCallStatistics.record("canvas.updateTextView")
             backend.updateTextView(
                 widget,
@@ -613,8 +625,10 @@ extension Canvas {
         }
 
         let measured: SIMD2<Int>
-        if !textChanged, let cached = child.lastMeasurement,
-            child.lastProposal == SIMD2(proposedWidth ?? -1, proposedHeight ?? -1)
+        // Colour, alignment and selection updates do not change text metrics.
+        if !textMetricsChanged, let cached = child.lastMeasurement,
+           child.lastProposal == SIMD2(proposedWidth ?? -1, proposedHeight ?? -1),
+           child.lastLineLimit == textEnvironment.lineLimitSettings
         {
             measured = cached
         } else {
@@ -628,6 +642,7 @@ extension Canvas {
             )
             child.lastMeasurement = measured
             child.lastProposal = SIMD2(proposedWidth ?? -1, proposedHeight ?? -1)
+            child.lastLineLimit = textEnvironment.lineLimitSettings
         }
 
         if child.lastSize != measured {
@@ -736,6 +751,34 @@ extension Canvas {
 
 /// The persistent state that a ``Canvas`` keeps between draws.
 final class CanvasStorage: ViewGraphNodeChildren {
+    /// Environment inputs used by recording and replay. Adaptive command
+    /// colours can change while the inherited foreground stays fixed, and text
+    /// transforms and metrics can affect measurements inside the renderer.
+    struct DrawingEnvironment: Equatable {
+        var font: Font.Resolved
+        var fontOverlay: Font.Overlay
+        var foregroundColor: Color.Resolved
+        var colorScheme: ColorScheme
+        var textCase: Text.Case?
+        var locale: Locale
+        var lineLimit: LineLimit?
+        var textAlignment: HorizontalAlignment
+        var isTextSelectionEnabled: Bool
+
+        @MainActor
+        init(_ environment: EnvironmentValues) {
+            font = environment.resolvedFont
+            fontOverlay = environment.fontOverlay
+            foregroundColor = environment.suggestedForegroundColor.resolve(in: environment)
+            colorScheme = environment.colorScheme
+            textCase = environment.textCase
+            locale = environment.locale
+            lineLimit = environment.lineLimitSettings
+            textAlignment = environment.multilineTextAlignment
+            isTextSelectionEnabled = environment.isTextSelectionEnabled
+        }
+    }
+
     /// One backend child widget in a canvas' pool.
     final class Child {
         /// The kind of command that this child renders.
@@ -747,6 +790,10 @@ final class CanvasStorage: ViewGraphNodeChildren {
         /// The path actions last uploaded to the backend, used to skip
         /// rebuilding unchanged geometry.
         var lastActions: [Path.Action]?
+        /// The bounds used to map the path into backend coordinates.
+        var lastBounds: Path.Rect?
+        /// The fill rule last uploaded to the backend path.
+        var lastFillRule: FillRule?
 
         /// The size last written to the child widget.
         ///
@@ -764,18 +811,23 @@ final class CanvasStorage: ViewGraphNodeChildren {
         /// The fill colour last rendered into the child widget.
         var lastFillColor: Color.Resolved?
         /// The stroke style last rendered into the child widget.
-        var lastStrokeStyle: StrokeStyle??
+        var lastStrokeStyle: StrokeStyle?
         /// The text content last written to the child widget.
         var lastText: String?
         /// The font the text content was last written with.
         var lastFont: Font.Resolved?
         /// The colour the text content was last written with.
         var lastTextColor: Color.Resolved?
+        /// The alignment and selection settings last applied to the text view.
+        var lastTextAlignment: HorizontalAlignment?
+        var lastTextSelectionEnabled: Bool?
         /// The measurement the text content last produced.
         var lastMeasurement: SIMD2<Int>?
         /// The proposal ``lastMeasurement`` was produced for. An unspecified
         /// dimension is stored as -1, which no real proposal can be.
         var lastProposal: SIMD2<Int>?
+        /// The line limit used for the last text measurement.
+        var lastLineLimit: LineLimit?
 
         /// Creates a child.
         ///
@@ -802,8 +854,6 @@ final class CanvasStorage: ViewGraphNodeChildren {
     var recordedInputs: (any Equatable)?
     /// The size the current drawing was recorded at.
     var recordedSize: ViewSize?
-    /// The font the current drawing was recorded with.
-    var recordedFont: Font.Resolved?
-    /// The foreground colour the current drawing was recorded with.
-    var recordedForegroundColor: Color.Resolved?
+    /// The environment the current drawing was recorded with.
+    var recordedEnvironment: DrawingEnvironment?
 }

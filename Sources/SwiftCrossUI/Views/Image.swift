@@ -130,9 +130,9 @@ extension Image.Source: Equatable {
     static func == (lhs: Self, rhs: Self) -> Bool {
         switch (lhs, rhs) {
             case (
-                .url(let lhsURL, let lhsUseFileExtension),
-                .url(let rhsURL, let rhsUseFileExtension)
-            ):
+            .url(let lhsURL, let lhsUseFileExtension),
+            .url(let rhsURL, let rhsUseFileExtension)
+        ):
                 lhsURL == rhsURL && lhsUseFileExtension == rhsUseFileExtension
             case (.systemName(let lhsName), .systemName(let rhsName)):
                 lhsName == rhsName
@@ -141,7 +141,7 @@ extension Image.Source: Equatable {
                     && lhsImage.height == rhsImage.height
                     && lhsImage.bytes.count == rhsImage.bytes.count
                     && Image.storageIdentity(of: lhsImage.bytes)
-                        == Image.storageIdentity(of: rhsImage.bytes)
+                    == Image.storageIdentity(of: rhsImage.bytes)
             default:
                 false
         }
@@ -211,7 +211,7 @@ extension Image: TypeSafeView {
             case .geometry:
                 let side =
                     children.cachedSymbolRequest?.pointSize
-                    ?? environment.resolvedFont.pointSize
+                        ?? environment.resolvedFont.pointSize
                 idealSize = ViewSize(side, side)
             case .none:
                 idealSize = nil
@@ -246,7 +246,7 @@ extension Image: TypeSafeView {
         let request = symbolRequest(in: environment)
         guard
             source != children.cachedImageSource
-                || request != children.cachedSymbolRequest
+            || request != children.cachedSymbolRequest
         else {
             return
         }
@@ -368,7 +368,7 @@ extension Image: TypeSafeView {
 
         let scaleFactorChanged =
             backend.requiresImageUpdateOnScaleFactorChange
-            && children.lastScaleFactor != environment.windowScaleFactor
+                && children.lastScaleFactor != environment.windowScaleFactor
         if children.contentChanged || hasResized || scaleFactorChanged {
             backend.updateImageView(
                 children.imageWidget.into(),
@@ -417,7 +417,7 @@ extension Image: TypeSafeView {
 
         guard
             let pathsBackend = backend as? any BaseAppBackend
-                & BackendFeatures.Paths
+            & BackendFeatures.Paths
         else {
             return
         }
@@ -449,7 +449,7 @@ extension Image: TypeSafeView {
         let widget: Backend.Widget
         let backendPath: Backend.Path
         if let existing = children.symbolWidget,
-            let existingPath = children.symbolPath as? Backend.Path
+           let existingPath = children.symbolPath as? Backend.Path
         {
             widget = existing.into()
             backendPath = existingPath

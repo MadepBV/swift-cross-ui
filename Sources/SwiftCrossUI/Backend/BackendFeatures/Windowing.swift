@@ -58,4 +58,22 @@ extension BackendFeatures {
             to action: @escaping () -> Void
         )
     }
+
+
+    /// Backends that can authorize a window close before native teardown.
+    ///
+    /// This is optional so existing backends retain their close behavior.
+    /// Implementations gate both user close requests and `close(window:)`.
+    @MainActor
+    public protocol WindowCloseRequests<Window>: WindowClosing {
+        /// Sets asynchronous authorization for future window close requests.
+        /// Return true to close or false to keep the live window and scene.
+        /// Repeated requests while awaiting a decision must share one decision.
+        /// Removing the handler cancels/invalidates any outstanding decision;
+        /// it does not itself close the window.
+        func setCloseRequestHandler(
+            ofWindow window: Window,
+            to action: (@MainActor @Sendable () async -> Bool)?
+        )
+    }
 }

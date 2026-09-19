@@ -67,12 +67,28 @@ public class ViewGraph<Root: View> {
         // tells every node that the body it evaluated last time may have been
         // evaluated under a different environment. See ``LayoutPass``.
         LayoutPass.begin()
+        BackendCallStatistics.record("viewgraph.rootPass")
 
         parentEnvironment = environment
         latestProposal = proposedSize
 
+        // Handed straight through, `nil` included. Substituting the stored
+        // `view` for a `nil` would say "here is a recomputed view value" when
+        // the value is the one the node is already holding, which makes the
+        // node discard the body it evaluated last pass and re-evaluate an
+        // identical one.
+        //
+        // Passing `nil` is what keeps a node's dynamic properties correct
+        // rather than merely cheaper. `previousValue` exists so that a
+        // *freshly built* view value can adopt the live storage of the value
+        // it replaces (`StateImpl.update` does `storage = previousValue.storage`
+        // and nothing else). When no new value is handed over there is nothing
+        // to adopt, and the node's existing `view` already holds the live
+        // storage — so `nil` is the only correct answer, and it is the same one
+        // `_App` passes on every app update. `@Environment` and friends ignore
+        // `previousValue` and are refreshed either way.
         let result = rootNode.computeLayout(
-            with: newView ?? view,
+            with: newView,
             proposedSize: proposedSize,
             environment: parentEnvironment
         )

@@ -40,6 +40,7 @@ public struct LabeledContent<Label: View, Content: View>: View {
 
     /// The width to give the label, or `nil` to let the label size itself.
     @Environment(\.labeledContentLabelWidth) private var labelWidth
+    @Environment(\.labelsHidden) private var labelsHidden
 
     /// Creates a labelled view from a content view and a label view.
     ///
@@ -73,17 +74,22 @@ public struct LabeledContent<Label: View, Content: View>: View {
 
     public var body: some View {
         HStack(alignment: .center, spacing: 0) {
-            label
-                // `frame(width:height:alignment:)` takes `CGFloat?` (as
-                // SwiftUI's does), and the implicit `Double`/`CGFloat`
-                // conversion doesn't reach inside an optional.
-                .frame(
-                    width: labelWidth.map { width in CGFloat(width) },
-                    alignment: .leading
-                )
-            Spacer(minLength: Self.minimumSpacing)
+            if !labelsHidden {
+                label
+                    // `frame(width:height:alignment:)` takes `CGFloat?` (as
+                    // SwiftUI's does), and the implicit `Double`/`CGFloat`
+                    // conversion doesn't reach inside an optional.
+                    .frame(
+                        width: labelWidth.map { width in CGFloat(width) },
+                        alignment: .leading
+                    )
+            }
+            if !labelsHidden {
+                Spacer(minLength: Self.minimumSpacing)
+            }
             content
         }
+        .retainingHiddenControlLabel(label, hidden: labelsHidden)
     }
 }
 

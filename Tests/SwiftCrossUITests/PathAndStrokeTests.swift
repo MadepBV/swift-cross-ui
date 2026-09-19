@@ -176,7 +176,7 @@ struct PathAndStrokeTests {
 
         guard
             case .arc(_, _, let startAngle, let endAngle, _) = path.actions
-                .first
+            .first
         else {
             Issue.record("expected an arc action")
             return
@@ -434,7 +434,7 @@ struct PathAndStrokeTests {
 
             guard
                 let view = harness.container.subviews.first
-                    as? AppKitBackend.NSBezierPathView
+                as? AppKitBackend.NSBezierPathView
             else {
                 Issue.record("expected a path view")
                 return

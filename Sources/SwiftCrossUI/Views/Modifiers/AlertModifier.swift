@@ -298,8 +298,8 @@ struct AlertModifierView<Child: View>: TypeSafeView {
             // so button roles survive either way.
             let alert =
                 textEntry == nil
-                ? backend.createConfirmationDialog()
-                : backend.createAlert()
+                    ? backend.createConfirmationDialog()
+                    : backend.createAlert()
             backend.updateConfirmationDialog(
                 alert,
                 title: title,

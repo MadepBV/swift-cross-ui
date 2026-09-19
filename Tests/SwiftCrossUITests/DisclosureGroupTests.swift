@@ -114,8 +114,8 @@ struct DisclosureGroupTests {
         #expect(
             expandedHeight
                 == collapsedHeight
-                    + DisclosureGroupTests.contentHeight
-                    + DisclosureGroupTests.contentSpacing
+                + DisclosureGroupTests.contentHeight
+                + DisclosureGroupTests.contentSpacing
         )
     }
 

@@ -16,6 +16,7 @@
 public struct Toggle: View {
     @Environment(\.backend) var backend
     @Environment(\.toggleStyle) var toggleStyle
+    @Environment(\.labelsHidden) var labelsHidden
 
     /// The label to be shown on or beside the toggle.
     ///
@@ -106,14 +107,17 @@ public struct Toggle: View {
         switch toggleStyle.style {
             case .switch:
                 HStack {
-                    labelContent
+                    if !labelsHidden {
+                        labelContent
+                    }
 
-                    if backend.requiresToggleSwitchSpacer {
+                    if !labelsHidden && backend.requiresToggleSwitchSpacer {
                         Spacer()
                     }
 
                     ToggleSwitch(isOn: active)
                 }
+                .retainingHiddenControlLabel(Text(label), hidden: labelsHidden)
             case .button:
                 if let customLabel {
                     // The backends' toggle button widget takes a plain string
@@ -130,10 +134,13 @@ public struct Toggle: View {
                 }
             case .checkbox:
                 HStack {
-                    labelContent
+                    if !labelsHidden {
+                        labelContent
+                    }
 
                     Checkbox(isOn: active)
                 }
+                .retainingHiddenControlLabel(Text(label), hidden: labelsHidden)
         }
     }
 

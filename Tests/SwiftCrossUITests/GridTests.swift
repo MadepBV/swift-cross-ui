@@ -411,7 +411,12 @@ struct GridTests {
         #expect(cells.map(\.y) == [0, 0, rowPitch, rowPitch, rowPitch * 2, rowPitch * 2])
         #expect(
             cells.map(\.x) == [
-                0, secondColumnOffset, 0, secondColumnOffset, 0, secondColumnOffset,
+                0,
+                secondColumnOffset,
+                0,
+                secondColumnOffset,
+                0,
+                secondColumnOffset,
             ]
         )
     }

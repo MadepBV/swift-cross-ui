@@ -137,8 +137,8 @@ final class CustomColorPicker: WinUI.Button {
         }
         let opacity: Float =
             opacitySlider.visibility == .visible
-            ? Self.channel(for: opacitySlider.value)
-            : currentColor.opacity
+                ? Self.channel(for: opacitySlider.value)
+                : currentColor.opacity
         let newColor = SwiftCrossUI.Color.Resolved(
             red: Self.channel(for: redSlider.value),
             green: Self.channel(for: greenSlider.value),

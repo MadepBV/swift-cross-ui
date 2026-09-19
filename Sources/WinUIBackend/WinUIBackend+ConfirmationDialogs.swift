@@ -63,15 +63,19 @@ extension WinUIBackend: BackendFeatures.ConfirmationDialogs {
         if let primary = slots[0], actions[primary].role == .destructive {
             let background = SolidColorBrush(Self.destructiveColor)
             let foreground = SolidColorBrush(Self.destructiveForegroundColor)
-            for key in ["AccentButtonBackground",
-                        "AccentButtonBackgroundPointerOver",
-                        "AccentButtonBackgroundPressed"]
+            for key in [
+                "AccentButtonBackground",
+                "AccentButtonBackgroundPointerOver",
+                "AccentButtonBackgroundPressed"
+            ]
             {
                 _ = dialog.resources.insert(key, background)
             }
-            for key in ["AccentButtonForeground",
-                        "AccentButtonForegroundPointerOver",
-                        "AccentButtonForegroundPressed"]
+            for key in [
+                "AccentButtonForeground",
+                "AccentButtonForegroundPointerOver",
+                "AccentButtonForegroundPressed"
+            ]
             {
                 _ = dialog.resources.insert(key, foreground)
             }

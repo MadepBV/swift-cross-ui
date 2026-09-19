@@ -229,7 +229,7 @@ struct AccessibilityView<Child: View>: TypeSafeView {
         }
         guard
             let backend = backend as? any BaseAppBackend
-                & BackendFeatures.Accessibility
+            & BackendFeatures.Accessibility
         else {
             return
         }

@@ -1,4 +1,24 @@
 extension View {
+    /// Authorizes closing the enclosing window before its content is released.
+    ///
+    /// Return true after saving or explicitly discarding changes, and false
+    /// when the user cancels or saving fails. The handler runs on the main
+    /// actor; the window stays alive while it is suspended. Repeated close
+    /// requests share the pending decision. Programmatic `dismissWindow()`
+    /// requests use the same handler.
+    ///
+    /// Apply one handler to the window's root content. If multiple descendants
+    /// provide handlers, the first value in content order is used.
+    ///
+    /// - Important: Supported by WinUIBackend and AppKitBackend. Other backends
+    ///   ignore this modifier and issue a warning; they cannot guarantee close
+    ///   authorization. This does not intercept application termination.
+    public func onWindowCloseRequested(
+        _ action: @escaping @MainActor @Sendable () async -> Bool
+    ) -> some View {
+        preference(key: \.onWindowCloseRequested, value: action)
+    }
+
     /// Sets the closability of the enclosing window.
     ///
     /// This only controls whether user can close the window via the title

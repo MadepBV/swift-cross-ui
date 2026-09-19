@@ -78,14 +78,14 @@ public struct LucideSymbolProvider: SymbolProvider {
     public func resolve(_ request: SymbolRenderRequest) -> SymbolResolution? {
         let icon =
             Self.lucideIcon(forSystemName: request.name)
-            ?? (drawsPlaceholderForUnknownNames
-                ? SFSymbolLucideMapping.placeholderIcon
-                : nil)
+                ?? (drawsPlaceholderForUnknownNames
+                    ? SFSymbolLucideMapping.placeholderIcon
+                    : nil)
         guard let icon else {
             return nil
         }
         if SFSymbolLucideMapping.drawsFilled(request.name),
-            let filled = LucideIconGeometry.filledGeometry(forIcon: icon)
+           let filled = LucideIconGeometry.filledGeometry(forIcon: icon)
         {
             return .geometry(filled)
         }

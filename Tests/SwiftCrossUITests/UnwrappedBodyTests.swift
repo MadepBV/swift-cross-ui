@@ -294,14 +294,16 @@ struct UnwrappedBodyTests {
 
     struct BuilderScrollView: View {
         var body: some View {
-            ScrollView { VStack { Text("a"); Text("b") } }
+            ScrollView { VStack { Text("a")
+                Text("b") } }
         }
     }
 
     struct ReturnedScrollView: View {
         var body: some View {
             let _ = 0
-            return ScrollView { VStack { Text("a"); Text("b") } }
+            return ScrollView { VStack { Text("a")
+                Text("b") } }
         }
     }
 

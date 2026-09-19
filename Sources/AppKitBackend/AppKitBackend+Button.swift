@@ -147,6 +147,7 @@ public final class NSCustomButton: NSView {
     }
 
     override public func accessibilityPerformPress() -> Bool {
+        guard isEnabled else { return false }
         self.action?()
         return true
     }

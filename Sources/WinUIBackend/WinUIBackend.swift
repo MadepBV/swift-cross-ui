@@ -1,5 +1,6 @@
 import CWinRT
 import Foundation
+import Dispatch
 @_spi(Backends) import SwiftCrossUI
 import UWP
 import WinAppSDK
@@ -23,14 +24,31 @@ extension App {
 
 class WinUIApplication: SwiftApplication, @unchecked Sendable {
     static let callback = Mutex<(@MainActor (WinUIApplication) -> Void)?>(nil)
+    private var mainQueueWakeupBridge: MainQueueWakeupBridge?
+    private var exceptionDiagnostics: WindowsFoundation.EventCleanup?
 
     override func onLaunched(_ args: WinUI.LaunchActivatedEventArgs) {
         Self.callback.withLock { callback in
-            // We can't explicitly hop to the main actor because we haven't set up
-            // our WinUI MainActor fix yet.
             MainActor.assumeIsolated {
+                WinUITimingDiagnostics.start()
+                if exceptionDiagnostics == nil {
+                    exceptionDiagnostics = WinUIExceptionDiagnostics.install(on: self)
+                }
+                if mainQueueWakeupBridge == nil {
+                    mainQueueWakeupBridge = MainQueueWakeupBridge()
+                }
                 callback?(self)
             }
+        }
+    }
+
+    override func onShutdown() {
+        MainActor.assumeIsolated {
+            mainQueueWakeupBridge?.stop()
+            mainQueueWakeupBridge = nil
+            exceptionDiagnostics?.dispose()
+            exceptionDiagnostics = nil
+            WinUITimingDiagnostics.stop()
         }
     }
 }
@@ -96,6 +114,11 @@ public final class WinUIBackend:
     public let supportedPickerStyles: [BackendPickerStyle] = [.menu, .radioGroup, .segmented]
     public let canOverrideWindowColorScheme = true
     public let restoresWindowFrames = false
+    // `size(of:whenDisplayedIn:...)` measures with `measurementTextBlock` and
+    // never reads the widget it is handed, so `Text` doesn't have to write the
+    // widget before every measurement. That used to be a few thousand calls per
+    // pass for a window of a few hundred labels.
+    public let measuresTextIndependentlyOfWidget = true
 
     public var scrollBarWidth: Int {
         12
@@ -136,15 +159,7 @@ public final class WinUIBackend:
         do {
             try Self.attachToParentConsole()
         } catch {
-            // We essentially just ignore if this fails because it's just a QoL
-            // debugging feature, and if it fails then any warning we print likely
-            // won't get seen anyway. But I don't trust my Windows knowledge enough
-            // to assert that it's impossible to view logs on failure, so let's
-            // print a warning anyway.
-            logger.warning(
-                "failed to attach to parent console",
-                metadata: ["error": "\(error)"]
-            )
+            Self.reportConsoleSetupFailure(error)
         }
     }
 
@@ -152,15 +167,7 @@ public final class WinUIBackend:
         do {
             try Self.attachToParentConsole()
         } catch {
-            // We essentially just ignore if this fails because it's just a QoL
-            // debugging feature, and if it fails then any warning we print likely
-            // won't get seen anyway. But I don't trust my Windows knowledge enough
-            // to assert that it's impossible to view logs on failure, so let's
-            // print a warning anyway.
-            logger.warning(
-                "failed to attach to parent console",
-                metadata: ["error": "\(error)"]
-            )
+            Self.reportConsoleSetupFailure(error)
         }
 
         // Ensure that the app's windows adapt to DPI changes at runtime
@@ -200,6 +207,7 @@ public final class WinUIBackend:
 
     public func createWindow(withDefaultSize size: SIMD2<Int>?, id: String) -> Window {
         let window = CustomWindow()
+        WinUIPointerHitDiagnostics.install(on: window.grid)
         windows.append(window)
         window.closed.addHandler { _, _ in
             self.windows.removeAll { other in
@@ -361,7 +369,7 @@ public final class WinUIBackend:
     }
 
     public func close(window: Window) {
-        try! window.close()
+        window.requestAuthorizedClose()
     }
 
     public func setCloseHandler(
@@ -389,8 +397,14 @@ public final class WinUIBackend:
     }
 
     public func runInMainThread(action: @escaping @MainActor () -> Void) {
+        let queued = WinUITimingDiagnostics.begin()
         _ = try! dispatcherQueue!.tryEnqueue(.normal) {
-            MainActor.assumeIsolated(action)
+            MainActor.assumeIsolated {
+                WinUITimingDiagnostics.end(.updateWait, queued)
+                let timing = WinUITimingDiagnostics.begin(cpu: true)
+                defer { WinUITimingDiagnostics.end(.updateExecute, timing) }
+                action()
+            }
         }
     }
 
@@ -624,8 +638,27 @@ public final class WinUIBackend:
 
     /// A static version of `naturalSize(of:)` for convenience. Used by
     /// WinUIElementRepresentable.
+    ///
+    /// Measuring is answered from ``WidgetPropertyCache/Entry/naturalSize``
+    /// while the layout pass that produced it is still the current one. The
+    /// layout system asks a control for its natural size up to three times
+    /// within one pass — a minimum probe, a maximum probe and the proposal its
+    /// container settles on — and every one of those runs the measurement
+    /// below, which is nine COM crossings and a synchronous WinUI measure.
     @MainActor
     public static func naturalSize(of widget: Widget) -> SIMD2<Int> {
+        let entry = WidgetPropertyCache.shared.entry(for: widget)
+        if let cached = entry.naturalSize, cached.token == LayoutPass.token {
+            return cached.size
+        }
+        let size = measureNaturalSize(of: widget)
+        entry.naturalSize = (LayoutPass.token, size)
+        return size
+    }
+
+    /// Measures a widget's natural size, ignoring any cached answer.
+    @MainActor
+    private static func measureNaturalSize(of widget: Widget) -> SIMD2<Int> {
         let allocation = WindowsFoundation.Size(
             width: .infinity,
             height: .infinity
@@ -660,9 +693,14 @@ public final class WinUIBackend:
             return SIMD2(20, 20)
         } else if let picker = widget as? CustomComboBox, picker.padding == noPadding {
             let label = TextBlock()
-            label.text = picker.options[Int(max(picker.selectedIndex, 0))]
+            // Empty lists and a transient out-of-range native index can be
+            // measured before the control has loaded. Preserve the first-item
+            // estimate for no selection, and use empty text if no item exists.
+            let index = Int(max(picker.selectedIndex, 0))
+            label.text = picker.options.indices.contains(index) ? picker.options[index] : ""
             label.fontSize = picker.fontSize
             label.fontWeight = picker.fontWeight
+            label.fontStyle = picker.fontStyle
             try! label.measure(allocation)
 
             // These padding values were gathered experimentally. I've found that
@@ -740,7 +778,6 @@ public final class WinUIBackend:
     public static func sizeCorrection(for widget: Widget) -> SIMD2<Int> {
         let adjustment: SIMD2<Int>
         let noPadding = Thickness(left: 0, top: 0, right: 0, bottom: 0)
-        let computedSize = widget.desiredSize
         if let button = widget as? WinUI.Button, button.padding == noPadding {
             // WinUI buttons have padding, but the `padding` property returns
             // zero until the button has been rendered at least once. And even
@@ -783,13 +820,19 @@ public final class WinUIBackend:
             // weekdays wrap, making it taller than it says it is. Value was derived by trial and
             // error.
             adjustment = SIMD2(20, 0)
-        } else if
-            computedSize.width == 0 && computedSize.height == 0 && widget is CalendarDatePicker
-        {
-            // I can't find any source on what the size of CalendarDatePicker is, but it reports 0x0
-            // in at least some cases before initial render. In these cases, use a size derived
-            // experimentally.
-            adjustment = SIMD2(116, 32)
+        } else if widget is CalendarDatePicker {
+            // Reading `DesiredSize` crosses the projection, and this is the
+            // only correction that depends on it, so it is read here rather
+            // than up front for every widget this function is called for.
+            let computedSize = widget.desiredSize
+            if computedSize.width == 0 && computedSize.height == 0 {
+                // I can't find any source on what the size of CalendarDatePicker is, but it reports
+                // 0x0 in at least some cases before initial render. In these cases, use a size
+                // derived experimentally.
+                adjustment = SIMD2(116, 32)
+            } else {
+                adjustment = .zero
+            }
         } else {
             adjustment = .zero
         }
@@ -913,12 +956,13 @@ public final class WinUIBackend:
     ) {
         let block = textView as! TextBlock
 
-        // `Text.computeLayout` calls this on every layout computation (so up to
-        // three times per update pass per label) and the layout system asks for
-        // a measurement in between. Each of the writes below is a COM crossing
-        // and the foreground brush used to be a fresh WinRT object every time,
-        // so a window of static labels spent thousands of COM calls per frame
-        // rewriting the values it had just written.
+        // `Text` calls this once per pass per label. Each of the writes below is
+        // a COM crossing and the foreground brush used to be a fresh WinRT
+        // object every time, so a window of static labels spent thousands of COM
+        // calls per frame rewriting the values it had just written.
+        //
+        // The entry is looked up once and handed to `apply(to:entry:)`, which
+        // would otherwise look up the same widget a second time.
         let entry = WidgetPropertyCache.shared.entry(for: block)
 
         if entry.text != content {
@@ -933,7 +977,7 @@ public final class WinUIBackend:
         }
 
         // TODO: Font design handling (monospace vs normal)
-        environment.apply(to: block)
+        environment.apply(to: block, entry: entry)
     }
 
     public func createSimpleButton() -> Widget {
@@ -956,7 +1000,12 @@ public final class WinUIBackend:
         // button's visual tree, and this runs on every update pass. Reuse the
         // label that's already there.
         let block = Self.label(of: button)
-        Self.setLabelText(label, of: block)
+        if Self.setLabelText(label, of: block) {
+            // A button is measured through its label, and the label's text is
+            // written against the *label's* cache entry, so nothing else would
+            // tell the button that its remembered natural size is stale.
+            WidgetPropertyCache.shared.entry(for: button).naturalSize = nil
+        }
         environment.apply(to: block)
         environment.apply(to: button)
         internalState.buttonClickActions[ObjectIdentifier(button)] = action
@@ -984,14 +1033,17 @@ public final class WinUIBackend:
     /// - Parameters:
     ///   - text: The wanted text.
     ///   - block: The label element.
+    /// - Returns: Whether the text had to be written.
     @MainActor
-    private static func setLabelText(_ text: String, of block: TextBlock) {
+    @discardableResult
+    private static func setLabelText(_ text: String, of block: TextBlock) -> Bool {
         let entry = WidgetPropertyCache.shared.entry(for: block)
         guard entry.text != text else {
-            return
+            return false
         }
         entry.text = text
         block.text = text
+        return true
     }
 
     public func createPopoverMenu() -> Menu {
@@ -1018,9 +1070,12 @@ public final class WinUIBackend:
         environment: EnvironmentValues
     ) {
         let button = button as! WinUI.Button
-        // See `updateSimpleButton`.
+        // See `updateSimpleButton`, including why a new label forgets the
+        // button's remembered natural size.
         let block = Self.label(of: button)
-        Self.setLabelText(label, of: block)
+        if Self.setLabelText(label, of: block) {
+            WidgetPropertyCache.shared.entry(for: button).naturalSize = nil
+        }
         environment.apply(to: block)
         environment.apply(to: button)
         button.flyout = menu
@@ -1211,8 +1266,10 @@ public final class WinUIBackend:
             case .menu:
                 let picker = CustomComboBox()
                 picker.selectionChanged.addHandler { [weak picker] _, _ in
-                    guard let picker else { return }
-                    picker.onChangeSelection?(Int(picker.selectedIndex))
+                    guard let picker, !picker.isApplyingModelUpdate else { return }
+                    picker.onChangeSelection?(
+                        picker.selectedIndex < 0 ? nil : Int(picker.selectedIndex)
+                    )
                 }
 
                 // When hovering over a picker, its foreground changes to black,
@@ -1230,12 +1287,22 @@ public final class WinUIBackend:
                 return picker
             case .radioGroup:
                 let picker = CustomRadioButtons()
+                picker.loaded.addHandler { [weak picker] _, _ in
+                    picker?.requestInitialSizeAfterLoading()
+                }
 
                 picker.selectionChanged.addHandler { [weak picker] _, _ in
-                    guard let picker else { return }
-                    picker.onChangeSelection?(
-                        picker.selectedIndex == -1 ? nil : Int(picker.selectedIndex)
-                    )
+                    guard let picker, !picker.isApplyingModelUpdate else { return }
+                    // RadioButtons realizes a pre-load SelectedIndex only when
+                    // its repeater loads, after our synchronous update scope.
+                    // Compare the current property, not a queued event payload.
+                    let index = picker.selectedIndex
+                    guard picker.selectionTracker.shouldForwardNativeSelection(index) else {
+                        return
+                    }
+                    // The tracker advances before calling application code,
+                    // which may synchronously write a different model index.
+                    picker.onChangeSelection?(index < 0 ? nil : Int(index))
                 }
 
                 return picker
@@ -1258,54 +1325,56 @@ public final class WinUIBackend:
         onChange: @escaping (Int?) -> Void
     ) {
         if let picker = picker as? CustomComboBox {
+            let wasApplying = picker.isApplyingModelUpdate
+            picker.isApplyingModelUpdate = true
+            defer { picker.isApplyingModelUpdate = wasApplying }
             picker.onChangeSelection = onChange
+            // The shared picker calls this for changed options or appearance.
+            // Clear the same-pass measurement before the options early return: font
+            // changes and an empty list can change size with no item writes.
+            WidgetPropertyCache.shared.entry(for: picker).naturalSize = nil
             environment.apply(to: picker)
             picker.actualForegroundColor =
                 environment.suggestedForegroundColor.resolve(in: environment).uwpColor
 
-            // Only update options past this point, otherwise the early return
-            // will cause issues.
-            guard options.count > 0 else {
-                picker.options = []
+            let items = picker.items!
+            let previousCount = items.count
+            // The backend owns the option strings. Compare the last applied
+            // values instead of unboxing every native item during layout.
+            guard picker.options != options || previousCount != options.count else {
                 return
             }
 
-            if options.count == picker.items.count {
-                // for i in 0 ..< options.count {
-                // TODO: Understands how to get ComboBox items in WinUI
-                // if picker.items.getAt(UInt32(i)) as? String != options[i] {
-                // picker.items.setAt(UInt32(1), options[i])
-                // }
-                // }
-            } else if options.count > picker.items.count {
-                if !picker.items.isEmpty {
-                    for i in 0..<picker.items.count {
-                        // if picker.items.getAt(UInt32(i)) as? String != options[i] {
-                        picker.items.setAt(UInt32(i), options[i])
-                        // }
-                    }
-                }
-                for i in picker.items.count..<options.count {
-                    picker.items.append(options[i])
-                }
-            } else {
-                for i in 0..<options.count {
-                    // if picker.items.getAt(UInt32(i)) as? String != options[i] {
-                    picker.items.setAt(UInt32(i), options[i])
-                    // }
-                }
-                for i in options.count..<picker.items.count {
-                    picker.items.removeAt(UInt32(i))
+            // Remove from the end: removing an earlier element shifts all
+            // later indices and makes an ascending removal range invalid.
+            if previousCount > options.count {
+                for index in (options.count..<previousCount).reversed() {
+                    items.removeAt(UInt32(index))
                 }
             }
-
-            // TODO: Proper picker updating logic
-            // TODO: Picker font handling
-
+            for index in 0..<min(previousCount, options.count) {
+                if !picker.options.indices.contains(index)
+                    || picker.options[index] != options[index] {
+                    items.setAt(UInt32(index), options[index])
+                }
+            }
+            if previousCount < options.count {
+                for index in previousCount..<options.count {
+                    items.append(options[index])
+                }
+            }
             picker.options = options
         } else if let picker = picker as? CustomRadioButtons {
+            let wasApplying = picker.isApplyingModelUpdate
+            picker.isApplyingModelUpdate = true
+            defer { picker.isApplyingModelUpdate = wasApplying }
+            picker.onInitialSizeReady = environment.onResize
+            WidgetPropertyCache.shared.entry(for: picker).naturalSize = nil
+            environment.apply(to: picker)
             for i in 0..<min(picker.items.count, options.count) {
-                (picker.items[i] as! TextBlock).text = options[i]
+                let block = picker.items[i] as! TextBlock
+                block.text = options[i]
+                environment.apply(to: block)
             }
 
             if picker.items.count > options.count {
@@ -1325,16 +1394,45 @@ public final class WinUIBackend:
         } else if let picker = picker as? CustomSegmentedPicker {
             picker.onChangeSelection = onChange
             picker.setOptions(options, environment: environment)
+            // A segmented picker adds its segments up by hand, so its natural
+            // size follows its options. Cleared unconditionally because
+            // `setOptions` decides for itself whether anything changed.
+            WidgetPropertyCache.shared.entry(for: picker).naturalSize = nil
         }
     }
 
     public func setSelectedOption(ofPicker picker: Widget, to selectedOption: Int?) {
-        if let picker = picker as? ComboBox {
-            picker.selectedIndex = Int32(selectedOption ?? 0)
-        } else if let picker = picker as? RadioButtons {
-            picker.selectedIndex = Int32(selectedOption ?? -1)
+        // Committed on every layout computation. Writing the index is a COM
+        // call that also invalidates the element's measure and arrange passes,
+        // and it almost always writes the index the element already holds, so
+        // the one read below replaces a write in the common case.
+        if let picker = picker as? CustomComboBox {
+            let wasApplying = picker.isApplyingModelUpdate
+            picker.isApplyingModelUpdate = true
+            defer { picker.isApplyingModelUpdate = wasApplying }
+            let index = Int32(selectedOption ?? -1)
+            guard picker.selectedIndex != index else {
+                return
+            }
+            picker.selectedIndex = index
+            // A combo box is measured from its selected option.
+            WidgetPropertyCache.shared.entry(for: picker).naturalSize = nil
+        } else if let picker = picker as? CustomRadioButtons {
+            let wasApplying = picker.isApplyingModelUpdate
+            picker.isApplyingModelUpdate = true
+            defer { picker.isApplyingModelUpdate = wasApplying }
+            let index = Int32(selectedOption ?? -1)
+            // A matching native property may still have an unrealized selection
+            // notification pending. Acknowledge even when no write is needed.
+            picker.selectionTracker.recordProgrammaticSelection(index)
+            guard picker.selectedIndex != index else {
+                return
+            }
+            picker.selectedIndex = index
+            WidgetPropertyCache.shared.entry(for: picker).naturalSize = nil
         } else if let picker = picker as? CustomSegmentedPicker {
             picker.setSelectedIndex(selectedOption)
+            WidgetPropertyCache.shared.entry(for: picker).naturalSize = nil
         }
     }
 
@@ -1458,51 +1556,53 @@ public final class WinUIBackend:
         // changed (or there's no bitmap yet) there's nothing to redraw. A
         // canvas that replaces a large frame every update reuses the same
         // `WriteableBitmap` for as long as its dimensions stay the same.
+        let lookupTiming = WinUITimingDiagnostics.begin()
         let (bitmap, bitmapIsNew) = ImageBitmapRegistry.shared.bitmap(
             for: imageView,
             width: width,
             height: height
         )
+        WinUITimingDiagnostics.end(.imageLookup, lookupTiming)
+        WinUITimingDiagnostics.count(bitmapIsNew ? "image.recreated" : "image.reused")
         guard dataHasChanged || bitmapIsNew else {
+            WinUITimingDiagnostics.count("image.unchanged")
             return
         }
 
+        let uploadTiming = WinUITimingDiagnostics.begin(cpu: true)
+        defer { WinUITimingDiagnostics.end(.imageUpload, uploadTiming) }
+        let bufferTiming = WinUITimingDiagnostics.begin()
         guard let pixelBuffer = bitmap.pixelBuffer, let buffer = try? pixelBuffer.buffer else {
+            WinUITimingDiagnostics.end(.imageBuffer, bufferTiming)
+            WinUITimingDiagnostics.count("image.bufferUnavailable")
             logger.warning("failed to access the pixel buffer of a WriteableBitmap")
             return
         }
-        let byteCount = min(Int(pixelBuffer.length), rgbaData.count)
-        rgbaData.withUnsafeBytes { source in
-            guard let base = source.baseAddress else {
-                return
-            }
-            memcpy(buffer, base, byteCount)
+        WinUITimingDiagnostics.end(.imageBuffer, bufferTiming)
+        // Convert directly into WinRT's buffer. Copying the frame first and
+        // then swapping channels in-place touches every pixel twice at each
+        // frame publication, on the UI thread.
+        let copyTiming = WinUITimingDiagnostics.begin()
+        let byteCount = rgbaData.withUnsafeBytes { source in
+            RGBAImageBuffer.copyToBGRA(
+                source,
+                into: UnsafeMutableRawBufferPointer(
+                    start: buffer, count: Int(pixelBuffer.length)))
         }
-
-        // Convert RGBA to BGRA in-place, and apply janky transparency fix until we
-        // figure out how to fix WinUI image blending (non-black transparent pixels
-        // just don't seem to get blended at all, or at least pixels that are white
-        // enough, haven't tested many colours).
-        for i in 0..<(byteCount / 4) {
-            let offset = i * 4
-            if buffer[offset + 3] == 0 {
-                // If transparent, make the pixel black (this is the janky blending fix).
-                buffer[offset] = 0
-                buffer[offset + 1] = 0
-                buffer[offset + 2] = 0
-            } else {
-                // Swap R and B (RGBA to BGRA)
-                let tmp = buffer[offset]
-                buffer[offset] = buffer[offset + 2]
-                buffer[offset + 2] = tmp
-            }
-        }
+        WinUITimingDiagnostics.end(.imageCopy, copyTiming)
+        WinUITimingDiagnostics.count("image.uploadBytes", UInt64(byteCount))
+        BackendCallStatistics.record("image.upload")
+        BackendCallStatistics.record("image.uploadBytes", byteCount)
 
         // Tells WinUI that the pixel buffer changed so that it redraws.
+        let invalidateTiming = WinUITimingDiagnostics.begin()
         try? bitmap.invalidate()
+        WinUITimingDiagnostics.end(.imageInvalidate, invalidateTiming)
 
         if bitmapIsNew {
+            let sourceTiming = WinUITimingDiagnostics.begin()
             imageView.source = bitmap
+            WinUITimingDiagnostics.end(.imageSource, sourceTiming)
         }
     }
 
@@ -2322,8 +2422,8 @@ public final class WinUIBackend:
         // thousands of COM calls per frame repainting an unchanged drawing.
         let entry = WidgetPropertyCache.shared.entry(for: winUiPath)
         if entry.pathFillColor == fillColor,
-            entry.pathStrokeColor == strokeColor,
-            entry.pathStrokeStyle == strokeStyle
+           entry.pathStrokeColor == strokeColor,
+           entry.pathStrokeStyle == strokeStyle
         {
             return
         }
@@ -2423,6 +2523,12 @@ public final class WinUIBackend:
         customDatePicker.setDateRange(to: range)
         customDatePicker.setEnabled(to: environment.isEnabled)
 
+        // `CustomDatePicker.naturalSize()` adds its subviews up, and the calls
+        // above can add or remove one, so the remembered natural size no longer
+        // describes it. Cleared unconditionally because each of those calls
+        // decides for itself whether anything changed.
+        WidgetPropertyCache.shared.entry(for: customDatePicker).naturalSize = nil
+
         // TODO(parity): foreground color ignored
         // Setting foreground like for other views works for TimePicker and DatePicker but not for
         // CalendarView or CalendarDatePicker.
@@ -2496,11 +2602,10 @@ extension EnvironmentValues {
         let resolvedFont = resolvedFont
         if entry.font != resolvedFont {
             entry.font = resolvedFont
+            entry.naturalSize = nil
             control.fontSize = resolvedFont.pointSize
             control.fontWeight.weight = resolvedFont.winUIFontWeight
-            if resolvedFont.isItalic {
-                control.fontStyle = .italic
-            }
+            control.fontStyle = resolvedFont.isItalic ? .italic : .normal
         }
 
         let foregroundColor = suggestedForegroundColor.resolve(in: self)
@@ -2531,17 +2636,27 @@ extension EnvironmentValues {
     /// guarded.
     @MainActor
     func apply(to textBlock: WinUI.TextBlock) {
-        let entry = WidgetPropertyCache.shared.entry(for: textBlock)
+        apply(to: textBlock, entry: WidgetPropertyCache.shared.entry(for: textBlock))
+    }
 
+    /// Applies the environment's font and foreground colour to a text block
+    /// whose cache entry the caller has already looked up.
+    ///
+    /// - Parameters:
+    ///   - textBlock: The text block to write.
+    ///   - entry: `textBlock`'s cache entry. Must be the entry for
+    ///     `textBlock`; passing another widget's entry would let a write be
+    ///     skipped because a *different* widget already holds the value.
+    @MainActor
+    func apply(to textBlock: WinUI.TextBlock, entry: WidgetPropertyCache.Entry) {
         let resolvedFont = resolvedFont
         if entry.font != resolvedFont {
             entry.font = resolvedFont
+            entry.naturalSize = nil
             textBlock.fontSize = resolvedFont.pointSize
             textBlock.fontWeight.weight = resolvedFont.winUIFontWeight
             textBlock.lineHeight = resolvedFont.lineHeight
-            if resolvedFont.isItalic {
-                textBlock.fontStyle = .italic
-            }
+            textBlock.fontStyle = resolvedFont.isItalic ? .italic : .normal
         }
 
         let foregroundColor = suggestedForegroundColor.resolve(in: self)
@@ -2578,13 +2693,44 @@ extension Font.Resolved {
 }
 
 final class CustomComboBox: ComboBox {
+    // Native SelectionChanged also fires for framework item/index writes.
+    var isApplyingModelUpdate = false
     var options: [String] = []
     var onChangeSelection: ((Int?) -> Void)?
     var actualForegroundColor: UWP.Color = UWP.Color(a: 255, r: 0, g: 0, b: 0)
 }
 
 final class CustomRadioButtons: RadioButtons {
+    var isApplyingModelUpdate = false
+    var selectionTracker = NativeSelectionTracker<Int32>(initialSelection: -1)
     var onChangeSelection: ((Int?) -> Void)?
+    var onInitialSizeReady: (@MainActor (ViewSize) -> Void)?
+    private var initialSizeNotificationPending = false
+    private var initialSizeNotificationDelivered = false
+
+    @MainActor
+    func requestInitialSizeAfterLoading() {
+        guard !initialSizeNotificationPending, !initialSizeNotificationDelivered,
+            let queue = dispatcherQueue else { return }
+        initialSizeNotificationPending = true
+        // The native repeater realizes after the control's initial zero-sized
+        // layout. Let the whole Loaded route and current layout stack finish
+        // before asking the existing shared resize chain to measure it again.
+        // One delivered notification per native widget, without timers or a
+        // SizeChanged loop. If detached before delivery, the next Loaded can retry.
+        let queued = (try? queue.tryEnqueue(.normal) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.initialSizeNotificationPending = false
+                guard self.isLoaded, let onResize = self.onInitialSizeReady else { return }
+                self.initialSizeNotificationDelivered = true
+                WidgetPropertyCache.shared.entry(for: self).naturalSize = nil
+                onResize(.zero)
+            }
+        }) ?? false
+        // A queue rejected during shutdown must not trigger synchronous layout.
+        if !queued { initialSizeNotificationPending = false }
+    }
 }
 
 final class CustomSplitView: SplitView {
@@ -2634,6 +2780,7 @@ public class CustomWindow: WinUI.Window {
     var cachedAppWindow: WinAppSDK.AppWindow!
     var isActive = false
     var currentAlert: WinUIBackend.Alert?
+    var closeRequestController: WinUIWindowCloseRequestController?
 
     private(set) var menuBarIsVisible = false
 
@@ -2855,12 +3002,16 @@ final class CornerClipRegistry {
             self.geometry = geometry
         }
 
-        /// Sizes the clip, ignoring sizes the element doesn't have yet.
+        /// Unset dimensions (NaN or negative) are not allocations. Zero is a
+        /// real collapsed bound and must replace a previous visible rectangle.
         func resize(width: Double, height: Double) {
-            guard width.isFinite, height.isFinite, width > 0.0, height > 0.0 else {
+            guard width.isFinite, height.isFinite, width >= 0.0, height >= 0.0 else {
                 return
             }
-            geometry.size = WindowsFoundation.Vector2(x: Float(width), y: Float(height))
+            let x = Float(width)
+            let y = Float(height)
+            guard x.isFinite, y.isFinite else { return }
+            geometry.size = WindowsFoundation.Vector2(x: x, y: y)
         }
     }
 
@@ -2945,9 +3096,9 @@ final class ImageBitmapRegistry {
     ) -> (bitmap: WriteableBitmap, isNew: Bool) {
         let key = ObjectIdentifier(imageView)
         if let entry = entries[key],
-            entry.imageView === imageView,
-            entry.width == width,
-            entry.height == height
+           entry.imageView === imageView,
+           entry.width == width,
+           entry.height == height
         {
             return (entry.bitmap, false)
         }
@@ -3262,5 +3413,137 @@ extension WinUI.FrameworkElement {
             value["shouldBlockNextChangedSignal"] = newValue
             self.tag = value
         }
+    }
+}
+
+
+/// Opt-in evidence for a real pointer's native target. This never changes
+/// handled, capture, focus or hit testing, and is not a performance instrument.
+/// Typed event subscriptions observe only routes not already handled by a child;
+/// an inert decorative Path is such a source. Absence of an event is inconclusive.
+@MainActor
+private enum WinUIPointerHitDiagnostics {
+    private static let sink: Sink? = {
+        guard let path = ProcessInfo.processInfo.environment["SCUI_WINUI_POINTER_HIT_FILE"],
+            !path.isEmpty else { return nil }
+        return Sink(path: path)
+    }()
+    private static var sequence = 0
+    private static let maximumRecords = 512
+
+    static func install(on root: WinUI.Grid) {
+        guard let sink else { return }
+        root.pointerPressed.addHandler { [weak root] _, event in
+            guard let root, let event else { return }
+            record("pressed", event: event, root: root)
+        }
+        root.pointerReleased.addHandler { [weak root] _, event in
+            guard let root, let event else { return }
+            record("released", event: event, root: root)
+        }
+        sink.enqueue([
+            "event": "pointer-hit-observer-installed",
+            "processID": ProcessInfo.processInfo.processIdentifier,
+            "observesHandledEvents": false,
+            "maximumRecords": maximumRecords,
+            "note": "Real unhandled routed events; no input injection or routing mutation."
+        ])
+    }
+
+    private static func record(
+        _ phase: String, event: WinUI.PointerRoutedEventArgs, root: WinUI.Grid
+    ) {
+        guard let sink, sequence < maximumRecords, root.isLoaded,
+            let point = try? event.getCurrentPoint(nil),
+            point.position.x.isFinite, point.position.y.isFinite else { return }
+        sequence += 1
+        let source = event.originalSource as? WinUI.DependencyObject
+        var ancestors: [[String: Any]] = []
+        var current = source
+        while let node = current, ancestors.count < 16 {
+            ancestors.append(describe(node))
+            current = WinUI.VisualTreeHelper.getParent(node)
+        }
+        // nil-relative pointer coordinates and this API both use the XAML
+        // host's logical coordinate space. Do not apply display scaling twice.
+        var hits: [[String: Any]] = []
+        if let nativeHits = WinUI.VisualTreeHelper.findElementsInHostCoordinates(
+            point.position, root, false), let iterator = nativeHits.first()
+        {
+            var visited = 0
+            while iterator.hasCurrent, visited < 32 {
+                if let candidate = iterator.current { hits.append(describe(candidate)) }
+                visited += 1
+                _ = iterator.moveNext()
+            }
+        }
+        sink.enqueue([
+            "event": "pointer-hit", "phase": phase, "sequence": sequence,
+            "tickNS": DispatchTime.now().uptimeNanoseconds,
+            "processID": ProcessInfo.processInfo.processIdentifier,
+            "threadID": GetCurrentThreadId(), "pointerID": point.pointerId,
+            "pointInHost": [Double(point.position.x), Double(point.position.y)],
+            "handledObserved": event.handled,
+            "originalSource": source.map(describe) ?? ["type": "unprojected-or-nil"],
+            "ancestors": ancestors, "nativeHitStack": hits
+        ])
+    }
+
+    private static func describe(_ node: WinUI.DependencyObject) -> [String: Any] {
+        var fields: [String: Any] = ["type": String(reflecting: type(of: node))]
+        if let element = node as? WinUI.UIElement {
+            fields["isHitTestVisible"] = element.isHitTestVisible
+            fields["opacity"] = element.opacity
+        }
+        if let element = node as? WinUI.FrameworkElement {
+            fields["width"] = element.actualWidth
+            fields["height"] = element.actualHeight
+            fields["name"] = String(element.name.prefix(160))
+        }
+        if let text = node as? WinUI.TextBlock {
+            fields["text"] = String(text.text.prefix(160))
+        }
+        if let control = node as? WinUI.Control {
+            fields["isEnabled"] = control.isEnabled
+        }
+        if let shape = node as? WinUI.Shape {
+            fields["fillIsNil"] = shape.fill == nil
+            fields["strokeIsNil"] = shape.stroke == nil
+            fields["strokeThickness"] = shape.strokeThickness
+            if let fill = shape.fill as? WinUI.SolidColorBrush {
+                fields["fillAlphaByte"] = Int(fill.color.a)
+            }
+            if let stroke = shape.stroke as? WinUI.SolidColorBrush {
+                fields["strokeAlphaByte"] = Int(stroke.color.a)
+            }
+        }
+        return fields
+    }
+
+    private final class Sink: @unchecked Sendable {
+        private let queue = DispatchQueue(label: "SwiftCrossUI.pointer-hit-diagnostics")
+        private let handle: FileHandle
+
+        init?(path: String) {
+            if !FileManager.default.fileExists(atPath: path),
+                !FileManager.default.createFile(atPath: path, contents: nil) { return nil }
+            guard let handle = FileHandle(forWritingAtPath: path) else { return nil }
+            self.handle = handle
+            handle.seekToEndOfFile()
+        }
+
+        func enqueue(_ record: [String: Any]) {
+            guard var data = try? JSONSerialization.data(
+                withJSONObject: record, options: [.sortedKeys]) else { return }
+            data.append(0x0a)
+            let encoded = data
+            queue.async { [self] in
+                // No synchronous per-click file I/O on the native UI callback.
+                // Diagnostic write failure must not affect application input.
+                try? handle.write(contentsOf: encoded)
+            }
+        }
+
+        deinit { try? handle.close() }
     }
 }

@@ -244,8 +244,8 @@ public enum LayoutSystem {
         // only do it when there's actually a layout to clear.
         let environment =
             environment.containerChildLayout == nil
-            ? environment
-            : environment.with(\.containerChildLayout, nil)
+                ? environment
+                : environment.with(\.containerChildLayout, nil)
 
         let spacing = environment.layoutSpacing
         let orientation = environment.layoutOrientation
@@ -548,8 +548,8 @@ public enum LayoutSystem {
         // See the matching comment in `computeStackLayout`.
         let environment =
             environment.containerChildLayout == nil
-            ? environment
-            : environment.with(\.containerChildLayout, nil)
+                ? environment
+                : environment.with(\.containerChildLayout, nil)
 
         let size = layout.size
         backend.setSize(of: container, to: size.vector)

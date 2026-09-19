@@ -33,7 +33,11 @@ public struct PresentAlertAction {
                     )
                     let window = environment.window.map { $0 as! Backend.Window }
                     backend.showAlert(alert, window: window) { actionIndex in
-                        actions[actionIndex].action()
+                        // Backends may report a dismissal sentinel rather than
+                        // a button index (WinUI uses 2 for implicit dismissal).
+                        if actions.indices.contains(actionIndex) {
+                            actions[actionIndex].action()
+                        }
                         continuation.resume(returning: actionIndex)
                     }
                 }

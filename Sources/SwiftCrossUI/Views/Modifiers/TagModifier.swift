@@ -199,7 +199,7 @@ struct PickerOptionCollector {
             let tag = tagged.tagValue
             let title =
                 title(of: tagged.taggedContent, depth: depth)
-                ?? String(describing: tag.base)
+                    ?? String(describing: tag.base)
             append(title: title, tag: tag)
             return
         }

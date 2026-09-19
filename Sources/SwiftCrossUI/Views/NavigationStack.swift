@@ -218,7 +218,7 @@ public struct NavigationStack<Detail: View>: View {
                 // Either root or previously defined destination returned a view
                 return EitherView(previous)
             } else if let component = element as? Component,
-                let new = destination(component)
+                      let new = destination(component)
             {
                 // This destination returned a detail view for the current element
                 return EitherView(new)

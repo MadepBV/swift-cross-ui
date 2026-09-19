@@ -53,6 +53,15 @@ public struct GraphicsContext {
     /// This multiplies into the alpha component of each shading's color.
     public var opacity: Double
 
+    /// How many drawing commands this context has recorded so far.
+    ///
+    /// Diagnostic only. Every command becomes a backend path or text widget
+    /// on commit, and on WinUI each of those is a XAML element — so a
+    /// renderer's command count is the number that decides what a canvas
+    /// costs there. Exposed so an application can log it beside its own
+    /// timings without reaching into the recorder.
+    public var recordedCommandCount: Int { recorder.commands.count }
+
     /// The clip paths currently in effect, in canvas coordinates.
     ///
     /// - Important: Clipping is only partially honoured. See ``clip(to:)``.
@@ -395,9 +404,9 @@ extension GraphicsContext {
             }
             let separated =
                 pathBounds.maxX < clipBounds.x
-                || clipBounds.maxX < pathBounds.x
-                || pathBounds.maxY < clipBounds.y
-                || clipBounds.maxY < pathBounds.y
+                    || clipBounds.maxX < pathBounds.x
+                    || pathBounds.maxY < clipBounds.y
+                    || clipBounds.maxY < pathBounds.y
             if separated {
                 return true
             }
@@ -581,7 +590,7 @@ extension AffineTransform {
     var approximateScaleFactor: Double {
         let determinant =
             linearTransform.x * linearTransform.w
-            - linearTransform.y * linearTransform.z
+                - linearTransform.y * linearTransform.z
         return abs(determinant).squareRoot()
     }
 }
@@ -604,7 +613,7 @@ extension Path {
         for subpath in Path.flatten(actions) {
             for point in subpath {
                 guard let currentMinimum = minimum,
-                    let currentMaximum = maximum
+                      let currentMaximum = maximum
                 else {
                     minimum = point
                     maximum = point
@@ -701,12 +710,12 @@ extension Path {
                         )
                     )
                 case .arc(
-                    let center,
-                    let radius,
-                    let startAngle,
-                    let endAngle,
-                    let clockwise
-                ):
+                let center,
+                let radius,
+                let startAngle,
+                let endAngle,
+                let clockwise
+            ):
                     let points = arcPoints(
                         center: center,
                         radius: radius,

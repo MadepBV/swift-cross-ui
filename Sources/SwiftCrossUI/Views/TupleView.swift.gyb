@@ -21,6 +21,21 @@ private func layoutableChild<V: View>(
 
 /// Just a vessel for some default implementations to compress this generated code.
 @MainActor
+/// A tuple of two or more views is never a layout of its own: SwiftUI lays a
+/// builder's elements out in the enclosing container, and so does this —
+/// `TupleView` is laid out *as* a ``Group``. Marking those arities grouping
+/// containers is what lets a grid publish its cell layout into a tuple that
+/// arrives wrapped (behind an `if`/`switch`, or in a `ForEach` body) instead
+/// of laying the whole tuple out as one cell. A bare tuple in a stack is
+/// unaffected: nothing publishes a layout to it there.
+///
+/// `TupleView1` is the wrapper a builder puts around a *single* view, and a
+/// single view is one cell — so it is transparent only when the one view it
+/// wraps is itself a grouping container (a conditional, a `ForEach`, a
+/// larger tuple). Making every 1-tuple transparent would add a container
+/// level under every `ForEach` item; making none transparent would stop a
+/// grid seeing through `LazyVGrid { switch … }`, whose content is a 1-tuple
+/// around the conditional.
 protocol TupleView: TypeSafeView {}
 
 extension TupleView {
@@ -110,6 +125,11 @@ extension ${view}: View {
     }
 }
 
+% if i > 0:
+extension ${view}: GroupingContainer {}
+% else:
+extension ${view}: GroupingContainer where View0: GroupingContainer {}
+% end
 extension ${view}: TupleView {
     typealias Children = TupleViewChildren${i + 1}<${children_type_parameters}>
 

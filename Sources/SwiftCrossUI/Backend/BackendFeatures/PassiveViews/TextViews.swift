@@ -76,6 +76,29 @@ extension BackendFeatures {
             content: String,
             environment: EnvironmentValues
         )
+
+        /// Whether
+        /// ``size(of:whenDisplayedIn:proposedWidth:proposedHeight:environment:)``
+        /// measures without reading anything from the widget it is handed.
+        ///
+        /// A backend that measures with its own scratch element (AppKit and
+        /// WinUI both do) doesn't need the text view to already hold the string
+        /// it is being asked about. A backend that measures *through* the
+        /// widget — Gtk, which takes its Pango layout context from it — does,
+        /// and leaves this `false`.
+        ///
+        /// ``Text`` uses this to decide *when* to write the widget. The layout
+        /// system asks a label for its size several times per pass (a minimum
+        /// probe, a maximum probe and the proposal its container settles on),
+        /// and a window of a few hundred labels therefore issued a few thousand
+        /// ``updateTextView(_:content:environment:)`` calls per pass purely so
+        /// that the measurement that followed each one could read the widget
+        /// back. Backends that set this write the widget once per pass instead,
+        /// on commit.
+        ///
+        /// Defaults to `false`, which is the conservative answer: the widget is
+        /// written before every measurement, as it always was.
+        var measuresTextIndependentlyOfWidget: Bool { get }
     }
 }
 
@@ -86,5 +109,9 @@ extension BackendFeatures.TextViews {
         _ textStyle: Font.TextStyle
     ) -> Font.TextStyle.Resolved {
         textStyle.resolve(for: deviceClass)
+    }
+
+    public var measuresTextIndependentlyOfWidget: Bool {
+        false
     }
 }

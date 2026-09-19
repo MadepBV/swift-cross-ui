@@ -27,8 +27,10 @@
 /// content; under ``FormStyle/automatic`` it just stacks its rows. Beneath a
 /// form style that SwiftCrossUI doesn't ship, a section stacks its rows too.
 ///
-/// - Note: Unlike SwiftUI, sections don't currently collapse. Use
-///   ``DisclosureGroup`` when you need collapsible content.
+/// Supply `isExpanded` to make the section collapsible. A disclosure control
+/// appears beside the header, and collapsing removes the rows from layout.
+/// Controls in a custom header remain separate from the disclosure button.
+/// Expansion affects view content; sections in menus retain their normal rows.
 public struct Section<Parent: View, Content: View, Footer: View>: View {
     /// A view identifying the purpose of the section's content.
     private var header: Parent
@@ -36,6 +38,8 @@ public struct Section<Parent: View, Content: View, Footer: View>: View {
     private var content: Content
     /// A view displayed beneath the section's content.
     private var footer: Footer
+    /// Expansion supplied by the caller; nil preserves an ordinary section.
+    private var expansion: Binding<Bool>?
 
     /// The style of the enclosing form, if any.
     @Environment(\.formStyle) private var formStyle
@@ -61,10 +65,12 @@ public struct Section<Parent: View, Content: View, Footer: View>: View {
     ///   - header: A view identifying the purpose of `content`.
     ///   - content: The section's rows.
     ///   - footer: A view displayed beneath `content`.
-    private init(header: Parent, content: Content, footer: Footer) {
+    ///   - isExpanded: External expansion, or nil for a regular section.
+    private init(header: Parent, content: Content, footer: Footer, isExpanded: Binding<Bool>? = nil) {
         self.header = header
         self.content = content
         self.footer = footer
+        self.expansion = isExpanded
     }
 
     /// In a menu a section is its content, set off by separators and headed
@@ -117,6 +123,30 @@ public struct Section<Parent: View, Content: View, Footer: View>: View {
         @ViewBuilder header: () -> Parent
     ) where Footer == EmptyView {
         self.init(header: header(), content: content(), footer: EmptyView())
+    }
+
+    /// Creates a collapsible section with a custom header and no footer.
+    ///
+    /// The disclosure control writes the current expansion state back through
+    /// the binding. Changes to the binding outside the section are reflected
+    /// on the next view update. Collapsed rows contribute no layout or native
+    /// controls, matching the content lifetime of ``DisclosureGroup``.
+    /// The header remains visible, including any independent header actions.
+    public init(
+        isExpanded: Binding<Bool>,
+        @ViewBuilder content: () -> Content,
+        @ViewBuilder header: () -> Parent
+    ) where Footer == EmptyView {
+        self.init(header: header(), content: content(), footer: EmptyView(), isExpanded: isExpanded)
+    }
+
+    /// Creates a collapsible section with a text title and no footer.
+    public init(
+        _ titleKey: String,
+        isExpanded: Binding<Bool>,
+        @ViewBuilder content: () -> Content
+    ) where Parent == Text, Footer == EmptyView {
+        self.init(header: Text(titleKey), content: content(), footer: EmptyView(), isExpanded: isExpanded)
     }
 
     /// Creates a section with a custom footer and no header.
@@ -211,22 +241,47 @@ public struct Section<Parent: View, Content: View, Footer: View>: View {
         Color.adaptive(light: .black, dark: .white).opacity(0.05)
     }
 
+    /// The same row metrics and decoration serve both ordinary and
+    /// collapsible sections; only their presence in the tree changes.
+    private var rows: some View {
+        VStack(alignment: .leading, spacing: metrics.sectionRowSpacing) {
+            content
+        }
+        .if(isInsideForm) { rows in
+            rows.frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .if(metrics.groupsSectionContent) { rows in
+            rows
+                .padding(metrics.sectionContentPadding)
+                .background(groupBackground)
+                .cornerRadius(metrics.sectionContentCornerRadius)
+        }
+    }
+
     public var body: some View {
         VStack(alignment: .leading, spacing: metrics.sectionHeaderSpacing) {
-            header
-                .font(.headline)
-
-            VStack(alignment: .leading, spacing: metrics.sectionRowSpacing) {
-                content
-            }
-            .if(isInsideForm) { rows in
-                rows.frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .if(metrics.groupsSectionContent) { rows in
+            if let expansion {
+                let expanded = expansion.wrappedValue
+                HStack(spacing: 4) {
+                    // DisclosureGroup wraps its entire label in a button.
+                    // A Section header may contain independent controls, so
+                    // the disclosure button must be their sibling instead.
+                    Button {
+                        expansion.wrappedValue = !expansion.wrappedValue
+                    } label: {
+                        Text(expanded ? "\u{25BE}" : "\u{25B8}")
+                            .frame(width: 20, height: 20)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(expanded ? "Collapse section" : "Expand section")
+                    header.font(.headline)
+                }
+                if expanded {
+                    rows
+                }
+            } else {
+                header.font(.headline)
                 rows
-                    .padding(metrics.sectionContentPadding)
-                    .background(groupBackground)
-                    .cornerRadius(metrics.sectionContentCornerRadius)
             }
 
             footer

@@ -12,8 +12,8 @@ extension AppKitBackend {
     public func addTextField(_ textField: AlertTextField, to alert: Alert) -> Bool {
         let field =
             textField.isSecure
-            ? NSSecureTextField(frame: .zero)
-            : NSTextField(frame: .zero)
+                ? NSSecureTextField(frame: .zero)
+                : NSTextField(frame: .zero)
         field.setFrameSize(Self.alertTextFieldSize)
         field.placeholderString = textField.placeholder
         field.stringValue = textField.initialValue

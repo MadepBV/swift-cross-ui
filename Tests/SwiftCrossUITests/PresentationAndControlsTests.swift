@@ -224,7 +224,7 @@ struct PresentationAndControlsTests {
         #expect(
             result.size.height
                 == PresentationAndControlsTests.contentHeight
-                    + PresentationAndControlsTests.insetHeight
+                + PresentationAndControlsTests.insetHeight
         )
     }
 
@@ -360,7 +360,7 @@ struct PresentationAndControlsTests {
         #expect(
             result.size.width
                 == PresentationAndControlsTests.contentHeight
-                    + PresentationAndControlsTests.insetWidth
+                + PresentationAndControlsTests.insetWidth
         )
     }
 

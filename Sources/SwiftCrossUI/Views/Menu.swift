@@ -185,9 +185,16 @@ extension Menu: TypeSafeView {
                 )
         }
 
-        var size = backend.naturalSize(of: widget)
-        size.x = buttonWidth ?? size.x
-        return ViewLayoutResult.leafView(size: ViewSize(size))
+        var size = ViewSize(backend.naturalSize(of: widget))
+        if let buttonWidth {
+            size.width = Double(buttonWidth)
+        } else if let width = proposedSize.width, width.isFinite {
+            // Inspector menus often display a user-authored name. Keep the
+            // closed button inside its proposed row while the popover keeps
+            // the complete menu titles.
+            size.width = min(size.width, max(0, width))
+        }
+        return ViewLayoutResult.leafView(size: size)
     }
 
     @CastBackend<BackendFeatures.MenuButtons>(backendGenericName: "NewBackend")

@@ -219,7 +219,10 @@ struct LazyGridTests {
         #expect(items.size == SIMD2(500, 48))
         #expect(
             items.children.map(\.position) == [
-                SIMD2(61, 0), SIMD2(231, 0), SIMD2(400, 0), SIMD2(61, 28),
+                SIMD2(61, 0),
+                SIMD2(231, 0),
+                SIMD2(400, 0),
+                SIMD2(61, 28),
             ]
         )
     }
@@ -248,7 +251,9 @@ struct LazyGridTests {
         let items = group.children[0].widget as! DummyBackend.Container
         #expect(
             items.children.map(\.position) == [
-                SIMD2(0, 0), SIMD2(60, 0), SIMD2(0, 10),
+                SIMD2(0, 0),
+                SIMD2(60, 0),
+                SIMD2(0, 10),
             ]
         )
     }
@@ -285,7 +290,9 @@ struct LazyGridTests {
         let items = stack.children[0].widget as! DummyBackend.Container
         #expect(
             items.children.map(\.position) == [
-                SIMD2(0, 0), SIMD2(10, 0), SIMD2(20, 0),
+                SIMD2(0, 0),
+                SIMD2(10, 0),
+                SIMD2(20, 0),
             ]
         )
     }
@@ -379,4 +386,3 @@ struct LazyGridTests {
         return node
     }
 }
-

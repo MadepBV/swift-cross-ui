@@ -177,7 +177,7 @@ final class TapGestureTarget: WinUI.Canvas {
     private func updateHitTesting() {
         let wantsEvents =
             leftClickHandler != nil || rightClickHandler != nil
-            || longPressHandler != nil
+                || longPressHandler != nil
         // Each handler's `didSet` calls this, so it used to activate a WinRT
         // brush and write `Background` up to three times per update pass for a
         // value that only changes when a gesture is attached or detached.
@@ -273,7 +273,8 @@ final class TapGestureTarget: WinUI.Canvas {
             let queue = WinAppSDK.DispatcherQueue.getForCurrentThread(),
             let timer = try? queue.createTimer()
         else {
-            logger.warning("no dispatcher queue on the current thread; long presses are unavailable")
+            logger
+                .warning("no dispatcher queue on the current thread; long presses are unavailable")
             return nil
         }
         // WinRT durations are in 100 nanosecond ticks.
@@ -331,6 +332,7 @@ extension WinUIBackend: BackendFeatures.PointerGestures {
             target.scrollHandler = nil
             target.magnifyHandler = nil
             target.moveHandler = nil
+            target.cancelInactiveGestures()
             return
         }
 
@@ -340,6 +342,7 @@ extension WinUIBackend: BackendFeatures.PointerGestures {
         target.scrollHandler = onScroll
         target.magnifyHandler = onMagnify
         target.moveHandler = onMove
+        target.cancelInactiveGestures()
     }
 }
 
@@ -456,6 +459,13 @@ final class PointerGestureTarget: WinUI.Canvas {
     /// is reported exactly once.
     private var pointerIsInside = false
 
+    /// Holds the newest hover or drag position back to one delivery per frame.
+    ///
+    /// The pointer reports far faster than a window can be laid out, and every
+    /// position that reaches the app costs a full update pass. See
+    /// ``PointerUpdateCoalescer``.
+    private let updates = PointerUpdateCoalescer()
+
     /// The modifier keys reported by the most recent pointer event.
     private var lastModifiers: PointerModifiers = []
 
@@ -464,6 +474,9 @@ final class PointerGestureTarget: WinUI.Canvas {
 
     /// Where the pointer went down, in the reported coordinate space.
     private var dragStartLocation: CGPoint?
+
+    /// Per-target press identity survives queued sample delivery and cancellation.
+    private var dragInteractionID: UInt64 = 0
 
     /// Whether the current press has passed ``minimumDragDistance`` yet.
     private var dragIsRecognized = false
@@ -512,13 +525,19 @@ final class PointerGestureTarget: WinUI.Canvas {
             guard let self, let args else { return }
             self.handlePointerReleased(args)
         }
-        pointerCaptureLost.addHandler { [weak self] _, _ in
+        pointerCaptureLost.addHandler { [weak self] _, args in
             // A cancelled drag never happened, so no handler runs; SwiftUI
             // doesn't call `onEnded` for one either.
-            self?.resetDrag()
+            guard let self, let args, args.pointer.pointerId == self.pressedPointerId else {
+                return
+            }
+            self.resetDrag()
         }
-        pointerCanceled.addHandler { [weak self] _, _ in
-            self?.resetDrag()
+        pointerCanceled.addHandler { [weak self] _, args in
+            guard let self, let args, args.pointer.pointerId == self.pressedPointerId else {
+                return
+            }
+            self.resetDrag()
         }
         pointerExited.addHandler { [weak self] _, args in
             guard let self, let args else { return }
@@ -575,8 +594,8 @@ final class PointerGestureTarget: WinUI.Canvas {
     private func updateHitTesting() {
         let wantsEvents =
             dragChangedHandler != nil || dragEndedHandler != nil
-            || tapHandler != nil || scrollHandler != nil
-            || magnifyHandler != nil || moveHandler != nil
+                || tapHandler != nil || scrollHandler != nil
+                || magnifyHandler != nil || moveHandler != nil
         // Six handler `didSet`s call this, so it used to activate a WinRT brush
         // and write `Background` six times per update pass for a value that only
         // changes when a gesture is attached or detached.
@@ -617,6 +636,23 @@ final class PointerGestureTarget: WinUI.Canvas {
         dragChangedHandler != nil || dragEndedHandler != nil
     }
 
+    /// Detaching a gesture ends its recognition machinery, including a capture
+    /// that would otherwise keep diverting input to a disabled canvas.
+    func cancelInactiveGestures() {
+        if !wantsDrag, pressedPointerId != nil {
+            resetDrag()
+            try? releasePointerCaptures()
+        }
+        if moveHandler == nil {
+            pointerIsInside = false
+        }
+        // A detached handler's pending sample must not be revived if the
+        // handler is attached again before the next composition frame.
+        if pressedPointerId == nil ? moveHandler == nil : dragChangedHandler == nil {
+            updates.cancel()
+        }
+    }
+
     /// Reads the pointer's position in the space the gesture asked for.
     ///
     /// - Parameter args: The event to read.
@@ -638,7 +674,8 @@ final class PointerGestureTarget: WinUI.Canvas {
             time: Date(),
             velocity: velocity,
             modifiers: lastModifiers,
-            button: dragButton
+            button: dragButton,
+            interactionID: dragInteractionID
         )
     }
 
@@ -659,6 +696,11 @@ final class PointerGestureTarget: WinUI.Canvas {
     }
 
     private func resetDrag() {
+        // Whatever position was waiting to be delivered describes a gesture
+        // that is no longer happening, so it is dropped rather than flushed.
+        // (After a normal release there is nothing pending: the release
+        // flushed it before reporting the end.)
+        updates.cancel()
         pressedPointerId = nil
         dragStartLocation = nil
         dragIsRecognized = false
@@ -668,6 +710,12 @@ final class PointerGestureTarget: WinUI.Canvas {
     }
 
     private func handlePointerPressed(_ args: WinUI.PointerRoutedEventArgs) {
+        // Every event other than a move is delivered in order with respect to
+        // the moves around it, so the pending one goes first.
+        updates.flush()
+        // A second touch must not replace the first touch's drag origin or
+        // capture. Its manipulation events can still participate in a pinch.
+        guard pressedPointerId == nil else { return }
         lastModifiers = PointerModifiers(virtualKeyModifiers: args.keyModifiers)
 
         guard let point = try? args.getCurrentPoint(self), let button = point.pressedButton else {
@@ -684,6 +732,7 @@ final class PointerGestureTarget: WinUI.Canvas {
 
         dragButton = button
         pressedPointerId = point.pointerId
+        dragInteractionID &+= 1
         dragStartLocation = location
         dragIsRecognized = minimumDragDistance <= 0.0
         velocity = CGSize(width: 0.0, height: 0.0)
@@ -696,6 +745,9 @@ final class PointerGestureTarget: WinUI.Canvas {
     }
 
     private func handlePointerMoved(_ args: WinUI.PointerRoutedEventArgs) {
+        if let pressedPointerId, args.pointer.pointerId != pressedPointerId {
+            return
+        }
         let modifiers = PointerModifiers(virtualKeyModifiers: args.keyModifiers)
         lastModifiers = modifiers
 
@@ -703,20 +755,23 @@ final class PointerGestureTarget: WinUI.Canvas {
         // a mouse with no button down and for a pen hovering above the
         // screen; a drag in progress is reported through the drag handlers
         // below instead.
-        if let moveHandler,
-            pressedPointerId == nil,
-            let point = try? args.getCurrentPoint(self),
-            !point.isInContact,
-            let location = location(of: args)
+        if moveHandler != nil,
+           pressedPointerId == nil,
+           let point = try? args.getCurrentPoint(self),
+           !point.isInContact,
+           let location = location(of: args)
         {
             pointerIsInside = true
-            moveHandler(
-                PointerMoveEvent(
-                    phase: .active(location),
-                    modifiers: modifiers,
-                    time: Date()
-                )
+            let event = PointerMoveEvent(
+                phase: .active(location),
+                modifiers: modifiers,
+                time: Date()
             )
+            // Held back to one delivery per frame; the newest position
+            // supersedes the ones before it. See `updates`.
+            updates.schedule { [weak self] in
+                self?.moveHandler?(event)
+            }
         }
 
         guard
@@ -728,6 +783,8 @@ final class PointerGestureTarget: WinUI.Canvas {
             return
         }
 
+        // Sampled from every raw event, so coalescing the delivery below
+        // doesn't coarsen the reported velocity.
         sample(current)
 
         if !dragIsRecognized {
@@ -739,10 +796,18 @@ final class PointerGestureTarget: WinUI.Canvas {
             dragIsRecognized = true
         }
 
-        dragChangedHandler?(dragEvent(start: start, location: current))
+        if dragChangedHandler != nil {
+            let event = dragEvent(start: start, location: current)
+            updates.schedule { [weak self] in
+                self?.dragChangedHandler?(event)
+            }
+        }
     }
 
     private func handlePointerExited(_ args: WinUI.PointerRoutedEventArgs) {
+        // The last position inside is delivered before the exit; see
+        // `handlePointerPressed`.
+        updates.flush()
         let modifiers = PointerModifiers(virtualKeyModifiers: args.keyModifiers)
         lastModifiers = modifiers
 
@@ -754,6 +819,9 @@ final class PointerGestureTarget: WinUI.Canvas {
     }
 
     private func handlePointerReleased(_ args: WinUI.PointerRoutedEventArgs) {
+        // The drag's last moved-to position is delivered before its end, so a
+        // gesture never ends at a position the app was never told about.
+        updates.flush()
         lastModifiers = PointerModifiers(virtualKeyModifiers: args.keyModifiers)
 
         guard
@@ -783,9 +851,9 @@ final class PointerGestureTarget: WinUI.Canvas {
     private func countPress(at location: CGPoint) {
         let now = Date()
         if let lastPressTime, let lastPressLocation,
-            now.timeIntervalSince(lastPressTime) <= Self.multiTapInterval,
-            abs(location.x - lastPressLocation.x) <= Self.multiTapDistance,
-            abs(location.y - lastPressLocation.y) <= Self.multiTapDistance
+           now.timeIntervalSince(lastPressTime) <= Self.multiTapInterval,
+           abs(location.x - lastPressLocation.x) <= Self.multiTapDistance,
+           abs(location.y - lastPressLocation.y) <= Self.multiTapDistance
         {
             consecutivePresses += 1
         } else {
@@ -806,10 +874,10 @@ final class PointerGestureTarget: WinUI.Canvas {
         }
 
         if reportsWindowCoordinates,
-            let transform = try? transformToVisual(nil),
-            let transformed = try? transform.transformPoint(
-                WindowsFoundation.Point(x: Float(location.x), y: Float(location.y))
-            )
+           let transform = try? transformToVisual(nil),
+           let transformed = try? transform.transformPoint(
+               WindowsFoundation.Point(x: Float(location.x), y: Float(location.y))
+           )
         {
             sendTap(at: transformed.cgPoint, clickCount: clickCount)
         } else {
@@ -818,6 +886,8 @@ final class PointerGestureTarget: WinUI.Canvas {
     }
 
     private func sendTap(at location: CGPoint, clickCount: Int) {
+        // See `handlePointerPressed`.
+        updates.flush()
         tapHandler?(
             PointerGestureEvent(
                 startLocation: location,
@@ -828,11 +898,12 @@ final class PointerGestureTarget: WinUI.Canvas {
         )
     }
 
-    /// One notch of a mouse wheel, as `PointerPointProperties.mouseWheelDelta`
-    /// reports it (`WHEEL_DELTA`).
-    private static let wheelNotch = 120.0
-
     private func handlePointerWheelChanged(_ args: WinUI.PointerRoutedEventArgs) {
+        // See `handlePointerPressed`. Scroll steps carry *deltas* rather than a
+        // position, so they are not coalesced themselves: merging them would
+        // mean summing, and an app that treats each step as one notch would
+        // then see a different number of notches.
+        updates.flush()
         let modifiers = PointerModifiers(virtualKeyModifiers: args.keyModifiers)
         lastModifiers = modifiers
 
@@ -845,21 +916,11 @@ final class PointerGestureTarget: WinUI.Canvas {
             return
         }
 
-        let delta = Double(properties.mouseWheelDelta)
-        let notches = delta / Self.wheelNotch
-        let isHorizontal = properties.isHorizontalMouseWheel
-
-        // A notched wheel reports whole multiples of WHEEL_DELTA; a precision
-        // touchpad reports finer, pixel-like deltas.
-        let isPrecise = properties.mouseWheelDelta % 120 != 0
-
         scrollHandler(
-            PointerScrollEvent(
+            WindowsScrollWheel.event(
+                rawDelta: properties.mouseWheelDelta,
+                isHorizontal: properties.isHorizontalMouseWheel,
                 location: location,
-                deltaX: isHorizontal ? notches : 0.0,
-                deltaY: isHorizontal ? 0.0 : notches,
-                isPrecise: isPrecise,
-                phase: .changed,
                 modifiers: modifiers,
                 time: Date()
             )
@@ -885,10 +946,13 @@ final class PointerGestureTarget: WinUI.Canvas {
             return
         }
 
+        // See `handlePointerPressed`.
+        updates.flush()
+
         var location = position.cgPoint
         if reportsWindowCoordinates,
-            let transform = try? transformToVisual(nil),
-            let transformed = try? transform.transformPoint(position)
+           let transform = try? transformToVisual(nil),
+           let transformed = try? transform.transformPoint(position)
         {
             location = transformed.cgPoint
         }

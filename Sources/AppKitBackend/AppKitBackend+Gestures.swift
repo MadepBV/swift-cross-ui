@@ -394,6 +394,9 @@ final class NSCustomPointerGestureTarget: NSView {
     /// Where the pointer was when the current drag began.
     private var dragStartLocation: CGPoint?
 
+    /// Per-target identity distinguishes a new press after cancellation.
+    private var dragInteractionID: UInt64 = 0
+
     /// Whether the current drag has passed ``minimumDragDistance`` yet.
     private var dragIsRecognized = false
 
@@ -406,8 +409,8 @@ final class NSCustomPointerGestureTarget: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard
             dragChangedHandler != nil || dragEndedHandler != nil
-                || tapHandler != nil || scrollHandler != nil
-                || magnifyHandler != nil || moveHandler != nil
+            || tapHandler != nil || scrollHandler != nil
+            || magnifyHandler != nil || moveHandler != nil
         else {
             return nil
         }
@@ -566,7 +569,8 @@ final class NSCustomPointerGestureTarget: NSView {
             time: Date(),
             velocity: CGSize(width: velocity.x, height: velocity.y),
             modifiers: PointerModifiers(NSEvent.modifierFlags),
-            button: dragButton
+            button: dragButton,
+            interactionID: dragInteractionID
         )
     }
 
@@ -594,6 +598,7 @@ final class NSCustomPointerGestureTarget: NSView {
     func pan(sender: NSPanGestureRecognizer, button: PointerButton) {
         switch sender.state {
             case .began:
+                dragInteractionID &+= 1
                 dragButton = button
                 dragStartLocation = location(of: sender)
                 dragIsRecognized = minimumDragDistance <= 0.0
@@ -607,7 +612,7 @@ final class NSCustomPointerGestureTarget: NSView {
                     let dy = current.y - start.y
                     guard
                         (dx * dx + dy * dy).squareRoot()
-                            >= minimumDragDistance
+                        >= minimumDragDistance
                     else {
                         return
                     }

@@ -1,5 +1,6 @@
 @_spi(Backends) import SwiftCrossUI
 import UWP
+import WinSDK
 import WinUI
 import WindowsFoundation
 
@@ -25,27 +26,27 @@ extension WinUIBackend {
         let entry = WidgetPropertyCache.shared.entry(for: target)
         let wanted = (shortcut: shortcut, isEnabled: environment.isEnabled)
         if let applied = entry.keyboardShortcut,
-            applied.shortcut == wanted.shortcut,
-            applied.isEnabled == wanted.isEnabled
+           applied.shortcut == wanted.shortcut,
+           applied.isEnabled == wanted.isEnabled
         {
             return
         }
         entry.keyboardShortcut = wanted
 
-        let accelerator = KeyboardShortcutRegistry.shared.accelerator(for: target)
-
         guard
             let shortcut,
             environment.isEnabled,
-            let key = shortcut.key.virtualKey
+            let mapping = shortcut.key.virtualKeyMapping
         else {
-            accelerator.isEnabled = false
+            KeyboardShortcutRegistry.shared.disableAccelerator(for: target)
             return
         }
 
-        accelerator.key = key
-        accelerator.modifiers = shortcut.modifiers.virtualKeyModifiers
-        accelerator.isEnabled = true
+        KeyboardShortcutRegistry.shared.updateAccelerator(
+            for: target,
+            key: mapping.key,
+            modifiers: shortcut.modifiers.union(mapping.modifiers).virtualKeyModifiers
+        )
     }
 }
 
@@ -59,32 +60,108 @@ extension WinUIBackend {
 final class KeyboardShortcutRegistry {
     static let shared = KeyboardShortcutRegistry()
 
-    private var accelerators: [ObjectIdentifier: WinUI.KeyboardAccelerator] = [:]
+    @MainActor
+    private final class Entry {
+        weak var element: WinUI.FrameworkElement?
+        let accelerator: WinUI.KeyboardAccelerator
+        private var placementBeforeSuppression: WinUI.KeyboardAcceleratorPlacementMode?
+
+        init(element: WinUI.FrameworkElement, accelerator: WinUI.KeyboardAccelerator) {
+            self.element = element
+            self.accelerator = accelerator
+        }
+
+        func suppressAutomaticTooltip() {
+            guard let element, placementBeforeSuppression == nil else { return }
+            placementBeforeSuppression = element.keyboardAcceleratorPlacementMode
+            element.keyboardAcceleratorPlacementMode = .hidden
+        }
+
+        func restoreAutomaticTooltip() {
+            guard let element, let placementBeforeSuppression else { return }
+            element.keyboardAcceleratorPlacementMode = placementBeforeSuppression
+            self.placementBeforeSuppression = nil
+        }
+    }
+
+    private var entries: [ObjectIdentifier: Entry] = [:]
+    private var registrationsUntilPruning = 64
 
     private init() {}
 
-    /// Returns the accelerator attached to an element, creating and attaching
-    /// one on first use.
-    func accelerator(for element: WinUI.FrameworkElement) -> WinUI.KeyboardAccelerator {
-        let key = ObjectIdentifier(element)
-        if let existing = accelerators[key] {
-            return existing
+    private func existingEntry(for element: WinUI.FrameworkElement) -> Entry? {
+        let identifier = ObjectIdentifier(element)
+        guard let entry = entries[identifier] else { return nil }
+        // A released Swift WinRT wrapper's address can be reused for a different
+        // element. An identifier match alone must not reuse its accelerator.
+        guard entry.element === element else {
+            entries.removeValue(forKey: identifier)
+            return nil
         }
+        return entry
+    }
 
-        let accelerator = WinUI.KeyboardAccelerator()
-        // When the shortcut fires, activate the wrapped control as though it
-        // had been clicked. WinUI would only do that by itself for an
-        // accelerator attached directly to a `Button`, and the target here is
-        // usually a container around one.
-        accelerator.invoked.addHandler { [weak element] _, args in
-            guard let element else { return }
-            if activatePrimaryAction(of: element) {
-                args?.handled = true
+    func disableAccelerator(for element: WinUI.FrameworkElement) {
+        guard let entry = existingEntry(for: element) else { return }
+        entry.accelerator.isEnabled = false
+        entry.restoreAutomaticTooltip()
+    }
+
+    /// Configures shortcuts before attaching them to a potentially live tree.
+    func updateAccelerator(
+        for element: WinUI.FrameworkElement,
+        key: UWP.VirtualKey,
+        modifiers: UWP.VirtualKeyModifiers
+    ) {
+        let existing = existingEntry(for: element)
+        let entry: Entry
+        if let existing {
+            entry = existing
+        } else {
+            // Amortize cleanup over registrations, not recurring view updates.
+            // Dead targets must not keep their native accelerator/delegate alive.
+            registrationsUntilPruning -= 1
+            if registrationsUntilPruning == 0 {
+                entries = entries.filter { $0.value.element != nil }
+                registrationsUntilPruning = 64
+            }
+            let accelerator = WinUI.KeyboardAccelerator()
+            entry = Entry(element: element, accelerator: accelerator)
+            // The target is usually a container around the primary control.
+            accelerator.invoked.addHandler { [weak element] _, args in
+                guard let element else { return }
+                if activatePrimaryAction(of: element) {
+                    args?.handled = true
+                }
             }
         }
-        element.keyboardAccelerators.append(accelerator)
-        accelerators[key] = accelerator
-        return accelerator
+
+        let accelerator = entry.accelerator
+        accelerator.isEnabled = false
+        let hasNativeLabel = WindowsKeyTranslation.hasWinUIAcceleratorLabel(
+            for: UInt16(key.rawValue)
+        )
+        if !hasNativeLabel {
+            // WinUI 1.5 fails fast while formatting some valid OEM key names
+            // (microsoft/microsoft-ui-xaml#708). Hide only that display path;
+            // the native accelerator still handles the original key/modifiers.
+            entry.suppressAutomaticTooltip()
+        }
+        accelerator.key = key
+        accelerator.modifiers = modifiers
+        if hasNativeLabel {
+            // Change the key while still hidden, then restore the target's
+            // previous placement mode once formatting the key is safe again.
+            entry.restoreAutomaticTooltip()
+        }
+        accelerator.isEnabled = true
+
+        if existing == nil {
+            // All properties, including tooltip suppression when required, are
+            // settled before EnterImpl runs in an already-live element tree.
+            element.keyboardAccelerators.append(accelerator)
+            entries[ObjectIdentifier(element)] = entry
+        }
     }
 }
 
@@ -121,7 +198,7 @@ private func activatePrimaryAction(of element: WinUI.FrameworkElement) -> Bool {
                 }
             }
         } else if let contentControl = next as? WinUI.ContentControl,
-            let content = contentControl.content as? WinUI.FrameworkElement
+                  let content = contentControl.content as? WinUI.FrameworkElement
         {
             queue.append(content)
         }
@@ -290,66 +367,41 @@ extension SwiftCrossUI.EventModifiers {
 }
 
 extension SwiftCrossUI.KeyEquivalent {
-    /// The Windows virtual key corresponding to this key equivalent, if one
-    /// exists.
-    var virtualKey: UWP.VirtualKey? {
+    /// Named keys have fixed virtual keys; printable keys depend on the
+    /// current Windows layout. Required Shift/AltGr modifiers must accompany
+    /// the key, including for digits on AZERTY keyboards.
+    var virtualKeyMapping: (key: UWP.VirtualKey, modifiers: EventModifiers)? {
+        let namedKey: UWP.VirtualKey?
         switch self {
-            case .upArrow: return .up
-            case .downArrow: return .down
-            case .leftArrow: return .left
-            case .rightArrow: return .right
-            case .clear: return .clear
-            case .delete: return .back
-            case .deleteForward: return .delete
-            case .end: return .end
-            case .escape: return .escape
-            case .home: return .home
-            case .pageDown: return .pageDown
-            case .pageUp: return .pageUp
-            case .return: return .enter
-            case .space: return .space
-            case .tab: return .tab
-            default: break
+            case .upArrow: namedKey = .up
+            case .downArrow: namedKey = .down
+            case .leftArrow: namedKey = .left
+            case .rightArrow: namedKey = .right
+            case .clear: namedKey = .clear
+            case .delete: namedKey = .back
+            case .deleteForward: namedKey = .delete
+            case .end: namedKey = .end
+            case .escape: namedKey = .escape
+            case .home: namedKey = .home
+            case .pageDown: namedKey = .pageDown
+            case .pageUp: namedKey = .pageUp
+            case .return: namedKey = .enter
+            case .space: namedKey = .space
+            case .tab: namedKey = .tab
+            default: namedKey = nil
         }
-
-        switch character.lowercased() {
-            case "a": return .a
-            case "b": return .b
-            case "c": return .c
-            case "d": return .d
-            case "e": return .e
-            case "f": return .f
-            case "g": return .g
-            case "h": return .h
-            case "i": return .i
-            case "j": return .j
-            case "k": return .k
-            case "l": return .l
-            case "m": return .m
-            case "n": return .n
-            case "o": return .o
-            case "p": return .p
-            case "q": return .q
-            case "r": return .r
-            case "s": return .s
-            case "t": return .t
-            case "u": return .u
-            case "v": return .v
-            case "w": return .w
-            case "x": return .x
-            case "y": return .y
-            case "z": return .z
-            case "0": return .number0
-            case "1": return .number1
-            case "2": return .number2
-            case "3": return .number3
-            case "4": return .number4
-            case "5": return .number5
-            case "6": return .number6
-            case "7": return .number7
-            case "8": return .number8
-            case "9": return .number9
-            default: return nil
+        if let namedKey {
+            return (namedKey, [])
         }
+        guard let translation = WindowsKeyTranslation(
+            character: character,
+            scan: { VkKeyScanW($0) }
+        ) else {
+            return nil
+        }
+        return (
+            UWP.VirtualKey(rawValue: .init(translation.virtualKey)),
+            translation.modifiers
+        )
     }
 }

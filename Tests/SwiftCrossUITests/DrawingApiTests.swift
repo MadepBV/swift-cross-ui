@@ -282,9 +282,9 @@ struct DrawingApiTests {
                 Issue.record("expected three positioned text views")
                 return
             }
-            let (topLeading, leading, top) = (
-                positions[0], positions[1], positions[2]
-            )
+            let topLeading = positions[0]
+            let leading = positions[1]
+            let top = positions[2]
 
             CanvasTests.expectClose(topLeading, SIMD2(x: 50.0, y: 25.0))
             #expect(leading.x == topLeading.x)

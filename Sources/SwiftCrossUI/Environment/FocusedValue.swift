@@ -131,7 +131,7 @@ final class FocusedValuesStore {
         let publisherIdentity = publisher.map(ObjectIdentifier.init)
         let isRepublishByTheSamePublisher =
             publisherIdentity != nil
-            && lastPublishers[keyPath] == publisherIdentity
+                && lastPublishers[keyPath] == publisherIdentity
         let isIncomparable = value.map { !isComparable($0) } ?? false
 
         values[keyPath: keyPath] = value

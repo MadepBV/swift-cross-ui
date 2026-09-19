@@ -12,6 +12,14 @@ import Foundation // for CGPoint, CGSize and Date
 /// - ``BackendFeatures/PointerGestures``
 /// - ``DragGesture``
 public struct PointerGestureEvent: Sendable {
+    /// An identifier stable for one drag and different for the next drag on
+    /// the same gesture target, including after cancellation.
+    ///
+    /// Backends can leave this nil for non-drag events. Stateful consumers such
+    /// as HSplitView use it with global coordinates to handle queued samples
+    /// without confusing a cancelled drag with another press at the same point.
+    public var interactionID: UInt64?
+
     /// Where the interaction started, in the gesture's coordinate space.
     ///
     /// For a tap this is the same as ``PointerGestureEvent/location``.
@@ -50,6 +58,7 @@ public struct PointerGestureEvent: Sendable {
     ///   - modifiers: The modifier keys held down.
     ///   - button: The button that drove the event.
     ///   - clickCount: For a tap, which click of a multi-click this is.
+    ///   - interactionID: A stable identifier for the current drag on this target.
     public init(
         startLocation: CGPoint,
         location: CGPoint,
@@ -57,8 +66,10 @@ public struct PointerGestureEvent: Sendable {
         velocity: CGSize = CGSize(width: 0.0, height: 0.0),
         modifiers: PointerModifiers = [],
         button: PointerButton = .primary,
-        clickCount: Int = 1
+        clickCount: Int = 1,
+        interactionID: UInt64? = nil
     ) {
+        self.interactionID = interactionID
         self.startLocation = startLocation
         self.location = location
         self.time = time

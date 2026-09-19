@@ -30,7 +30,7 @@ struct CanvasRepaintTests {
     @MainActor
     final class Harness {
         let backend: DummyBackend
-        let environment: EnvironmentValues
+        var environment: EnvironmentValues
         let node: ViewGraphNode<VStack<TupleView1<Canvas>>, DummyBackend>
         /// How many times the canvas' renderer has run.
         let rendererRuns = Box(0)
@@ -89,11 +89,12 @@ struct CanvasRepaintTests {
         ///
         /// - Returns: The number of times each backend method was called.
         @discardableResult
-        func pass() -> [String: Int] {
+        func pass(proposedSize: ProposedViewSize = ProposedViewSize(100, 50)) -> [String: Int] {
+            LayoutPass.begin()
             backend.resetCallCounts()
             _ = node.computeLayout(
                 with: VStack(content: TupleView1(makeCanvas())),
-                proposedSize: ProposedViewSize(100, 50),
+                proposedSize: proposedSize,
                 environment: environment
             )
             _ = node.commit()
@@ -131,6 +132,8 @@ struct CanvasRepaintTests {
         offset.value = 20.0
         let afterChange = harness.pass()
         #expect(afterChange["updatePath", default: 0] == 1)
+        // Updating the path alone does not repaint AppKit or UIKit widgets.
+        #expect(afterChange["renderPath", default: 0] == 1)
     }
 
     @Test("A changed fill colour is rendered again")
@@ -229,4 +232,153 @@ struct CanvasRepaintTests {
         #expect(harness.rendererRuns.value > runsWhileUnchanged)
         #expect(afterChange["updatePath", default: 0] == 1)
     }
+
+    @Test("Resizing reuploads paths whose backend coordinates depend on bounds")
+    func resizedCanvasReuploadsGeometry() {
+        let harness = Harness { context, _ in
+            context.fill(Self.rectangle(x: 0), with: .color(.red))
+        }
+        harness.pass()
+
+        let resized = harness.pass(proposedSize: ProposedViewSize(100, 80))
+        #expect(resized["updatePath", default: 0] == 1)
+        #expect(resized["renderPath", default: 0] == 1)
+        let unchanged = harness.pass(proposedSize: ProposedViewSize(100, 80))
+        #expect(unchanged["updatePath", default: 0] == 0)
+    }
+
+    @Test("Changing only the fill rule updates and repaints the path")
+    func fillRuleChangeRepaints() {
+        let evenOdd = Box(false)
+        let harness = Harness { context, _ in
+            let nested = Self.rectangle(x: 0)
+                .addRectangle(Path.Rect(x: 2, y: 2, width: 6, height: 6))
+            context.fill(nested, with: .color(.red), style: FillStyle(eoFill: evenOdd.value))
+        }
+        harness.pass()
+        evenOdd.value = true
+        let changed = harness.pass()
+        #expect(changed["updatePath", default: 0] == 1)
+        #expect(changed["renderPath", default: 0] == 1)
+    }
+
+    @Test("Returning to declared inputs after an unconditional draw repaints")
+    func switchingInitializersInvalidatesRecordedInputs() {
+        let declaresInputs = Box(true)
+        let offset = Box(0.0)
+        let harness = Harness(
+            makeCanvas: { renderer in
+                declaresInputs.value
+                    ? Canvas(inputs: 0, renderer: renderer)
+                    : Canvas(renderer: renderer)
+            },
+            renderer: { context, _ in
+                context.fill(Self.rectangle(x: offset.value), with: .color(.red))
+            }
+        )
+        harness.pass()
+        declaresInputs.value = false
+        offset.value = 20
+        harness.pass()
+        let previousRuns = harness.rendererRuns.value
+
+        declaresInputs.value = true
+        offset.value = 0
+        let restored = harness.pass()
+        #expect(harness.rendererRuns.value == previousRuns + 1)
+        #expect(restored["updatePath", default: 0] == 1)
+    }
+
+    @Test("Adaptive command colours repaint with a fixed inherited foreground")
+    func adaptiveColorInvalidatesDeclaredInputs() {
+        let harness = Harness(
+            makeCanvas: { Canvas(inputs: 0, renderer: $0) },
+            renderer: { context, _ in
+                context.fill(
+                    Self.rectangle(x: 0),
+                    with: .color(.adaptive(light: .red, dark: .blue))
+                )
+            }
+        )
+        harness.environment = harness.environment.with(\.foregroundColor, .black)
+        harness.pass()
+        let previousRuns = harness.rendererRuns.value
+        harness.environment = harness.environment.with(\.colorScheme, .dark)
+        let changed = harness.pass()
+
+        #expect(harness.rendererRuns.value == previousRuns + 1)
+        #expect(changed["renderPath", default: 0] == 1)
+        #expect(changed["updatePath", default: 0] == 0)
+    }
+
+    @Test("Declared inputs do not hide text case or locale changes")
+    func transformedTextInvalidatesDeclaredInputs() {
+        let harness = Harness(
+            makeCanvas: { Canvas(inputs: 0, renderer: $0) },
+            renderer: { context, _ in
+                context.draw(Text("i"), at: .zero)
+            }
+        )
+        func textContents(_ widget: DummyBackend.Widget) -> [String] {
+            (widget as? DummyBackend.TextView).map { [$0.content] } ??
+                widget.getChildren().flatMap(textContents)
+        }
+        harness.environment = harness.environment.with(\.locale, Locale(identifier: "en_US"))
+        harness.pass()
+        #expect(textContents(harness.node.widget) == ["i"])
+        harness.environment = harness.environment.with(\.textCase, .uppercase)
+        harness.pass()
+        #expect(textContents(harness.node.widget) == ["I"])
+        harness.environment = harness.environment.with(\.locale, Locale(identifier: "tr_TR"))
+        harness.pass()
+        #expect(textContents(harness.node.widget) == ["İ"])
+    }
+
+    @Test("Text alignment and selection changes reach an otherwise unchanged widget")
+    func textAttributesInvalidateReplay() {
+        let harness = Harness(
+            makeCanvas: { Canvas(inputs: 0, renderer: $0) },
+            renderer: { context, _ in
+                context.draw(Text("first\nsecond"), at: .zero)
+            }
+        )
+        harness.pass()
+        harness.environment = harness.environment.with(\.multilineTextAlignment, .trailing)
+        let aligned = harness.pass()
+        #expect(aligned["updateTextView", default: 0] == 1)
+        harness.environment = harness.environment.with(\.isTextSelectionEnabled, true)
+        let selectable = harness.pass()
+        #expect(selectable["updateTextView", default: 0] == 1)
+    }
+
+    @Test("Changing line limits remeasures canvas text")
+    func lineLimitInvalidatesTextMeasurement() {
+        let harness = Harness(
+            makeCanvas: { Canvas(inputs: 0, renderer: $0) },
+            renderer: { context, _ in
+                context.draw(Text("multiple lines of text"), in: CGRect(x: 0, y: 0, width: 50, height: 50))
+            }
+        )
+        harness.pass()
+        harness.environment = harness.environment.with(
+            \.lineLimitSettings, LineLimit(limit: 1, reservesSpace: false)
+        )
+        let limited = harness.pass()
+        #expect(limited["size(ofText:)", default: 0] == 1)
+        let unchanged = harness.pass()
+        #expect(unchanged["size(ofText:)", default: 0] == 0)
+    }
+
+    @Test("Changing only text colour reuses its measurement")
+    func textColorDoesNotRemeasure() {
+        let harness = Harness { context, _ in
+            context.draw(Text("label"), at: .zero)
+        }
+        harness.pass()
+        harness.environment = harness.environment.with(\.foregroundColor, .red)
+        let changed = harness.pass()
+        #expect(changed["updateTextView", default: 0] == 1)
+        #expect(changed["size(ofText:)", default: 0] == 0)
+    }
+
 }

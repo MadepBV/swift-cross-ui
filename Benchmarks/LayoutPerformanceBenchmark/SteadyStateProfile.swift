@@ -240,8 +240,8 @@ enum SteadyStateProfile {
             let nanoseconds = Double(end - start) / Double(iterations)
             let padded =
                 label.count >= 30
-                ? label
-                : label + String(repeating: " ", count: 30 - label.count)
+                    ? label
+                    : label + String(repeating: " ", count: 30 - label.count)
             print("  " + padded + String(format: "%7.1f ns", nanoseconds))
         }
 
@@ -260,9 +260,9 @@ enum SteadyStateProfile {
         time("with x3, stored properties") {
             sink.environment =
                 environment
-                .with(\.layoutOrientation, .vertical)
-                .with(\.layoutAlignment, .center)
-                .with(\.layoutSpacing, 4)
+                    .with(\.layoutOrientation, .vertical)
+                    .with(\.layoutAlignment, .center)
+                    .with(\.layoutSpacing, 4)
         }
     }
 
@@ -270,7 +270,7 @@ enum SteadyStateProfile {
     /// be given more samples.
     private static func profileIterationCount() -> Int {
         if let raw = ProcessInfo.processInfo.environment["SCUI_PROFILE_PASSES"],
-            let value = Int(raw), value > 0
+           let value = Int(raw), value > 0
         {
             return value
         }

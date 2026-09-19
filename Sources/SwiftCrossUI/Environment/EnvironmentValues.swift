@@ -191,10 +191,42 @@ public struct EnvironmentValues {
         activate(with: backend)
     }
 
+    /// The parts of the environment that are fixed for the app's lifetime.
+    ///
+    /// Every view graph node copies the environment several times per layout
+    /// computation, so the struct's width and its number of reference-counted
+    /// fields sit directly on the framework's hottest path. ``backend`` is an
+    /// existential — five words, and a retain/release on every copy — and
+    /// ``supportedDatePickerStyles`` is an array, costing another. Neither can
+    /// change once the environment exists, so both live behind a single shared
+    /// immutable reference instead: a copy of ``EnvironmentValues`` then moves
+    /// five fewer words and performs one retain/release where it used to do
+    /// two.
+    ///
+    /// This is purely a representation change. Both values are still read
+    /// through properties of the same name and type.
+    final class Constants {
+        /// The backend in use.
+        let backend: any BaseAppBackend
+        /// The display styles supported by ``DatePicker``.
+        let supportedDatePickerStyles: [DatePickerStyle]
+
+        init(
+            backend: any BaseAppBackend,
+            supportedDatePickerStyles: [DatePickerStyle]
+        ) {
+            self.backend = backend
+            self.supportedDatePickerStyles = supportedDatePickerStyles
+        }
+    }
+
+    /// The environment's lifetime-constant values. See ``Constants``.
+    private let constants: Constants
+
     /// The backend in use.
     ///
     /// Mustn't change throughout the app's lifecycle.
-    let backend: any BaseAppBackend
+    var backend: any BaseAppBackend { constants.backend }
 
     /// Presents an 'Open file' dialog fit for selecting a single file.
     ///
@@ -283,7 +315,13 @@ public struct EnvironmentValues {
     }
 
     /// The display styles supported by ``DatePicker``. ``datePickerStyle`` must be one of these.
-    public let supportedDatePickerStyles: [DatePickerStyle]
+    ///
+    /// Computed rather than stored so that it doesn't widen the environment or
+    /// add a retain to every copy of it; see ``Constants``. Still immutable,
+    /// exactly as when it was a `let`.
+    public var supportedDatePickerStyles: [DatePickerStyle] {
+        constants.supportedDatePickerStyles
+    }
 
     /// Checks whether a picker style is supported by the current backend.
     @MainActor
@@ -296,17 +334,21 @@ public struct EnvironmentValues {
     /// - Parameters:
     ///   - backend: The app's backend.
     @_spi(Backends) public init<Backend: BaseAppBackend>(backend: Backend) {
-        self.backend = backend
-
         onResize = { _ in }
         values = [:]
         observableObjects = [:]
 
+        let supportedDatePickerStyles: [DatePickerStyle]
         if let backend = backend as? any BackendFeatures.DatePickers {
-            self.supportedDatePickerStyles = backend.supportedDatePickerStyles
+            supportedDatePickerStyles = backend.supportedDatePickerStyles
         } else {
-            self.supportedDatePickerStyles = [.automatic]
+            supportedDatePickerStyles = [.automatic]
         }
+
+        constants = Constants(
+            backend: backend,
+            supportedDatePickerStyles: supportedDatePickerStyles
+        )
     }
 
     /// Returns a copy of the environment with the specified property set to the
@@ -600,7 +642,6 @@ extension EnvironmentValues {
         return string
     }
 }
-
 
 /// A key that can be used to extend the environment with new properties.
 public protocol EnvironmentKey<Value> {

@@ -131,9 +131,12 @@ public struct Picker<Label: View, SelectedValue: Hashable, Content: View>: View 
             return control
         }
         return HStack {
-            label
+            if !environment.labelsHidden {
+                label
+            }
             AnyView(control)
         }
+        .retainingHiddenControlLabel(label, hidden: environment.labelsHidden)
     }
 
     /// The options that the picker offers.

@@ -160,9 +160,9 @@ public struct LazyVGrid<Content: View>: View {
         // downwards flow to them.
         let participantEnvironment =
             environment
-            .with(\.layoutOrientation, .vertical)
-            .with(\.layoutAlignment, alignment.asStackAlignment)
-            .with(\.layoutSpacing, LayoutSystem.roundSize(spacing))
+                .with(\.layoutOrientation, .vertical)
+                .with(\.layoutAlignment, alignment.asStackAlignment)
+                .with(\.layoutSpacing, LayoutSystem.roundSize(spacing))
 
         // The measuring pass exists to stop the view graph's layout cache from
         // swallowing the placing pass. A grouping container only registers its
@@ -377,10 +377,10 @@ final class LazyVGridLayout: ContainerChildLayout {
         // the grid believing that it has no cells at all.
         let participantEnvironment =
             participant.isGroupingContainer
-            ? environment
+                ? environment
                 .with(\.containerChildLayout, self)
                 .with(\.allowLayoutCaching, false)
-            : environment.with(\.containerChildLayout, nil)
+                : environment.with(\.containerChildLayout, nil)
 
         let result = participant.computeLayout(
             proposedSize: proposedSize,

@@ -18,6 +18,21 @@ private func layoutableChild<V: View>(
 
 /// Just a vessel for some default implementations to compress this generated code.
 @MainActor
+/// A tuple of two or more views is never a layout of its own: SwiftUI lays a
+/// builder's elements out in the enclosing container, and so does this —
+/// `TupleView` is laid out *as* a ``Group``. Marking those arities grouping
+/// containers is what lets a grid publish its cell layout into a tuple that
+/// arrives wrapped (behind an `if`/`switch`, or in a `ForEach` body) instead
+/// of laying the whole tuple out as one cell. A bare tuple in a stack is
+/// unaffected: nothing publishes a layout to it there.
+///
+/// `TupleView1` is the wrapper a builder puts around a *single* view, and a
+/// single view is one cell — so it is transparent only when the one view it
+/// wraps is itself a grouping container (a conditional, a `ForEach`, a
+/// larger tuple). Making every 1-tuple transparent would add a container
+/// level under every `ForEach` item; making none transparent would stop a
+/// grid seeing through `LazyVGrid { switch … }`, whose content is a 1-tuple
+/// around the conditional.
 protocol TupleView: TypeSafeView {}
 
 extension TupleView {
@@ -95,6 +110,7 @@ extension TupleView1: View {
     }
 }
 
+extension TupleView1: GroupingContainer where View0: GroupingContainer {}
 extension TupleView1: TupleView {
     typealias Children = TupleViewChildren1<View0>
 
@@ -150,6 +166,7 @@ extension TupleView2: View {
     }
 }
 
+extension TupleView2: GroupingContainer {}
 extension TupleView2: TupleView {
     typealias Children = TupleViewChildren2<View0, View1>
 
@@ -209,6 +226,7 @@ extension TupleView3: View {
     }
 }
 
+extension TupleView3: GroupingContainer {}
 extension TupleView3: TupleView {
     typealias Children = TupleViewChildren3<View0, View1, View2>
 
@@ -272,6 +290,7 @@ extension TupleView4: View {
     }
 }
 
+extension TupleView4: GroupingContainer {}
 extension TupleView4: TupleView {
     typealias Children = TupleViewChildren4<View0, View1, View2, View3>
 
@@ -339,6 +358,7 @@ extension TupleView5: View {
     }
 }
 
+extension TupleView5: GroupingContainer {}
 extension TupleView5: TupleView {
     typealias Children = TupleViewChildren5<View0, View1, View2, View3, View4>
 
@@ -411,6 +431,7 @@ extension TupleView6: View {
     }
 }
 
+extension TupleView6: GroupingContainer {}
 extension TupleView6: TupleView {
     typealias Children = TupleViewChildren6<View0, View1, View2, View3, View4, View5>
 
@@ -487,6 +508,7 @@ extension TupleView7: View {
     }
 }
 
+extension TupleView7: GroupingContainer {}
 extension TupleView7: TupleView {
     typealias Children = TupleViewChildren7<View0, View1, View2, View3, View4, View5, View6>
 
@@ -568,6 +590,7 @@ extension TupleView8: View {
     }
 }
 
+extension TupleView8: GroupingContainer {}
 extension TupleView8: TupleView {
     typealias Children = TupleViewChildren8<View0, View1, View2, View3, View4, View5, View6, View7>
 
@@ -653,6 +676,7 @@ extension TupleView9: View {
     }
 }
 
+extension TupleView9: GroupingContainer {}
 extension TupleView9: TupleView {
     typealias Children = TupleViewChildren9<
         View0,
@@ -752,6 +776,7 @@ extension TupleView10: View {
     }
 }
 
+extension TupleView10: GroupingContainer {}
 extension TupleView10: TupleView {
     typealias Children = TupleViewChildren10<
         View0,
@@ -857,6 +882,7 @@ extension TupleView11: View {
     }
 }
 
+extension TupleView11: GroupingContainer {}
 extension TupleView11: TupleView {
     typealias Children = TupleViewChildren11<
         View0,
@@ -967,6 +993,7 @@ extension TupleView12: View {
     }
 }
 
+extension TupleView12: GroupingContainer {}
 extension TupleView12: TupleView {
     typealias Children = TupleViewChildren12<
         View0,
@@ -1082,6 +1109,7 @@ extension TupleView13: View {
     }
 }
 
+extension TupleView13: GroupingContainer {}
 extension TupleView13: TupleView {
     typealias Children = TupleViewChildren13<
         View0,
@@ -1204,6 +1232,7 @@ extension TupleView14: View {
     }
 }
 
+extension TupleView14: GroupingContainer {}
 extension TupleView14: TupleView {
     typealias Children = TupleViewChildren14<
         View0,
@@ -1331,6 +1360,7 @@ extension TupleView15: View {
     }
 }
 
+extension TupleView15: GroupingContainer {}
 extension TupleView15: TupleView {
     typealias Children = TupleViewChildren15<
         View0,
@@ -1465,6 +1495,7 @@ extension TupleView16: View {
     }
 }
 
+extension TupleView16: GroupingContainer {}
 extension TupleView16: TupleView {
     typealias Children = TupleViewChildren16<
         View0,
@@ -1604,6 +1635,7 @@ extension TupleView17: View {
     }
 }
 
+extension TupleView17: GroupingContainer {}
 extension TupleView17: TupleView {
     typealias Children = TupleViewChildren17<
         View0,
@@ -1748,6 +1780,7 @@ extension TupleView18: View {
     }
 }
 
+extension TupleView18: GroupingContainer {}
 extension TupleView18: TupleView {
     typealias Children = TupleViewChildren18<
         View0,
@@ -1897,6 +1930,7 @@ extension TupleView19: View {
     }
 }
 
+extension TupleView19: GroupingContainer {}
 extension TupleView19: TupleView {
     typealias Children = TupleViewChildren19<
         View0,
@@ -2052,6 +2086,7 @@ extension TupleView20: View {
     }
 }
 
+extension TupleView20: GroupingContainer {}
 extension TupleView20: TupleView {
     typealias Children = TupleViewChildren20<
         View0,
@@ -2214,6 +2249,7 @@ extension TupleView21: View {
     }
 }
 
+extension TupleView21: GroupingContainer {}
 extension TupleView21: TupleView {
     typealias Children = TupleViewChildren21<
         View0,
@@ -2381,6 +2417,7 @@ extension TupleView22: View {
     }
 }
 
+extension TupleView22: GroupingContainer {}
 extension TupleView22: TupleView {
     typealias Children = TupleViewChildren22<
         View0,
@@ -2553,6 +2590,7 @@ extension TupleView23: View {
     }
 }
 
+extension TupleView23: GroupingContainer {}
 extension TupleView23: TupleView {
     typealias Children = TupleViewChildren23<
         View0,
@@ -2731,6 +2769,7 @@ extension TupleView24: View {
     }
 }
 
+extension TupleView24: GroupingContainer {}
 extension TupleView24: TupleView {
     typealias Children = TupleViewChildren24<
         View0,
@@ -2914,6 +2953,7 @@ extension TupleView25: View {
     }
 }
 
+extension TupleView25: GroupingContainer {}
 extension TupleView25: TupleView {
     typealias Children = TupleViewChildren25<
         View0,
@@ -3105,6 +3145,7 @@ extension TupleView26: View {
     }
 }
 
+extension TupleView26: GroupingContainer {}
 extension TupleView26: TupleView {
     typealias Children = TupleViewChildren26<
         View0,
@@ -3301,6 +3342,7 @@ extension TupleView27: View {
     }
 }
 
+extension TupleView27: GroupingContainer {}
 extension TupleView27: TupleView {
     typealias Children = TupleViewChildren27<
         View0,
@@ -3502,6 +3544,7 @@ extension TupleView28: View {
     }
 }
 
+extension TupleView28: GroupingContainer {}
 extension TupleView28: TupleView {
     typealias Children = TupleViewChildren28<
         View0,
@@ -3708,6 +3751,7 @@ extension TupleView29: View {
     }
 }
 
+extension TupleView29: GroupingContainer {}
 extension TupleView29: TupleView {
     typealias Children = TupleViewChildren29<
         View0,
@@ -3919,6 +3963,7 @@ extension TupleView30: View {
     }
 }
 
+extension TupleView30: GroupingContainer {}
 extension TupleView30: TupleView {
     typealias Children = TupleViewChildren30<
         View0,
@@ -4137,6 +4182,7 @@ extension TupleView31: View {
     }
 }
 
+extension TupleView31: GroupingContainer {}
 extension TupleView31: TupleView {
     typealias Children = TupleViewChildren31<
         View0,
@@ -4361,6 +4407,7 @@ extension TupleView32: View {
     }
 }
 
+extension TupleView32: GroupingContainer {}
 extension TupleView32: TupleView {
     typealias Children = TupleViewChildren32<
         View0,
@@ -4590,6 +4637,7 @@ extension TupleView33: View {
     }
 }
 
+extension TupleView33: GroupingContainer {}
 extension TupleView33: TupleView {
     typealias Children = TupleViewChildren33<
         View0,
@@ -4825,6 +4873,7 @@ extension TupleView34: View {
     }
 }
 
+extension TupleView34: GroupingContainer {}
 extension TupleView34: TupleView {
     typealias Children = TupleViewChildren34<
         View0,
@@ -5065,6 +5114,7 @@ extension TupleView35: View {
     }
 }
 
+extension TupleView35: GroupingContainer {}
 extension TupleView35: TupleView {
     typealias Children = TupleViewChildren35<
         View0,
@@ -5312,6 +5362,7 @@ extension TupleView36: View {
     }
 }
 
+extension TupleView36: GroupingContainer {}
 extension TupleView36: TupleView {
     typealias Children = TupleViewChildren36<
         View0,
@@ -5564,6 +5615,7 @@ extension TupleView37: View {
     }
 }
 
+extension TupleView37: GroupingContainer {}
 extension TupleView37: TupleView {
     typealias Children = TupleViewChildren37<
         View0,
@@ -5822,6 +5874,7 @@ extension TupleView38: View {
     }
 }
 
+extension TupleView38: GroupingContainer {}
 extension TupleView38: TupleView {
     typealias Children = TupleViewChildren38<
         View0,
@@ -6085,6 +6138,7 @@ extension TupleView39: View {
     }
 }
 
+extension TupleView39: GroupingContainer {}
 extension TupleView39: TupleView {
     typealias Children = TupleViewChildren39<
         View0,
@@ -6353,6 +6407,7 @@ extension TupleView40: View {
     }
 }
 
+extension TupleView40: GroupingContainer {}
 extension TupleView40: TupleView {
     typealias Children = TupleViewChildren40<
         View0,
@@ -6628,6 +6683,7 @@ extension TupleView41: View {
     }
 }
 
+extension TupleView41: GroupingContainer {}
 extension TupleView41: TupleView {
     typealias Children = TupleViewChildren41<
         View0,
@@ -6908,6 +6964,7 @@ extension TupleView42: View {
     }
 }
 
+extension TupleView42: GroupingContainer {}
 extension TupleView42: TupleView {
     typealias Children = TupleViewChildren42<
         View0,
@@ -7193,6 +7250,7 @@ extension TupleView43: View {
     }
 }
 
+extension TupleView43: GroupingContainer {}
 extension TupleView43: TupleView {
     typealias Children = TupleViewChildren43<
         View0,
@@ -7485,6 +7543,7 @@ extension TupleView44: View {
     }
 }
 
+extension TupleView44: GroupingContainer {}
 extension TupleView44: TupleView {
     typealias Children = TupleViewChildren44<
         View0,
@@ -7782,6 +7841,7 @@ extension TupleView45: View {
     }
 }
 
+extension TupleView45: GroupingContainer {}
 extension TupleView45: TupleView {
     typealias Children = TupleViewChildren45<
         View0,
@@ -8086,6 +8146,7 @@ extension TupleView46: View {
     }
 }
 
+extension TupleView46: GroupingContainer {}
 extension TupleView46: TupleView {
     typealias Children = TupleViewChildren46<
         View0,
@@ -8395,6 +8456,7 @@ extension TupleView47: View {
     }
 }
 
+extension TupleView47: GroupingContainer {}
 extension TupleView47: TupleView {
     typealias Children = TupleViewChildren47<
         View0,
@@ -8709,6 +8771,7 @@ extension TupleView48: View {
     }
 }
 
+extension TupleView48: GroupingContainer {}
 extension TupleView48: TupleView {
     typealias Children = TupleViewChildren48<
         View0,

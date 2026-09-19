@@ -111,8 +111,45 @@ extension EitherView: TypeSafeView {
                 }
         }
         children.hasSwitchedCase = children.hasSwitchedCase || hasSwitchedCase
+        _ = result
+        // Lay the chosen branch out through the stack machinery rather than
+        // returning its result directly. With no layout published this is a
+        // one-child stack and gives exactly the result the branch gave — but
+        // when an enclosing grid has published its cell layout, the branch
+        // is handed to it as a participant (or, if the branch is itself a
+        // grouping container such as a tuple, the layout is published on
+        // into it). That is what makes `LazyVGrid { switch … }` flatten
+        // to cells as SwiftUI does, instead of one tall column.
+        var layoutableChildren = branchLayoutableChildren(children)
+        LayoutSystem.markGroupingContainers(&layoutableChildren, using: children)
+        return LayoutSystem.computeStackLayout(
+            container: widget,
+            children: layoutableChildren,
+            cache: &children.stackLayoutCache,
+            proposedSize: proposedSize,
+            environment: environment,
+            backend: backend,
+            inheritStackLayoutParticipation: true,
+            participatesInParentLayout: true
+        )
+    }
 
-        return result
+    /// The chosen branch as the one layoutable child, handing the node the
+    /// current view value exactly as the direct call did.
+    @MainActor
+    private func branchLayoutableChildren(
+        _ children: EitherViewChildren<A, B>
+    ) -> [LayoutSystem.LayoutableChild] {
+        switch (storage, children.node) {
+            case (.a(let a), .a(let node)):
+                return [LayoutSystem.LayoutableChild(node, child: { a })]
+            case (.b(let b), .b(let node)):
+                return [LayoutSystem.LayoutableChild(node, child: { b })]
+            default:
+                // `computeLayout` brings the node in line with the storage
+                // before this is called, so this is unreachable.
+                return []
+        }
     }
 
     func commit<Backend: BaseAppBackend>(
@@ -129,14 +166,25 @@ extension EitherView: TypeSafeView {
             children.hasSwitchedCase = false
         }
 
-        _ = children.node.erasedNode.commit()
-
-        backend.setSize(of: widget, to: layout.size.vector)
+        var layoutableChildren = branchLayoutableChildren(children)
+        LayoutSystem.markGroupingContainers(&layoutableChildren, using: children)
+        LayoutSystem.commitStackLayout(
+            container: widget,
+            children: layoutableChildren,
+            cache: &children.stackLayoutCache,
+            layout: layout,
+            environment: environment,
+            backend: backend,
+            participatesInParentLayout: true
+        )
     }
 }
 
 /// Uses an `enum` to store a view graph node for one of two possible child view types.
 class EitherViewChildren<A: View, B: View>: ViewGraphNodeChildren {
+    /// The stack machinery's cache for the one-child stack the branch is
+    /// laid out as; see `EitherView.computeLayout`.
+    var stackLayoutCache = StackLayoutCache.initial
     /// A view graph node that wraps one of two possible child view types.
     @MainActor
     enum EitherNode {
@@ -212,3 +260,7 @@ class EitherViewChildren<A: View, B: View>: ViewGraphNodeChildren {
         }
     }
 }
+
+/// An `if`/`switch` in a builder groups views the way ``Group`` does: the
+/// enclosing container may lay the chosen branch's contents out itself.
+extension EitherView: GroupingContainer {}
