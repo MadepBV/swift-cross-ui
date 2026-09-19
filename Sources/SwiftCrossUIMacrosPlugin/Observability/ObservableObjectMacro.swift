@@ -23,6 +23,7 @@ public struct ObservableObjectMacro: MemberAttributeMacro, ExtensionMacro {
         "ObservationIgnored",
         "SwiftCrossUI.ObservationIgnored",
         "Observation.ObservationIgnored",
+        "ObservationPolyfill.ObservationIgnored",
     ]
 
     public static func expansion(

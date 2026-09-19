@@ -1,6 +1,3 @@
-#if canImport(Observation)
-    import Observation
-#endif
 
 /// Holds the view graph and window handle for a single window.
 @MainActor
@@ -440,32 +437,24 @@ final class WindowReference<SceneType: WindowingScene> {
         of scene: SceneType,
         backend: Backend
     ) -> SceneType.Content {
-        #if canImport(Observation)
-            guard #available(macOS 14.0, iOS 17.0, tvOS 17.0, watchOS 10.0, *) else {
-                return scene.content()
-            }
-
-            let registration: ObservationRegistration
-            if let contentObservation {
-                registration = contentObservation
-            } else {
-                registration = ObservationRegistration { [weak self, backend] in
-                    backend.runInMainThread {
-                        self?.contentDidChange(backend: backend)
-                    }
+        let registration: ObservationRegistration
+        if let contentObservation {
+            registration = contentObservation
+        } else {
+            registration = ObservationRegistration { [weak self, backend] in
+                backend.runInMainThread {
+                    self?.contentDidChange(backend: backend)
                 }
-                contentObservation = registration
             }
+            contentObservation = registration
+        }
 
-            let generation = registration.beginGeneration()
-            return withObservationTracking {
-                scene.content()
-            } onChange: {
-                registration.reportChange(generation: generation)
-            }
-        #else
-            return scene.content()
-        #endif
+        let generation = registration.beginGeneration()
+        return ObservationSupport.withTracking {
+            scene.content()
+        } onChange: {
+            registration.reportChange(generation: generation)
+        }
     }
 
     /// Re-runs the scene's content closure after something it read changed.

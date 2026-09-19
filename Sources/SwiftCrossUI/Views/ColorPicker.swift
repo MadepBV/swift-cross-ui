@@ -1,48 +1,24 @@
-/// A control that lets the user pick a color.
+/// A control used to select a color from the system color picker UI.
 ///
-/// The control itself comes from the backend, so users get the color picker
-/// their platform ships (`NSColorWell` on macOS, WinUI's `ColorPicker` on
-/// Windows, `GtkColorButton` on Gtk).
+/// This renders a button with a color swatch indicating the currently-selected color. Clicking the
+/// button opens a backend-dependent dialog, sheet, or window providing a way to set the color. The
+/// label is rendered next to the button.
 ///
-/// ```swift
-/// ColorPicker("Layer colour", selection: $layerColor)
-/// ```
-///
-/// Backends that don't implement ``BackendFeatures/ColorPickers`` render the
-/// label alone.
+/// Backends that don't implement ``BackendFeatures/ColorPickers`` render the label alone.
+@available(iOS 14, macCatalyst 14, *)
+@available(tvOS, unavailable)
 public struct ColorPicker<Label: View> {
-    /// The view shown next to the color input.
     private var label: Label
-    /// The currently selected color.
     private var selection: Binding<Color>
-    /// Whether the user can choose a partially transparent color.
     private var supportsOpacity: Bool
     @Environment(\.labelsHidden) private var labelsHidden
 
-    /// Displays a color input with a custom label.
-    ///
+    /// Creates a color picker with a text label generated from a title string.
     /// - Parameters:
-    ///   - selection: The currently selected color.
-    ///   - supportsOpacity: Whether the user can adjust the color's opacity.
-    ///     Backends that can't hide their opacity control clamp the chosen
-    ///     opacity to 1 instead.
-    ///   - label: The view to show next to the color input.
-    public nonisolated init(
-        selection: Binding<Color>,
-        supportsOpacity: Bool = true,
-        @ViewBuilder label: () -> Label
-    ) {
-        self.label = label()
-        self.selection = selection
-        self.supportsOpacity = supportsOpacity
-    }
-
-    /// Displays a color input with a textual label.
-    ///
-    /// - Parameters:
-    ///   - label: The text to show next to the color input.
-    ///   - selection: The currently selected color.
-    ///   - supportsOpacity: Whether the user can adjust the color's opacity.
+    ///   - label: The title displayed by the color picker.
+    ///   - selection: A ``Binding`` to the variable that displays the selected ``Color``.
+    ///   - supportsOpacity: A Boolean value that indicates whether the color picker allows
+    ///   adjusting the selected color’s opacity; the default is `true`.
     public nonisolated init(
         _ label: String,
         selection: Binding<Color>,
@@ -52,43 +28,44 @@ public struct ColorPicker<Label: View> {
         self.selection = selection
         self.supportsOpacity = supportsOpacity
     }
+
+    /// Creates an instance that selects a color.
+    /// - Parameters:
+    ///   - selection: A ``Binding`` to the variable that displays the selected ``Color``.
+    ///   - supportsOpacity: A Boolean value that indicates whether the color picker allows
+    ///   adjusting the selected color’s opacity; the default is `true`.
+    ///   - label: A view that describes the use of the selected color.
+    public nonisolated init(
+        selection: Binding<Color>,
+        supportsOpacity: Bool = true,
+        @ViewBuilder label: () -> Label
+    ) {
+        self.label = label()
+        self.selection = selection
+        self.supportsOpacity = supportsOpacity
+    }
 }
 
+@available(iOS 14, macCatalyst 14, *)
+@available(tvOS, unavailable)
 extension ColorPicker: View {
     public var body: some View {
         HStack {
             if !labelsHidden {
                 label
+
+                HorizontalControlSpacer()
             }
 
-            ColorPickerImplementation(
-                selection: selection,
-                supportsOpacity: supportsOpacity
-            )
+            ColorPickerImplementation(selection: selection, supportsOpacity: supportsOpacity)
         }
         .retainingHiddenControlLabel(label, hidden: labelsHidden)
     }
 }
 
-/// The backend-provided part of a ``ColorPicker``.
-internal struct ColorPickerImplementation: ElementaryView {
-    /// The currently selected color.
-    @Binding private var selection: Color
-    /// Whether the user can choose a partially transparent color.
-    private var supportsOpacity: Bool
-
-    /// The size used for the picker when the backend doesn't provide one.
-    private static let fallbackSize = ViewSize.zero
-
-    /// Creates the implementation view.
-    ///
-    /// - Parameters:
-    ///   - selection: The currently selected color.
-    ///   - supportsOpacity: Whether the user can adjust the color's opacity.
-    init(selection: Binding<Color>, supportsOpacity: Bool) {
-        self._selection = selection
-        self.supportsOpacity = supportsOpacity
-    }
+struct ColorPickerImplementation: ElementaryView {
+    @Binding var selection: Color
+    var supportsOpacity: Bool
 
     let body = EmptyView()
 
@@ -116,22 +93,19 @@ internal struct ColorPickerImplementation: ElementaryView {
         guard
             let pickerBackend = backend as? any BaseAppBackend & BackendFeatures.ColorPickers
         else {
-            return ViewLayoutResult.leafView(size: Self.fallbackSize)
+            return ViewLayoutResult.leafView(size: .zero)
         }
 
         Self.updatePicker(
             widget,
-            color: selection.resolve(in: environment),
             supportsOpacity: supportsOpacity,
             environment: environment,
-            onChange: { newColor in
-                selection = Color(newColor)
+            onChange: { resolvedColor in
+                selection = Color(resolvedColor)
             },
             backend: pickerBackend
         )
 
-        // Like DatePicker, a color picker's size is dictated by the platform
-        // control rather than by the proposal.
         let naturalSize = backend.naturalSize(of: widget)
         return ViewLayoutResult.leafView(size: ViewSize(naturalSize))
     }
@@ -142,16 +116,19 @@ internal struct ColorPickerImplementation: ElementaryView {
         environment: EnvironmentValues,
         backend: Backend
     ) {
+        if let pickerBackend = backend as? any BaseAppBackend & BackendFeatures.ColorPickers {
+            Self.setValue(
+                of: widget,
+                to: selection.resolve(in: environment),
+                backend: pickerBackend
+            )
+        }
         backend.setSize(of: widget, to: layout.size.vector)
     }
 
-    /// Creates the backend's color picker widget.
-    ///
-    /// Type-erased at the boundary so that the backend's associated widget type
-    /// can be recovered by the generic parameter.
-    ///
-    /// - Parameter backend: The app's backend.
-    /// - Returns: The color picker widget.
+    // The helpers below are type-erased at the boundary so that the backend's
+    // associated widget type can be recovered by the generic parameter.
+
     private static func createPicker<
         Backend: BaseAppBackend & BackendFeatures.ColorPickers
     >(
@@ -160,20 +137,10 @@ internal struct ColorPickerImplementation: ElementaryView {
         backend.createColorPicker()
     }
 
-    /// Updates the backend's color picker widget.
-    ///
-    /// - Parameters:
-    ///   - widget: The color picker widget.
-    ///   - color: The currently selected color.
-    ///   - supportsOpacity: Whether the user can adjust the color's opacity.
-    ///   - environment: The current environment.
-    ///   - onChange: Called whenever the user picks a different color.
-    ///   - backend: The app's backend.
     private static func updatePicker<
         Backend: BaseAppBackend & BackendFeatures.ColorPickers
     >(
         _ widget: Any,
-        color: Color.Resolved,
         supportsOpacity: Bool,
         environment: EnvironmentValues,
         onChange: @escaping (Color.Resolved) -> Void,
@@ -181,10 +148,19 @@ internal struct ColorPickerImplementation: ElementaryView {
     ) {
         backend.updateColorPicker(
             widget as! Backend.Widget,
-            color: color,
             supportsOpacity: supportsOpacity,
             environment: environment,
             onChange: onChange
         )
+    }
+
+    private static func setValue<
+        Backend: BaseAppBackend & BackendFeatures.ColorPickers
+    >(
+        of widget: Any,
+        to color: Color.Resolved,
+        backend: Backend
+    ) {
+        backend.setValue(ofColorPicker: widget as! Backend.Widget, to: color)
     }
 }

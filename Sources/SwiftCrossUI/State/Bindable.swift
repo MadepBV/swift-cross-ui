@@ -1,91 +1,137 @@
-/// A property wrapper that hands out ``Binding``s to the properties of an
-/// observable reference type.
+import Foundation
+
+/// A property wrapper that exposes bindings to writable properties on a
+/// mutable model object.
 ///
-/// Use it when a view needs to write into an object it doesn't own, most
-/// commonly one declared with the standard library's `@Observable` macro:
+/// Use `Bindable` when you want controls to edit data stored in an object that
+/// participates in observation, such as a type annotated with `@Observable`.
+/// Applying `@Bindable` lets you use `$` to derive bindings for the object's
+/// mutable members.
 ///
-/// ```swift
-/// @Observable
-/// final class Settings {
-///     var name = "Untitled"
-///     var isEnabled = true
-/// }
+///     @Observable
+///     final class Profile {
+///         var name = "Taylor"
+///         var receivesNewsletter = false
+///     }
 ///
-/// struct SettingsView: View {
-///     @Bindable var settings: Settings
+///     struct ProfileEditor: View {
+///         @Bindable var profile: Profile
 ///
-///     var body: some View {
-///         VStack {
-///             TextField("Name", text: $settings.name)
-///             Toggle("Enabled", isOn: $settings.isEnabled)
+///         var body: some View {
+///             Form {
+///                 TextField("Name", text: $profile.name)
+///                 Toggle("Newsletter", isOn: $profile.receivesNewsletter)
+///             }
 ///         }
 ///     }
-/// }
-/// ```
 ///
-/// `$settings.name` projects a ``Binding`` straight into the object, so writes
-/// go to the object itself rather than to a copy. Because the write happens
-/// through the object's own setter, an `@Observable` object publishes it like
-/// any other mutation and every view that read the property re-renders.
+/// `Bindable` can also be applied to stored properties, globals, and local
+/// variables. This is useful when you already have an observable
+/// object and need bindings for only part of a view hierarchy. For example,
+/// you can introduce a local `@Bindable` value inside `body`:
 ///
-/// - Note: `Bindable` doesn't make an object observable, it only projects
-///   bindings into one. Wrapping a plain class produces working bindings, but
-///   writing through them won't invalidate any views, exactly as in SwiftUI.
-///   Use `@Observable` (or ``ObservableObject`` with ``Published``) for the
-///   object itself.
+///     @Observable
+///     final class TaskItem: Identifiable {
+///         let id = UUID()
+///         var title = ""
+///     }
 ///
-/// - Note: Unlike a ``State`` property, a `Bindable` property holds no state
-///   of its own and doesn't persist across view updates. It's a lens onto an
-///   object that lives somewhere else.
-@dynamicMemberLookup
-@propertyWrapper
-public struct Bindable<Value> {
-    /// The object being projected.
+///     struct TaskListView: View {
+///         @State private var tasks = [TaskItem(), TaskItem()]
+///
+///         var body: some View {
+///             VStack {
+///                 ForEach(tasks) { task in
+///                     @Bindable var task = task
+///                     TextField("Task", text: $task.title)
+///                 }
+///             }
+///         }
+///     }
+///
+/// The local `@Bindable` value supplies the binding that keeps ``TextField``
+/// synchronized with the corresponding model property.
+///
+/// The same pattern works for objects obtained from the environment. Fetch the
+/// model first, then create a local `@Bindable` wrapper and pass its projected
+/// bindings where needed.
+///
+///     struct AccountNameView: View {
+///         @Environment(Account.self) private var account
+///
+///         var body: some View {
+///             @Bindable var account = account
+///             TextField("Account name", text: $account.name)
+///         }
+///     }
+///
+@dynamicMemberLookup @propertyWrapper public struct Bindable<Value> {
+    /// The wrapped object.
     public var wrappedValue: Value
 
-    /// The bindable itself, so that `$object.property` reaches
-    /// ``subscript(dynamicMember:)``.
+    /// A bindable wrapper that uses dynamic member lookup to vend bindings for
+    /// writable properties on the wrapped object.
     public var projectedValue: Bindable<Value> {
         self
     }
 
-    /// Creates a bindable projection of an object.
+    /// Creates a bindable wrapper around an observable object.
     ///
-    /// - Parameter wrappedValue: The object to project bindings into.
-    public init(wrappedValue: Value) where Value: AnyObject {
+    /// In most cases, apply the `@Bindable` attribute to a property or local
+    /// variable instead of calling this initializer directly.
+    public init(wrappedValue: Value) {
         self.wrappedValue = wrappedValue
     }
+}
 
-    /// Creates a bindable projection of an object.
-    ///
-    /// - Parameter wrappedValue: The object to project bindings into.
-    public init(_ wrappedValue: Value) where Value: AnyObject {
-        self.wrappedValue = wrappedValue
-    }
-
-    /// Creates a bindable from another bindable's projected value.
-    ///
-    /// This exists so that a `Bindable` property can be initialised from
-    /// `$someOtherBindable`.
-    ///
-    /// - Parameter projectedValue: The bindable to copy.
-    public init(projectedValue: Bindable<Value>) where Value: AnyObject {
-        self = projectedValue
-    }
-
-    /// Projects a binding to one of the object's properties.
-    ///
-    /// - Parameter keyPath: A key path to a mutable property of the object.
-    /// - Returns: A binding that reads and writes the property in place.
-    public subscript<Subject>(
-        dynamicMember keyPath: ReferenceWritableKeyPath<Value, Subject>
-    ) -> Binding<Subject> where Value: AnyObject {
-        let object = wrappedValue
-        return Binding(
-            get: { object[keyPath: keyPath] },
-            set: { newValue in object[keyPath: keyPath] = newValue }
+extension Bindable where Value: AnyObject {
+    /// Returns a binding for the writable property at the supplied key path.
+    public subscript<Subject>(dynamicMember keyPath: ReferenceWritableKeyPath<Value, Subject>)
+        -> Binding<Subject>
+    {
+        Binding(
+            get: {
+                wrappedValue[keyPath: keyPath]
+            },
+            set: { newValue in
+                wrappedValue[keyPath: keyPath] = newValue
+            }
         )
     }
+
+    /// Creates a bindable wrapper around an observable object.
+    ///
+    /// This initializer behaves the same as ``init(wrappedValue:)``, but reads
+    /// better when constructing a bindable value inline inside another
+    /// expression. For example, you can create a binding while configuring a
+    /// view in place:
+    ///
+    ///     struct SearchSettingsView: View {
+    ///         @Environment(SearchSettings.self) private var settings
+    ///
+    ///         var body: some View {
+    ///             Toggle("Exact matches only", isOn: Bindable(settings).exactMatchesOnly)
+    ///         }
+    ///     }
+    ///
+    public init(_ wrappedValue: Value) {
+        self.init(wrappedValue: wrappedValue)
+    }
+
+    /// Creates a bindable wrapper from another bindable wrapper's value.
+    public init(projectedValue: Bindable<Value>) {
+        self.init(wrappedValue: projectedValue.wrappedValue)
+    }
+}
+
+extension Bindable: Identifiable where Value: Identifiable {
+    /// The stable identity of the wrapped value.
+    public var id: Value.ID {
+        wrappedValue.id
+    }
+
+    /// A type representing the stable identity of the wrapped value.
+    public typealias ID = Value.ID
 }
 
 extension Bindable: Sendable where Value: Sendable {}

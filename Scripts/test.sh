@@ -10,4 +10,4 @@ cd "$(dirname "$0")"/../
 # it has caught a real one.
 python3 Scripts/check_cross_module_references.py || exit 1
 
-swift test --test-product swift-cross-uiPackageTests
+swift test --test-product swift-cross-uiPackageTests $@

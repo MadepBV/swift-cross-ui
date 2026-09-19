@@ -106,6 +106,13 @@ public struct EnvironmentValues {
     /// affecting layout.
     public var layoutSpacing: Int = 10
 
+    /// Whether to use the ZStack StackLayout variants.
+    public var usesZStackLayout: Bool = false
+
+    /// The alignment of content inside a ``ZStack``.
+    /// Only gets used when ``usesZStackLayout`` is `true`.
+    public var zStackContentAlignment: Alignment = .center
+
     /// The layout that an enclosing container has published for the children of
     /// grouping containers such as ``ForEach`` and ``Group``.
     ///
@@ -386,6 +393,7 @@ public struct EnvironmentValues {
         environment.layoutOrientation = orientation
         environment.layoutAlignment = alignment
         environment.layoutSpacing = spacing
+        environment.usesZStackLayout = false
         return environment
     }
 }
@@ -627,6 +635,15 @@ extension EnvironmentValues {
     /// The device class of the current device.
     @MainActor
     public var deviceClass: DeviceClass { backend.deviceClass }
+
+    /// All observers set by ``View/focused(_:)`` in the environment.
+    @Entry @_spi(Backends) public var widgetFocusObservers: [WidgetFocusObserver] = []
+
+    /// A value used to make widgets programmatically gain or lose focus.
+    @Entry @_spi(Backends) public var focusOverride: Focus?
+
+    /// Whether to highlight a focused widget.
+    @Entry public var focusEffectDisabled: Bool = false
 }
 
 extension EnvironmentValues {

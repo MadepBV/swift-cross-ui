@@ -18,6 +18,15 @@ import PackageDescription
 // - SCUI_BENCHMARK_VIZ : If `1`, LayoutPerformanceBenchmark gets compiled in
 //     visualization mode instead of benchmarking mode. It will use DefaultBackend
 //     to visualize a benchmark layout of your choosing (chosen at runtime via stdin).
+// - SCUI_OBSERVATION_POLYFILL : If `1`, SwiftCrossUI uses (and re-exports)
+//     swift-observation-polyfill on Apple platforms too, which brings `@Observable`
+//     to deployment targets older than macOS 14 / iOS 17. Off by default there,
+//     because the polyfill publicly imports SwiftUI on Apple platforms, which makes
+//     every client of SwiftCrossUI load the real SwiftUI module — and a client that
+//     compiles with `-module-alias SwiftUI=...` then fails with "cannot load module
+//     'SwiftUI' as 'SwiftUI'". Without it, Apple platforms track through the
+//     standard library's Observation. Other platforms always use the polyfill,
+//     where it has no SwiftUI to import and simply forwards to Observation.
 
 let invokedByXcode: Bool
 #if os(macOS)
@@ -87,6 +96,18 @@ let hotReloadingEnabled: Bool
 
 let testGtk3Backend = env["SCUI_TEST_GTK3BACKEND"] == "1"
 
+// See SCUI_OBSERVATION_POLYFILL above.
+let observationPolyfillCondition: TargetDependencyCondition?
+let observationPolyfillSettingCondition: BuildSettingCondition?
+if env["SCUI_OBSERVATION_POLYFILL"] == "1" {
+    observationPolyfillCondition = nil
+    observationPolyfillSettingCondition = nil
+} else {
+    let platforms: [Platform] = [.linux, .windows, .android, .wasi, .openbsd]
+    observationPolyfillCondition = .when(platforms: platforms)
+    observationPolyfillSettingCondition = .when(platforms: platforms)
+}
+
 var swiftSettings: [SwiftSetting] = []
 if hotReloadingEnabled {
     swiftSettings += [
@@ -136,6 +157,11 @@ let package = Package(
         .library(name: "WinUIBackend", type: libraryType, targets: ["WinUIBackend"]),
         .library(name: "DefaultBackend", type: libraryType, targets: ["DefaultBackend"]),
         .library(name: "UIKitBackend", type: libraryType, targets: ["UIKitBackend"]),
+        .library(
+            name: "_SwiftCrossUIPortingKit",
+            type: libraryType,
+            targets: ["_SwiftCrossUIPortingKit"]
+        ),
         .library(name: "Gtk", type: libraryType, targets: ["Gtk"]),
         .library(name: "Gtk3", type: libraryType, targets: ["Gtk3"]),
         .executable(name: "GtkExample", targets: ["GtkExample"]),
@@ -167,7 +193,7 @@ let package = Package(
         ),
         .package(
             url: "https://github.com/moreSwift/swift-winui",
-            .upToNextMinor(from: "0.2.1")
+            .upToNextMinor(from: "0.2.2")
         ),
         .package(
             url: "https://github.com/stackotter/swift-benchmark",
@@ -176,6 +202,14 @@ let package = Package(
         .package(
             url: "https://github.com/swhitty/swift-mutex",
             .upToNextMinor(from: "0.0.6")
+        ),
+        .package(
+            url: "https://github.com/apple/swift-collections",
+            .upToNextMajor(from: "1.5.0")
+        ),
+        .package(
+            url: "https://github.com/moreSwift/swift-observation-polyfill",
+            .upToNextMinor(from: "0.1.1")
         ),
         // .package(
         //     url: "https://github.com/stackotter/TermKit",
@@ -199,14 +233,16 @@ let package = Package(
                 .product(name: "ImageFormats", package: "swift-image-formats"),
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "Mutex", package: "swift-mutex"),
-
-                // This import is purely required to fix a linker issue and a plugin build
-                // error that occur on macOS when building for non-Android platforms now that
-                // we've added the AndroidBackend. Providing the '--disable-experimental-prebuilts'
-                // flag when building SwiftCrossUI apps doesn't seem to be sufficient to fix
-                // the issues, even though I would've thought that was the effect that adding
-                // this dependency has.
-                .product(name: "SwiftSyntax", package: "swift-syntax"),
+                .product(
+                    name: "ObservationPolyfillCore",
+                    package: "swift-observation-polyfill",
+                    condition: observationPolyfillCondition
+                ),
+                .product(
+                    name: "ObservationPolyfill",
+                    package: "swift-observation-polyfill",
+                    condition: observationPolyfillCondition
+                ),
             ],
             exclude: [
                 "Builders/ViewBuilder.swift.gyb",
@@ -217,7 +253,14 @@ let package = Package(
                 "Views/TableRowContent.swift.gyb",
                 "Scenes/TupleScene.swift.gyb",
             ],
-            swiftSettings: [.enableUpcomingFeature("StrictConcurrency")]
+            swiftSettings: [
+                .enableUpcomingFeature("StrictConcurrency"),
+                .define("SCUI_OBSERVATION_POLYFILL", observationPolyfillSettingCondition),
+            ]
+        ),
+        .target(
+            name: "_SwiftCrossUIPortingKit",
+            dependencies: ["SwiftCrossUI"]
         ),
         .testTarget(
             name: "SwiftCrossUITests",
@@ -412,8 +455,10 @@ if androidBackendSupported {
             name: "AndroidBackend",
             dependencies: [
                 "SwiftCrossUI",
-                "AndroidBackendShim",
                 .product(name: "Mutex", package: "swift-mutex"),
+                .product(name: "DequeModule", package: "swift-collections"),
+
+                .target(name: "AndroidBackendShim", condition: .when(platforms: [.android])),
 
                 // These two dependencies have to be marked as only included on Android
                 // (even though this target is only used on Android) because SwiftPM requires

@@ -220,13 +220,19 @@ struct BuiltinPickerCacheTests {
         fixture.environment.colorScheme = .light
         _ = fixture.layout()
         let popup = try fixture.popup()
+        // An inherited foreground is handed to AppKit as the semantic
+        // `NSColor.textColor`, which is the same object in both schemes; it's
+        // the popup's appearance that makes it resolve differently.
         let light = try #require(popup.item(at: 0)?.attributedTitle?
             .attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor)
+        #expect(light == NSColor.textColor)
+        #expect(popup.appearance?.name == .aqua)
         fixture.environment.colorScheme = .dark
         _ = fixture.layout()
         let dark = try #require(popup.item(at: 0)?.attributedTitle?
             .attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor)
-        #expect(!dark.isEqual(light))
+        #expect(dark == NSColor.textColor)
+        #expect(popup.appearance?.name == .darkAqua)
         #expect(fixture.model.writes == 0)
     }
 

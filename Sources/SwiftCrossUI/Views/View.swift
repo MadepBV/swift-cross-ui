@@ -124,9 +124,10 @@ extension View {
     /// default implementations can treat it as a container's content.
     ///
     /// `@ViewBuilder` wraps a body in a `TupleViewN`, and the default
-    /// implementations below lay a body out as the content of a `VStack`,
-    /// which only works for `TupleView` content: it reaches past the body view
-    /// to *its* children, so anything else loses its own layout. A body that
+    /// implementations below hand the body this node's container widget and
+    /// children and let it lay them out as a group in the enclosing stack's
+    /// context, which only works for `TupleView` content: it reaches past the
+    /// body view to *its* children, so anything else loses its own layout. A body that
     /// is an `HStack` would have its children stacked vertically, and a body
     /// that keeps its own children storage — a ``Canvas``, an ``Image``, a
     /// ``ScrollView`` — would contribute no widgets at all and lay out to
@@ -250,7 +251,7 @@ extension View {
     ) -> ViewLayoutResult {
         let body = ViewObservationTracking.trackedBody(of: self)
         if Self.bodyNeedsWrapping {
-            return VStack(content: TupleView1(body)).computeLayout(
+            return TupleView1(body).computeLayout(
                 widget,
                 children: children,
                 proposedSize: proposedSize,
@@ -258,7 +259,7 @@ extension View {
                 backend: backend
             )
         }
-        return VStack(content: body).computeLayout(
+        return body.computeLayout(
             widget,
             children: children,
             proposedSize: proposedSize,
@@ -299,7 +300,7 @@ extension View {
     ) {
         let body = ViewObservationTracking.body(of: self)
         if Self.bodyNeedsWrapping {
-            return VStack(content: TupleView1(body)).commit(
+            return TupleView1(body).commit(
                 widget,
                 children: children,
                 layout: layout,
@@ -307,7 +308,7 @@ extension View {
                 backend: backend
             )
         }
-        return VStack(content: body).commit(
+        return body.commit(
             widget,
             children: children,
             layout: layout,

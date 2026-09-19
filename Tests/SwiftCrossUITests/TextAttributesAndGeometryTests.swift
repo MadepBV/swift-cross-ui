@@ -145,6 +145,24 @@ struct TextAttributesAndGeometryTests {
     /// ``ink`` as the backend receives it.
     static let resolvedInk = Color.Resolved(red: 0.25, green: 0.5, blue: 0.75)
 
+    #if canImport(AppKitBackend)
+        /// A color's components once AppKit has resolved it.
+        ///
+        /// AppKitBackend hands text colors over wrapped in a dynamic `NSColor`
+        /// so that vibrancy can't dim them, and a dynamic color never compares
+        /// equal to the plain color it resolves to. What reaches the screen is
+        /// the resolved color, so that's what the styling tests compare.
+        static func rgbComponents(of color: NSColor) -> [CGFloat]? {
+            guard let rgb = color.usingColorSpace(.genericRGB) else {
+                return nil
+            }
+            return [
+                rgb.redComponent, rgb.greenComponent, rgb.blueComponent,
+                rgb.alphaComponent,
+            ]
+        }
+    #endif
+
     // MARK: GeometryProxy
 
     @MainActor
@@ -350,8 +368,10 @@ struct TextAttributesAndGeometryTests {
             )
 
             #expect(
-                styledColor
-                    == TextAttributesAndGeometryTests.resolvedInk.nsColor
+                TextAttributesAndGeometryTests.rgbComponents(of: styledColor)
+                    == TextAttributesAndGeometryTests.rgbComponents(
+                        of: TextAttributesAndGeometryTests.resolvedInk.nsColor
+                    )
             )
             #expect(styledColor != inheritedColor)
         }
@@ -377,7 +397,12 @@ struct TextAttributesAndGeometryTests {
 
             #expect(font.pointSize == CGFloat(size))
             #expect(font.fontName == expected.fontName)
-            #expect(color == TextAttributesAndGeometryTests.resolvedInk.nsColor)
+            #expect(
+                TextAttributesAndGeometryTests.rgbComponents(of: color)
+                    == TextAttributesAndGeometryTests.rgbComponents(
+                        of: TextAttributesAndGeometryTests.resolvedInk.nsColor
+                    )
+            )
         }
 
         @MainActor
@@ -473,7 +498,12 @@ struct TextAttributesAndGeometryTests {
 
             #expect(font.pointSize == CGFloat(size))
             #expect(font.fontName == expected.fontName)
-            #expect(color == TextAttributesAndGeometryTests.resolvedInk.nsColor)
+            #expect(
+                TextAttributesAndGeometryTests.rgbComponents(of: color)
+                    == TextAttributesAndGeometryTests.rgbComponents(
+                        of: TextAttributesAndGeometryTests.resolvedInk.nsColor
+                    )
+            )
         }
 
         @MainActor

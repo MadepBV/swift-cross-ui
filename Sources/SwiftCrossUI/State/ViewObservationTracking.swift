@@ -1,10 +1,6 @@
-#if canImport(Observation)
-    import Observation
-#endif
-
-/// Makes the view graph participate in the standard library's `Observation`
-/// system, so that reading a property of an `@Observable` object from a view's
-/// body causes that view to be re-rendered when the property changes.
+/// Makes the view graph participate in the `Observation` system, so that
+/// reading a property of an `@Observable` object from a view's body causes that
+/// view to be re-rendered when the property changes.
 ///
 /// ## How tracking is scoped
 ///
@@ -30,13 +26,9 @@
 ///
 /// ## Availability
 ///
-/// `Observation` ships with the Swift toolchain rather than the platform SDKs,
-/// so it's available on Linux and Windows as well as the Apple platforms.
-/// Its declarations are annotated as macOS 14 / iOS 17 / tvOS 17 / watchOS 10,
-/// however, and SwiftCrossUI supports deployment targets older than that. All
-/// use of `Observation` is consequently behind a runtime availability check;
-/// on older Apple platforms views simply fall back to the ``ObservableObject``
-/// and ``State`` invalidation paths, which are unaffected by any of this.
+/// Tracking is installed through ``ObservationSupport``, which decides between
+/// `ObservationPolyfillCore` and the standard library's `Observation`; see
+/// there for what each one covers.
 @MainActor
 enum ViewObservationTracking {
     /// The node that observed property reads are currently attributed to.
@@ -71,23 +63,15 @@ enum ViewObservationTracking {
     /// - Parameter work: The work to perform under observation tracking.
     /// - Returns: The result of `work`.
     static func tracking<Result>(_ work: () -> Result) -> Result {
-        #if canImport(Observation)
-            guard
-                #available(macOS 14.0, iOS 17.0, tvOS 17.0, watchOS 10.0, *),
-                let node = currentNode
-            else {
-                return work()
-            }
-
-            let registration = node.observationRegistration
-            let generation = registration.beginGeneration()
-            return withObservationTracking(
-                work,
-                onChange: { registration.reportChange(generation: generation) }
-            )
-        #else
+        guard let node = currentNode else {
             return work()
-        #endif
+        }
+
+        let registration = node.observationRegistration
+        let generation = registration.beginGeneration()
+        return ObservationSupport.withTracking(work) {
+            registration.reportChange(generation: generation)
+        }
     }
 
     /// Evaluates a view's body while recording the `@Observable` properties it

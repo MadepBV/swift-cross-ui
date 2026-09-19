@@ -14,7 +14,6 @@
 /// }
 /// ```
 public struct Toggle: View {
-    @Environment(\.backend) var backend
     @Environment(\.toggleStyle) var toggleStyle
     @Environment(\.labelsHidden) var labelsHidden
 
@@ -111,8 +110,8 @@ public struct Toggle: View {
                         labelContent
                     }
 
-                    if !labelsHidden && backend.requiresToggleSwitchSpacer {
-                        Spacer()
+                    if !labelsHidden {
+                        HorizontalControlSpacer()
                     }
 
                     ToggleSwitch(isOn: active)
@@ -137,6 +136,8 @@ public struct Toggle: View {
                     if !labelsHidden {
                         labelContent
                     }
+
+                    HorizontalControlSpacer()
 
                     Checkbox(isOn: active)
                 }

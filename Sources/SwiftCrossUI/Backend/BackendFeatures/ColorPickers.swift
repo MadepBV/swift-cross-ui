@@ -1,7 +1,7 @@
 extension BackendFeatures {
     /// Backend methods for color pickers.
     ///
-    /// Every desktop platform ships a colour picker of its own (`NSColorWell`,
+    /// Every desktop platform ships a color picker of its own (`NSColorWell`,
     /// WinUI's `ColorPicker`, `GtkColorButton`), and users expect the one they
     /// know, so this is modelled the same way as
     /// ``BackendFeatures/DatePickers``: the backend supplies the whole control
@@ -10,27 +10,29 @@ extension BackendFeatures {
     /// These are used by ``ColorPicker``.
     @MainActor
     public protocol ColorPickers: Core {
-        /// Creates a color picker.
+        /// Create a color picker widget.
         ///
-        /// - Returns: A color picker widget.
+        /// Predominantly used by ``ColorPicker``.
         func createColorPicker() -> Widget
 
-        /// Updates a color picker's value and appearance.
-        ///
+        /// Update a color picker.
         /// - Parameters:
-        ///   - colorPicker: The color picker to update.
-        ///   - color: The currently selected color.
-        ///   - supportsOpacity: Whether the user should be able to choose a
-        ///     color with an opacity below 1. Backends that can't hide their
-        ///     opacity control should clamp the reported opacity to 1 instead.
+        ///   - colorPicker: The color picker widget to update.
+        ///   - supportsOpacity: If `false`, do not allow the user to change the alpha value of the
+        ///     color. If the color provided to ``setValue(ofColorPicker:to:)`` has an alpha value
+        ///     less than 1, leave it at that value.
         ///   - environment: The current environment.
-        ///   - onChange: Called whenever the user picks a different color.
+        ///   - onChange: The action to perform when the selected color changes. This handler
+        ///     replaces any existing change handlers and is called whenever a selection is made,
+        ///     even if the same color is picked again.
         func updateColorPicker(
             _ colorPicker: Widget,
-            color: Color.Resolved,
             supportsOpacity: Bool,
             environment: EnvironmentValues,
             onChange: @escaping (Color.Resolved) -> Void
         )
+
+        /// Change the color shown by the picker's color swatch.
+        func setValue(ofColorPicker colorPicker: Widget, to color: Color.Resolved)
     }
 }

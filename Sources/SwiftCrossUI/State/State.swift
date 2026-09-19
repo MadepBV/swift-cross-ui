@@ -1,5 +1,9 @@
 import Foundation
 
+#if SCUI_OBSERVATION_POLYFILL
+    import ObservationPolyfillCore
+#endif
+
 #if canImport(Observation)
     import Observation
 #endif
@@ -59,7 +63,7 @@ extension State {
         deprecated,
         message: """
             'State' does not work correctly with non-observable classes; conform \
-            your class to 'ObservableObject' or use a struct instead
+            your class to 'ObservableObject', use `@Observable`, or use a struct instead
             """
     )
     public init(wrappedValue initialValue: Value) where Value: AnyObject {
@@ -72,19 +76,21 @@ extension State {
         implementation = StateImpl(initialStorage: Storage(initialValue))
     }
 
-    #if canImport(Observation)
-        /// Creates a `State` holding an `@Observable` object.
-        ///
-        /// Objects declared with the standard library's `@Observable` macro are
-        /// fully supported by `State`: reading one of the object's properties
-        /// from a view's body subscribes that view to the property, and
-        /// mutating it re-renders the view. This overload exists so that they
-        /// don't hit the deprecated non-observable class initialiser.
-        ///
-        /// - Parameter initialValue: The state's initial value.
-        @available(macOS 14.0, iOS 17.0, tvOS 17.0, watchOS 10.0, *)
+    // NB: Needed to prevent deprecation warnings for `Observable` types, which
+    // *are* supported
+    @available(macOS 14.0, iOS 17.0, watchOS 10.0, tvOS 17.0, *)
+    public init(wrappedValue initialValue: Value) where Value: Observation.Observable & AnyObject {
+        implementation = StateImpl(initialStorage: Storage(initialValue))
+    }
+
+    #if canImport(Darwin) && SCUI_OBSERVATION_POLYFILL
+        // NB: Needed to prevent deprecation warnings for `Observable` types, which
+        // *are* supported
+        // Causes a compilation error on Windows and Linux where
+        // ObservationPolyfillCore.Observable just uses standard Observable
+        // under the hood.
         public init(wrappedValue initialValue: Value)
-            where Value: Observation.Observable & AnyObject
+            where Value: ObservationPolyfillCore.Observable & AnyObject
         {
             implementation = StateImpl(initialStorage: Storage(initialValue))
         }

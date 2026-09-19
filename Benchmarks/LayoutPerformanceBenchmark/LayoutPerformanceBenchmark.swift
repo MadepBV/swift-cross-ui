@@ -87,6 +87,11 @@ struct Benchmarks {
             ProposedViewSize(800, 800),
             "message list"
         )
+        benchmarkLayout(
+            of: EnvironmentHeavyView.self,
+            ProposedViewSize(800, 800),
+            "environment-heavy view"
+        )
 
         #if BENCHMARK_VIZ
             let names = benchmarkVisualizations.map(\.name).joined(separator: " | ")

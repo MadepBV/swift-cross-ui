@@ -194,7 +194,9 @@ extension Menu: TypeSafeView {
             // the complete menu titles.
             size.width = min(size.width, max(0, width))
         }
-        return ViewLayoutResult.leafView(size: size)
+        return ViewLayoutResult
+            .leafView(size: size)
+            .with(\.isNeverFocusable, false)
     }
 
     @CastBackend<BackendFeatures.MenuButtons>(backendGenericName: "NewBackend")
