@@ -346,6 +346,89 @@ SYMBOL_MAP: dict[str, tuple[str, str | None]] = {
     "ruler.fill": ("ruler", FILL),
     "smallcircle.filled.circle.fill": ("circle-dot", FILL),
     "tablecells.fill": ("table-2", FILL),
+    # -- A media client (Avelio): playback, library, people, settings -------
+    "4k.tv": ("tv", "Lucide has no 4K television; a plain television is used."),
+    "airplay.video": ("airplay", None),
+    "apple.intelligence": ("sparkles", "Lucide has no Apple Intelligence mark; sparkles are used."),
+    "arrow.clockwise.circle": ("refresh-cw", "Lucide has no circled clockwise arrow; the bare arrows are used."),
+    "arrow.down": ("arrow-down", None),
+    "arrow.down.app": ("square-arrow-down", None),
+    "arrow.down.circle": ("circle-arrow-down", None),
+    "arrow.up": ("arrow-up", None),
+    "arrow.up.circle": ("circle-arrow-up", None),
+    "arrow.up.to.line": ("arrow-up-to-line", None),
+    "at": ("at-sign", None),
+    "backward.end": ("skip-back", None),
+    "backward.end.fill": ("skip-back", FILL),
+    "bell": ("bell", None),
+    "bubble.left.and.text.bubble.right": ("messages-square", None),
+    "captions.bubble": ("captions", "Lucide has no captions speech bubble; the captions frame is used."),
+    "cat": ("cat", None),
+    "character": ("type", None),
+    "checklist": ("list-checks", None),
+    "circle.lefthalf.filled": ("contrast", None),
+    "clock": ("clock", None),
+    "ellipsis": ("ellipsis", None),
+    "exclamationmark.arrow.circlepath": (
+        "refresh-ccw-dot",
+        "Lucide has no warning inside circling arrows; circling arrows with a dot are used.",
+    ),
+    "film": ("film", None),
+    "film.stack": ("film", "Lucide has no stack of film; a single film strip is used."),
+    "forward.end": ("skip-forward", None),
+    "forward.end.fill": ("skip-forward", FILL),
+    "gift": ("gift", None),
+    "globe": ("globe", None),
+    "hand.thumbsdown": ("thumbs-down", None),
+    "hand.thumbsdown.fill": ("thumbs-down", FILL),
+    "hand.thumbsup": ("thumbs-up", None),
+    "hand.thumbsup.fill": ("thumbs-up", FILL),
+    "heart": ("heart", None),
+    "heart.fill": ("heart", FILL),
+    "heart.text.square": ("file-heart", "Lucide has no heart beside text in a square; a page with a heart is used."),
+    "icloud.and.arrow.down": ("cloud-download", None),
+    "iphone.and.arrow.forward": ("smartphone", "Lucide has no phone with a forward arrow; a phone is used."),
+    "laurel.leading": ("award", "Lucide has no laurel branch; an award ribbon is used."),
+    "list.bullet.clipboard": ("clipboard-list", None),
+    "lock.shield": ("shield", "Lucide has no lock-in-shield icon; a plain shield is used."),
+    "magnifyingglass": ("search", None),
+    "minus.circle": ("circle-minus", None),
+    "music.note": ("music", None),
+    "person": ("user", None),
+    "person.fill": ("user", FILL),
+    "person.crop.circle": ("circle-user", None),
+    "play": ("play", None),
+    "play.fill": ("play", FILL),
+    "play.circle": ("circle-play", None),
+    "play.circle.fill": ("circle-play", FILL),
+    "play.rectangle": ("square-play", None),
+    "play.rectangle.fill": ("square-play", FILL),
+    "play.rectangle.on.rectangle.fill": (
+        "square-play",
+        "Lucide has no stacked play rectangles; one play rectangle is used.",
+    ),
+    "play.slash": ("video-off", "Lucide has no struck-through play triangle; a struck-through camera is used."),
+    "plus.rectangle.on.rectangle": ("copy-plus", None),
+    "questionmark": ("circle-question-mark", "Lucide has no bare question mark; a circled one is used."),
+    "rectangle.stack": ("layers-2", None),
+    "rectangle.stack.fill": ("layers-2", FILL),
+    "rectangle.stack.badge.plus": ("layers-plus", None),
+    "server.rack": ("server", None),
+    "sparkle": ("sparkle", None),
+    "sparkles": ("sparkles", None),
+    "square.and.pencil": ("square-pen", None),
+    "square.grid.2x2": ("layout-grid", None),
+    "stop.circle": ("circle-stop", None),
+    "stop.fill": ("square", FILL),
+    "text.magnifyingglass": ("text-search", None),
+    "text.page": ("file-text", None),
+    "text.page.badge.magnifyingglass": ("file-search", None),
+    "trophy.fill": ("trophy", FILL),
+    "tv": ("tv", None),
+    "tv.and.mediabox": ("monitor-speaker", None),
+    "video": ("video", None),
+    "wifi": ("wifi", None),
+    "wifi.exclamationmark": ("wifi-off", "Lucide has no Wi-Fi warning; Wi-Fi off is used."),
 }
 
 # The icon drawn for a name the mapping doesn't know. A visibly generic mark
@@ -587,11 +670,42 @@ def _point(point: Point) -> str:
     return f"SIMD2({_number(point[0])}, {_number(point[1])})"
 
 
-_TOKEN_RE = re.compile(r"[-+]?(?:\d*\.\d+(?:[eE][-+]?\d+)?|\d+(?:[eE][-+]?\d+)?)|[A-Za-z]")
+
+
+_NUMBER_RE = re.compile(r"[-+]?(?:\d*\.\d+(?:[eE][-+]?\d+)?|\d+\.?(?:[eE][-+]?\d+)?)")
+_FLAG_RE = re.compile(r"[01]")
+_SEPARATOR_RE = re.compile(r"[\s,]*")
 
 
 def _tokenize_path(data: str) -> list[str]:
-    return _TOKEN_RE.findall(data)
+    """Split path data into commands and numbers.
+
+    An arc's two flags are single digits that SVG lets run into the next
+    number without a separator (`a2 2 0 012 2`), as newer Lucide releases
+    write them, so they are read one character at a time.
+    """
+    tokens: list[str] = []
+    position = 0
+    command = ""
+    argument = 0
+    while True:
+        position = _SEPARATOR_RE.match(data, position).end()
+        if position >= len(data):
+            return tokens
+        character = data[position]
+        if character.isalpha():
+            command = character
+            argument = 0
+            tokens.append(character)
+            position += 1
+            continue
+        pattern = _FLAG_RE if command in "Aa" and argument % 7 in (3, 4) else _NUMBER_RE
+        match = pattern.match(data, position)
+        if match is None:
+            raise ValueError(f"unreadable path data at {position}: {data!r}")
+        tokens.append(match.group(0))
+        position = match.end()
+        argument += 1
 
 
 def append_path_data(builder: CommandBuilder, data: str) -> None:
@@ -963,6 +1077,9 @@ class FillRecipe:
 # as a less emphatic version of the right symbol.
 FILL_RECIPES: dict[str, FillRecipe] = {
     "badge-check": FillRecipe(body=(0,), knockout=(1,)),
+    "heart": FillRecipe(body=(0,)),
+    "play": FillRecipe(body=(0,)),
+    "square": FillRecipe(body=(0,)),
     "circle": FillRecipe(body=(0,)),
     "circle-alert": FillRecipe(body=(0,), knockout=(1, 2)),
     "circle-check": FillRecipe(body=(0,), knockout=(1,)),

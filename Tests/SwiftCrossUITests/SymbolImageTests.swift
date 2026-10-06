@@ -63,6 +63,28 @@ struct SymbolImageTests {
         }
     }
 
+    /// The navigation, playback and library symbols a media client (Avelio)
+    /// uses; each drew the dashed placeholder before it was mapped.
+    static let mediaClientSystemNames = [
+        "play.fill", "play.circle", "play.rectangle", "rectangle.stack", "magnifyingglass",
+        "sparkles", "heart", "heart.fill", "hand.thumbsup", "hand.thumbsdown", "person",
+        "person.crop.circle", "tv", "film", "server.rack", "bell", "clock", "ellipsis",
+        "arrow.down.circle", "square.and.pencil", "square.grid.2x2", "stop.fill", "wifi",
+    ]
+
+    @Test("A media client's symbols are covered, and its solid controls are drawn solid")
+    func testMediaClientSymbolsAreCovered() {
+        for name in Self.mediaClientSystemNames {
+            #expect(
+                LucideSymbolProvider.lucideIcon(forSystemName: name) != nil,
+                "'\(name)' isn't in the mapping table"
+            )
+        }
+        for name in ["play.fill", "heart.fill", "stop.fill"] {
+            #expect(SFSymbolLucideMapping.drawsFilled(name), "'\(name)' isn't drawn solid")
+        }
+    }
+
     @Test("The mapping table never points at a missing icon")
     func testMappingTableHasNoDanglingIcons() {
         let bundled = Set(LucideIconGeometry.iconNames)
