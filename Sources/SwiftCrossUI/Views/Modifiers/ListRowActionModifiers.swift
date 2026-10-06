@@ -34,6 +34,21 @@ extension View {
     public func listRowBackground<Background: View>(_ view: Background?) -> some View {
         self
     }
+
+    /// Sets the insets around a list row's content.
+    ///
+    /// Purely cosmetic, and without effect: rows in a ``Form`` section are
+    /// laid out by the section, with one padding for all of its rows, and a
+    /// selectable ``List`` gives every row the same padding the platform's
+    /// list widget needs, so a single row has no insets of its own to
+    /// change. To make a row's content reach further, give the content a
+    /// negative padding or a frame of its own.
+    ///
+    /// - Parameter insets: The insets, or `nil` for the default.
+    /// - Returns: This view, unchanged.
+    public func listRowInsets(_ insets: EdgeInsets?) -> some View {
+        self
+    }
 }
 
 extension ForEach {

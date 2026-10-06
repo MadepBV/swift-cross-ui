@@ -214,11 +214,23 @@ struct SheetModifier<Content: View, SheetContent: View>: TypeSafeView {
                     .with(\.scrollTargets, nil)
                     .with(\.scrollViewReaderScope, nil)
 
-            _ = children.sheetContentNode!.computeLayout(
+            let fittedLayout = children.sheetContentNode!.computeLayout(
                 with: sheetContent(),
                 proposedSize: .unspecified,
                 environment: sheetEnvironment
             )
+            // A sheet sizes itself to its content unless the content asks for
+            // a form- or page-sized presentation, which a second pass
+            // proposes to it.
+            if let sizing = fittedLayout.preferences.presentationSizing,
+                sizing.proposal != .unspecified
+            {
+                _ = children.sheetContentNode!.computeLayout(
+                    with: sheetContent(),
+                    proposedSize: sizing.proposal,
+                    environment: sheetEnvironment
+                )
+            }
             let result = children.sheetContentNode!.commit()
 
             let window = environment.window!

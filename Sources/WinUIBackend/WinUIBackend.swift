@@ -581,7 +581,19 @@ public final class WinUIBackend:
         // re-runs this through the resize handler.
         rootEnvironment
             .with(\.windowScaleFactor, window.scaleFactor)
-            .with(\.scenePhase, window.isActive ? .active : .inactive)
+            .with(\.scenePhase, Self.scenePhase(of: window))
+    }
+
+    /// A window's phase: in the background while it's minimized, active
+    /// while it's the active window, and inactive otherwise.
+    ///
+    /// Minimizing and restoring a window deactivate and activate it, so the
+    /// `activated` handler below already recomputes this at both moments.
+    private static func scenePhase(of window: Window) -> ScenePhase {
+        if (window.appWindow.presenter as? OverlappedPresenter)?.state == .minimized {
+            return .background
+        }
+        return window.isActive ? .active : .inactive
     }
 
     public func setWindowEnvironmentChangeHandler(

@@ -16,6 +16,8 @@ extension AppKitBackend: BackendFeatures.Accessibility {
     /// | `traits` | `accessibilityRole`/`accessibilitySubrole`/`accessibilitySelected` |
     /// | `isHidden` | `isAccessibilityElement` plus an empty `accessibilityChildren` |
     /// | `childBehavior` | `isAccessibilityElement` plus `accessibilityChildren` |
+    /// | `customContent` | high-importance entries prepended to `accessibilityHelp` |
+    /// | `actions` | `accessibilityCustomActions` |
     ///
     /// ## Known limitations
     ///
@@ -23,6 +25,15 @@ extension AppKitBackend: BackendFeatures.Accessibility {
     ///   and ignores any override, so ``SwiftCrossUI/View/accessibilityValue(_:)``
     ///   has no effect on a plain ``SwiftCrossUI/Text``. Use
     ///   ``SwiftCrossUI/View/accessibilityLabel(_:)`` there instead.
+    /// - AppKit's custom-content API (`NSAccessibilityCustomContentProvider`)
+    ///   is a protocol the element's own class must adopt, so custom content
+    ///   is folded into the help text, which VoiceOver reads after the label
+    ///   and value, as it reads SwiftUI's high-importance content. Default
+    ///   importance content is left out.
+    /// - Actions, including the default, escape, magic tap and adjustable
+    ///   ones, are offered as custom actions in VoiceOver's Actions menu:
+    ///   AppKit's press, cancel and increment actions are methods of the
+    ///   element's class rather than settable properties.
     /// - The traits that describe touch behaviour (`playsSound`,
     ///   `isKeyboardKey`, `isSummaryElement`, `updatesFrequently`,
     ///   `startsMediaSession`, `allowsDirectInteraction`, `causesPageTurn` and
@@ -50,8 +61,16 @@ extension AppKitBackend: BackendFeatures.Accessibility {
             return
         }
 
-        widget.setAccessibilityHelp(properties.hint)
+        widget.setAccessibilityHelp(properties.hintIncludingCustomContent)
         widget.setAccessibilityValue(properties.value)
+        widget.setAccessibilityCustomActions(
+            properties.actions.isEmpty ? nil : properties.actions.map { action in
+                NSAccessibilityCustomAction(name: action.name) {
+                    MainActor.assumeIsolated { action.handler() }
+                    return true
+                }
+            }
+        )
         widget.setAccessibilitySelected(
             properties.traits.contains(.isSelected)
         )
@@ -221,5 +240,45 @@ extension AppKitBackend: BackendFeatures.Accessibility {
             return value
         }
         return nil
+    }
+}
+
+extension AppKitBackend: BackendFeatures.AccessibilityNotifications {
+    /// Posts a notification through `NSAccessibility`.
+    ///
+    /// An announcement is an `.announcementRequested` notification on the
+    /// application, carrying the words and a priority VoiceOver honours.
+    /// Layout and screen changes are `.layoutChanged` on the key window, the
+    /// closest AppKit has to UIKit's screen-changed notification. A page
+    /// scroll is announced, as VoiceOver on iOS speaks it.
+    public func postAccessibilityNotification(_ notification: AccessibilityNotificationEvent) {
+        switch notification {
+            case .announcement(let text, let priority):
+                Self.announce(text, priority: priority)
+            case .pageScrolled(let description):
+                Self.announce(description, priority: .default)
+            case .layoutChanged, .screenChanged:
+                guard let window = NSApp.keyWindow ?? NSApp.mainWindow else {
+                    return
+                }
+                NSAccessibility.post(element: window, notification: .layoutChanged)
+        }
+    }
+
+    private static func announce(_ text: String, priority: AccessibilityAnnouncementPriority) {
+        let level: NSAccessibilityPriorityLevel =
+            switch priority {
+                case .low: .low
+                case .default: .medium
+                case .high: .high
+            }
+        NSAccessibility.post(
+            element: NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp as Any,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: text,
+                .priority: level.rawValue,
+            ]
+        )
     }
 }

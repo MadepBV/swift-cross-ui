@@ -32,6 +32,9 @@ public struct PreferenceValues: Sendable {
     /// The background color for enclosing sheets.
     public var presentationBackground: Color?
 
+    /// The size enclosing sheets propose to their content.
+    public var presentationSizing: PresentationSizing?
+
     /// Sets the preferred color scheme for the nearest enclosing presentation.
     public var preferredColorScheme: ColorScheme?
 
@@ -131,6 +134,9 @@ extension PreferenceValues {
             }
             if presentationBackground == nil {
                 presentationBackground = child.presentationBackground
+            }
+            if presentationSizing == nil {
+                presentationSizing = child.presentationSizing
             }
             if preferredColorScheme == nil {
                 preferredColorScheme = child.preferredColorScheme

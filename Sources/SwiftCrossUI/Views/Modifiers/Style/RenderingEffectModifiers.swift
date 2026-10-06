@@ -32,4 +32,21 @@ extension View {
     ) -> some View {
         self
     }
+
+    /// Brightens or darkens this view.
+    ///
+    /// - Note: Not drawn yet, for the reason given for
+    ///   ``View/blur(radius:opaque:)``: a brightness filter needs the backend
+    ///   to filter the view's rendered pixels. The view keeps its layout and
+    ///   draws at its own brightness. Where the change signals state (a
+    ///   hovered card), pair it with a change that is drawn, such as
+    ///   ``View/opacity(_:)`` or a shadow.
+    ///
+    /// - Parameter amount: The amount to add to each color channel, from -1
+    ///   (black) to 1 (white).
+    /// - Returns: The view.
+    public func brightness(_ amount: Double) -> some View {
+        self
+    }
 }
+
