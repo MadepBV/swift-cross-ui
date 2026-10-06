@@ -64,17 +64,38 @@ extension Text {
             }
         }
 
+        /// The words a duration is spelled with.
+        enum DurationStyle { case full }
+
         /// A duration in words, with its largest units only.
         private static func duration(
             _ seconds: TimeInterval,
             units: Int,
-            style: DateComponentsFormatter.UnitsStyle
+            style: DurationStyle
         ) -> String {
-            let formatter = DateComponentsFormatter()
-            formatter.unitsStyle = style
-            formatter.maximumUnitCount = units
-            formatter.allowedUnits = [.year, .month, .day, .hour, .minute, .second]
-            return formatter.string(from: seconds.rounded(.down)) ?? ""
+            #if canImport(Darwin)
+                let formatter = DateComponentsFormatter()
+                formatter.unitsStyle = .full
+                formatter.maximumUnitCount = units
+                formatter.allowedUnits = [.year, .month, .day, .hour, .minute, .second]
+                return formatter.string(from: seconds.rounded(.down)) ?? ""
+            #else
+                // swift-corelibs-foundation has no DateComponentsFormatter: English words, the same
+                // calendar-free unit lengths and largest-units-first rule.
+                let lengths: [(Int, String)] = [
+                    (365 * 86_400, "year"), (30 * 86_400, "month"), (86_400, "day"),
+                    (3_600, "hour"), (60, "minute"), (1, "second"),
+                ]
+                var remaining = Int(seconds.rounded(.down))
+                var parts: [String] = []
+                for (length, name) in lengths where parts.count < units {
+                    let count = remaining / length
+                    guard count > 0 else { continue }
+                    remaining -= count * length
+                    parts.append("\(count) \(name)\(count == 1 ? "" : "s")")
+                }
+                return parts.isEmpty ? "0 seconds" : parts.joined(separator: ", ")
+            #endif
         }
     }
 

@@ -65,9 +65,11 @@ public enum AccessibilityNotification {
         private static func priority(
             of announcement: AttributedString
         ) -> AccessibilityAnnouncementPriority {
-            guard let run = announcement.runs.first else {
-                return .default
-            }
+            #if canImport(Darwin)
+                guard let run = announcement.runs.first else {
+                    return .default
+                }
+            #endif
             #if canImport(Accessibility)
                 // Apple's own attribute, which SwiftUI source sets.
                 guard #available(macOS 14, iOS 17, tvOS 17, watchOS 10, *) else {
@@ -78,8 +80,14 @@ public enum AccessibilityNotification {
                     case .high: return .high
                     default: return .default
                 }
-            #else
+            #elseif canImport(Darwin)
                 return run.accessibilitySpeechAnnouncementPriority ?? .default
+            #else
+                // Walking the runs makes the client reference
+                // swift-foundation's internal `_FoundationCollections.BigString.Index`,
+                // which its DLL does not export, so an app using this failed to
+                // link (measured on Windows): the attribute is not read there.
+                return .default
             #endif
         }
     }

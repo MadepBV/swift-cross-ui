@@ -14,7 +14,7 @@ extension WinUIBackend: BackendFeatures.AccessibilityPreferences {
     /// to the system, is running.
     public var isScreenReaderRunning: Bool {
         var isRunning: WindowsBool = false
-        guard SystemParametersInfoW(UINT(SPI_GETSCREENREADER), 0, &isRunning, 0).boolValue else {
+        guard SystemParametersInfoW(UINT(SPI_GETSCREENREADER), 0, &isRunning, 0) else {
             return false
         }
         return isRunning.boolValue

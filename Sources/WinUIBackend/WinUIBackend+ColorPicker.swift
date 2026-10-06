@@ -101,7 +101,7 @@ final class ColorButton: WinUI.Button {
         }
         resolvedColor = color
 
-        let canvas = content as! Canvas
+        let canvas = content as! WinUI.Canvas
         canvas.background = SolidColorBrushCache.brush(for: color)
 
         self.color = color.uwpColor
