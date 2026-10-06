@@ -274,6 +274,7 @@ public final class WinUIBackend:
     public func createWindow(withDefaultSize size: SIMD2<Int>?, id: String) -> Window {
         let window = CustomWindow()
         WinUIPointerHitDiagnostics.install(on: window.grid)
+        WinUITreeDiagnostics.start { [unowned self] in self.windows }
         windows.append(window)
         window.closed.addHandler { _, _ in
             self.windows.removeAll { other in
@@ -364,6 +365,7 @@ public final class WinUIBackend:
             contentSize.y = min(contentSize.y, available.y)
         }
         try! window.appWindow.resizeClient(window.physicalClientSize(forContentSize: contentSize))
+        window.moveIntoWorkArea()
     }
 
     public func setSizeLimits(
@@ -2975,6 +2977,35 @@ public class CustomWindow: WinUI.Window {
             max(1, Int(width.rounded(.towardZero))),
             max(1, Int(height.rounded(.towardZero)) - contentHeightAdjustment)
         )
+    }
+
+    /// Moves the window so its frame lies inside the work area of its display,
+    /// as far as it fits: a window placed at the system's default position
+    /// and then given a large size otherwise runs off the bottom of the screen.
+    func moveIntoWorkArea() {
+        guard
+            let displayArea = WinAppSDK.DisplayArea.getFromWindowId(
+                cachedAppWindow.id,
+                WinAppSDK.DisplayAreaFallback.nearest
+            )
+        else {
+            return
+        }
+        let workArea = displayArea.workArea
+        guard workArea.width > 0, workArea.height > 0 else {
+            return
+        }
+        let position = cachedAppWindow.position
+        let size = cachedAppWindow.size
+        func clamp(_ origin: Int32, _ extent: Int32, _ start: Int32, _ length: Int32) -> Int32 {
+            max(start, min(origin, start + length - extent))
+        }
+        let x = clamp(position.x, size.width, workArea.x, workArea.width)
+        let y = clamp(position.y, size.height, workArea.y, workArea.height)
+        guard x != position.x || y != position.y else {
+            return
+        }
+        try? cachedAppWindow.move(UWP.PointInt32(x: x, y: y))
     }
 
     /// Starts resizing the window back into its limits whenever its size
