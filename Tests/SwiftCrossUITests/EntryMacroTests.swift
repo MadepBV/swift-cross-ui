@@ -212,7 +212,7 @@ struct EntryMacroTests {
                 """,
             diagnostics: [
                 DiagnosticSpec(
-                    message: "MacroError(message: \"@Entry-annotated properties must be direct children of EnvironmentValues or AppStorageValues extensions.\")",
+                    message: "MacroError(message: \"@Entry-annotated properties must be direct children of EnvironmentValues, FocusedValues or AppStorageValues extensions.\")",
                     line: 3,
                     column: 9
                 )
@@ -244,6 +244,37 @@ struct EntryMacroTests {
                     column: 5
                 )
             ],
+            macroSpecs: testMacros,
+            failureHandler: { spec in
+                Issue.record(spec.issueComment)
+            }
+        )
+    }
+
+    @Test("Entry in FocusedValues names the unwrapped value type")
+    func testFocusedValuesEntry() {
+        assertMacroExpansion(
+            """
+            extension FocusedValues {
+                @Entry var selection: String?
+            }
+            """,
+            expandedSource: """
+                extension FocusedValues {
+                    var selection: String? {
+                        get {
+                            self[`__Key_selection`.self]
+                        }
+                        set {
+                            self[`__Key_selection`.self] = newValue
+                        }
+                    }
+
+                    private struct `__Key_selection`: SwiftCrossUI.FocusedValueKey {
+                        typealias Value = String
+                    }
+                }
+                """,
             macroSpecs: testMacros,
             failureHandler: { spec in
                 Issue.record(spec.issueComment)

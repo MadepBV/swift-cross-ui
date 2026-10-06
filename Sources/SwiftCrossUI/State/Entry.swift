@@ -1,4 +1,7 @@
-/// Creates an ``EnvironmentValues``, or ``AppStorageValues`` entry.
+/// Creates an ``EnvironmentValues``, ``FocusedValues`` or ``AppStorageValues`` entry.
+///
+/// In ``FocusedValues`` the property must have an optional type and no
+/// initial value, as in SwiftUI: `@Entry var selection: Item?`.
 ///
 /// You can create ``EnvironmentValues`` entries by extending the ``EnvironmentValues`` struct with `@Entry`-annotated properties:
 /// ```swift

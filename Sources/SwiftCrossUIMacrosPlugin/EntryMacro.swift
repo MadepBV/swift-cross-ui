@@ -27,6 +27,9 @@ public struct EntryMacro: AccessorMacro, PeerMacro {
             case .environment:
                 getterContent = "self[`__Key_\(trimmedIdentifier)`.self]"
                 setterContent = "self[`__Key_\(trimmedIdentifier)`.self] = newValue"
+            case .focused:
+                getterContent = "self[`__Key_\(trimmedIdentifier)`.self]"
+                setterContent = "self[`__Key_\(trimmedIdentifier)`.self] = newValue"
             case .appStorage:
                 getterContent = "getValue(`__Key_\(trimmedIdentifier)`.self)"
                 setterContent = "setValue(`__Key_\(trimmedIdentifier)`.self, newValue: newValue)"
@@ -69,11 +72,26 @@ public struct EntryMacro: AccessorMacro, PeerMacro {
         }
 
         let escapedIdentifier = identifier.replacingOccurrences(of: "\"", with: "\\\"")
+        let trimmed = identifier.trimmingCharacters(in: ["`"])
+
+        // A focused value has no default; its key only names the value type,
+        // which is the property's type without its optional.
+        if enclosingType == .focused {
+            return [
+                DeclSyntax(
+                    stringLiteral: """
+                        private struct `__Key_\(trimmed)`: \(enclosingType.keyName) {
+                            \(defaultValueDeclaration)
+                        }
+                        """
+                )
+            ]
+        }
 
         // AppStorage has got a special requirement to know the key name as string
         let nameDeclaration: String
         switch enclosingType {
-            case .environment:
+            case .environment, .focused:
                 nameDeclaration = ""
             case .appStorage:
                 nameDeclaration = "\nstatic let name = \"\(escapedIdentifier)\""
@@ -108,7 +126,7 @@ public struct EntryMacro: AccessorMacro, PeerMacro {
             )
         else {
             throw MacroError(
-                "@Entry-annotated properties must be direct children of EnvironmentValues or AppStorageValues extensions."
+                "@Entry-annotated properties must be direct children of EnvironmentValues, FocusedValues or AppStorageValues extensions."
             )
         }
 
@@ -137,6 +155,27 @@ public struct EntryMacro: AccessorMacro, PeerMacro {
             typeDeclaration = ""
         }
 
+        if enclosingValueType == .focused {
+            guard patternBinding.initialValue == nil,
+                let type = patternBinding.type,
+                type.isOptional
+            else {
+                throw MacroError(
+                    "@Entry in FocusedValues requires an optional type and no initial value."
+                )
+            }
+            let typeName = type._syntax.trimmedDescription
+            let wrapped =
+                typeName.hasPrefix("Optional<") && typeName.hasSuffix(">")
+                ? String(typeName.dropFirst("Optional<".count).dropLast())
+                : String(typeName.dropLast())
+            return (
+                enclosingType: enclosingValueType,
+                identifier: identifier,
+                defaultValueDeclaration: "typealias Value = \(wrapped)"
+            )
+        }
+
         // Verify defaultValue
         let defaultValueDeclaration: String
         if patternBinding.initialValue == nil,
@@ -160,6 +199,7 @@ public struct EntryMacro: AccessorMacro, PeerMacro {
     enum EnclosingType: String {
         case environment = "Environment"
         case appStorage = "AppStorage"
+        case focused = "FocusedValue"
 
         init?(rawValue: String) {
             switch rawValue {
@@ -167,6 +207,8 @@ public struct EntryMacro: AccessorMacro, PeerMacro {
                     self = .environment
                 case "SwiftCrossUI.AppStorageValues", "AppStorageValues":
                     self = .appStorage
+                case "SwiftCrossUI.FocusedValues", "FocusedValues":
+                    self = .focused
                 default:
                     return nil
             }
