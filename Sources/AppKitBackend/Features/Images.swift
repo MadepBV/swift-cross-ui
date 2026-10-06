@@ -25,6 +25,11 @@ extension AppKitBackend: BackendFeatures.Images {
         }
 
         let imageView = imageView as! NSImageView
+        // An empty bitmap has no context to draw into; it shows nothing.
+        guard width > 0, height > 0 else {
+            imageView.image = nil
+            return
+        }
         var rgbaData = rgbaData
         let context = CGContext(
             data: &rgbaData,
@@ -35,7 +40,10 @@ extension AppKitBackend: BackendFeatures.Images {
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         )
-        let cgImage = context!.makeImage()!
+        guard let cgImage = context?.makeImage() else {
+            imageView.image = nil
+            return
+        }
 
         imageView.image = NSImage(cgImage: cgImage, size: NSSize(width: width, height: height))
     }
