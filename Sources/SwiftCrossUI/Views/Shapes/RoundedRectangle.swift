@@ -19,6 +19,20 @@ public struct RoundedRectangle {
         self.cornerRadius = cornerRadius
     }
 
+    /// Creates a rounded rectangle with the given corner style.
+    ///
+    /// - Note: SwiftCrossUI always draws continuous corners (see
+    ///   ``RoundedRectangle``), which is also SwiftUI's default style, so
+    ///   `.circular` draws the same shape. The two differ by under a point at
+    ///   typical radii.
+    ///
+    /// - Parameters:
+    ///   - cornerRadius: The corner radius.
+    ///   - style: The corner style; see above.
+    public init(cornerRadius: Double, style: RoundedCornerStyle) {
+        self.init(cornerRadius: cornerRadius)
+    }
+
     /// This shape tries to mimic an order 5 superellipse, extending the sides with line segments.
     /// Since paths don't support quintic curves, I'm using an approximation consisting of
     /// two cubic curves and a line segment. This constant is the list of control points for

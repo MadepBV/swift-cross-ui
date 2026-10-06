@@ -111,6 +111,7 @@ public final class WinUIBackend:
     BackendFeatures.IncomingURLs,
     BackendFeatures.FileDialogs,
     BackendFeatures.CornerRadius,
+    BackendFeatures.Opacity,
     BackendFeatures.Gestures,
     BackendFeatures.AttachedMenus,
     BackendFeatures.Paths,
@@ -723,6 +724,16 @@ public final class WinUIBackend:
             y: Float(radius)
         )
         clip.resize(width: widget.width, height: widget.height)
+    }
+
+    public func setOpacity(of widget: Widget, to opacity: Double) {
+        // `UIElement.Opacity` composes with every descendant, exactly like
+        // SwiftUI's `opacity(_:)`. The widget is a container the modifier
+        // owns, so this never fights the opacity `updateButton` manages.
+        guard widget.opacity != opacity else {
+            return
+        }
+        widget.opacity = opacity
     }
 
     public func naturalSize(of widget: Widget) -> SIMD2<Int> {
@@ -2758,6 +2769,12 @@ extension EnvironmentValues {
             textBlock.fontWeight.weight = resolvedFont.winUIFontWeight
             textBlock.lineHeight = resolvedFont.lineHeight
             textBlock.fontStyle = resolvedFont.isItalic ? .italic : .normal
+            // XAML spaces characters in thousandths of an em; SwiftUI's
+            // tracking is in points.
+            textBlock.characterSpacing =
+                resolvedFont.pointSize > 0
+                ? Int32((resolvedFont.tracking / resolvedFont.pointSize * 1000).rounded())
+                : 0
         }
 
         let foregroundColor = suggestedForegroundColor.resolve(in: self)

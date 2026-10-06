@@ -7,6 +7,12 @@ extension Color {
         indirect case adaptive(light: Color, dark: Color)
         /// An adaptive color that uses platform-specific colors.
         case system(SystemAdaptive)
+        /// A level of the current foreground style. Resolved against
+        /// ``EnvironmentValues/foregroundColor``; see ``Color/secondary``.
+        case hierarchical(HierarchicalLevel)
+        /// The current tint. Resolved against the environment's tint; see
+        /// ``Color/tint``.
+        case tint
     }
 
     /// An adaptive color that follows the design guidelines of the target platform.

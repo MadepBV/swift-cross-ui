@@ -102,9 +102,10 @@ public struct Image: Sendable {
             return nil
         }
         return SymbolRenderRequest(
-            name: name,
+            name: environment.symbolVariants.applied(to: name),
             pointSize: environment.resolvedFont.pointSize
-                * Self.symbolSizeRelativeToFont,
+                * Self.symbolSizeRelativeToFont
+                * environment.imageScale.symbolSizeMultiplier,
             scaleFactor: environment.windowScaleFactor,
             color: environment.suggestedForegroundColor
         )

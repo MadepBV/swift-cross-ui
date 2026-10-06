@@ -16,10 +16,25 @@ public struct Font: Hashable, Sendable {
     }
 
     /// Gets a system font that uses the specified style, weight, and design.
+    @_disfavoredOverload
     public static func system(
         _ style: Font.TextStyle,
         weight: Weight? = nil,
         design: Design? = nil
+    ) -> Font {
+        return Font(kind: .dynamic(style))
+            .weight(weight)
+            .design(design)
+    }
+
+    /// Gets a system font that uses the specified style, design, and weight.
+    ///
+    /// This is SwiftUI's argument order, `.system(.title, design: .rounded,
+    /// weight: .bold)`.
+    public static func system(
+        _ style: Font.TextStyle,
+        design: Design?,
+        weight: Weight? = nil
     ) -> Font {
         return Font(kind: .dynamic(style))
             .weight(weight)
@@ -57,6 +72,25 @@ public struct Font: Hashable, Sendable {
         var font = self
         font.overlay.emphasize = emphasized
         return font
+    }
+
+    /// Uses the bold weight of this font.
+    ///
+    /// - Returns: The bold font.
+    public func bold() -> Font {
+        weight(.bold)
+    }
+
+    /// Uses fixed-width digits while leaving other glyphs proportional.
+    ///
+    /// - Note: SwiftCrossUI's font model has no digit-width axis, so this
+    ///   currently has no visible effect, like ``Text/monospacedDigit()``. It
+    ///   is deliberately not mapped onto ``monospaced(_:)``, which would also
+    ///   change the letterforms.
+    ///
+    /// - Returns: The font.
+    public func monospacedDigit() -> Font {
+        self
     }
 
     /// Selects whether or not to italicize the font.
@@ -186,6 +220,16 @@ public struct Font: Hashable, Sendable {
         case `default`
         /// The monospaced design.
         case monospaced
+        /// The rounded design.
+        ///
+        /// Drawn with the platform's rounded system font where it has one
+        /// (SF Pro Rounded on Apple platforms); elsewhere the default design.
+        case rounded
+        /// The serif design.
+        ///
+        /// Drawn with the platform's serif system font (New York on Apple
+        /// platforms, a serif family elsewhere).
+        case serif
     }
 
     /// An overlay applied to a font after resolving its concrete properties.
@@ -215,6 +259,14 @@ public struct Font: Hashable, Sendable {
 
         /// Overrides the font's design.
         var design: Design?
+
+        /// Extra space between lines, in points, added to the line height
+        /// after scaling. Set by ``View/lineSpacing(_:)``.
+        var lineSpacing: Double = 0
+
+        /// Extra space between characters, in points. Set by
+        /// ``View/tracking(_:)`` and ``Text/tracking(_:)``.
+        var tracking: Double?
 
         /// Applies an overlay to a resolved font.
         ///
@@ -247,6 +299,10 @@ public struct Font: Hashable, Sendable {
             }
             resolvedFont.pointSize *= pointSizeScaleFactor
             resolvedFont.lineHeight *= lineHeightScaleFactor
+            resolvedFont.lineHeight += lineSpacing
+            if let tracking {
+                resolvedFont.tracking = tracking
+            }
         }
     }
 
@@ -276,6 +332,11 @@ public struct Font: Hashable, Sendable {
         public var design: Design
         /// Whether the font is italicized.
         public var isItalic: Bool
+        /// Extra space between characters, in points.
+        ///
+        /// Zero draws the font's own spacing. Backends that can space glyphs
+        /// apply it (AppKit as kerning, WinUI as character spacing).
+        public var tracking: Double = 0
     }
 
     public struct Context: Sendable {

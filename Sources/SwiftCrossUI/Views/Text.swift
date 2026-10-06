@@ -162,6 +162,7 @@ extension Text {
         ///
         /// - Note: Not honoured by any backend yet. See ``Text``.
         var usesMonospacedDigits = false
+        var tracking: Double?
 
         /// Whether any attribute modifies the font that the text resolves to.
         var modifiesFont: Bool {
@@ -224,10 +225,13 @@ extension Text {
             if isItalic {
                 environment = environment.with(\.fontOverlay.italicize, true)
             }
+            if let tracking {
+                environment = environment.with(\.fontOverlay.tracking, tracking)
+            }
             if let foregroundColor {
                 environment = environment.with(
                     \.foregroundColor,
-                    foregroundColor
+                    foregroundColor.bindingStyle(in: environment)
                 )
             }
             return environment
@@ -297,6 +301,24 @@ extension Text {
         }
     }
 
+    /// Sets the colour of this text, returning a ``Text`` so that it can
+    /// still be concatenated or styled further.
+    ///
+    /// - Parameter color: The colour of the text.
+    /// - Returns: The styled text.
+    public func foregroundStyle(_ color: Color) -> Text {
+        foregroundColor(color)
+    }
+
+    /// Sets the style of this text, returning a ``Text`` so that it can
+    /// still be concatenated or styled further.
+    ///
+    /// - Parameter style: The style of the text. See ``ShapeStyle``.
+    /// - Returns: The styled text.
+    public func foregroundStyle<S: ShapeStyle>(_ style: S) -> Text {
+        foregroundColor(style._color)
+    }
+
     /// Applies a bold font weight to this text.
     ///
     /// As with ``View/emphasized()``, text using a ``Font/TextStyle``-based
@@ -344,6 +366,36 @@ extension Text {
         withAttributes { attributes in
             attributes.usesMonospacedDigits = true
         }
+    }
+
+    /// Adds space between the characters of this text.
+    ///
+    /// ```swift
+    /// Text("CODE").tracking(8)
+    /// ```
+    ///
+    /// Drawn by backends that can space glyphs (AppKit and WinUI); the text
+    /// measures wider by the same amount, so layout matches.
+    ///
+    /// - Parameter tracking: The extra space after each character, in
+    ///   points. Negative values tighten the text.
+    /// - Returns: The styled text.
+    public func tracking(_ tracking: Double) -> Text {
+        withAttributes { attributes in
+            attributes.tracking = tracking
+        }
+    }
+
+    /// Adjusts the space between the characters of this text.
+    ///
+    /// SwiftUI distinguishes kerning (between pairs of glyphs, keeping
+    /// ligatures) from tracking (after every glyph). SwiftCrossUI's backends
+    /// expose a single spacing value, so both apply it.
+    ///
+    /// - Parameter kerning: The extra space, in points.
+    /// - Returns: The styled text.
+    public func kerning(_ kerning: Double) -> Text {
+        tracking(kerning)
     }
 
     /// Strikes through this text.
@@ -406,8 +458,15 @@ extension Text: ElementaryView {
     ) -> ViewLayoutResult {
         // The text's own attributes override whatever the surrounding
         // hierarchy put in the environment, exactly as they do in SwiftUI.
-        let environment = attributes.apply(to: environment)
-        let transformedString = environment.applyingTextTransforms(to: string)
+        let baseEnvironment = attributes.apply(to: environment)
+        let transformedString = baseEnvironment.applyingTextTransforms(to: string)
+        let environment = Self.shrinkingToFit(
+            transformedString,
+            width: proposedSize.width,
+            in: baseEnvironment,
+            widget: widget,
+            backend: backend
+        )
 
         // Gtk measures *through* the widget (it takes its Pango layout context
         // from it), so for those backends the text view has to hold the string
@@ -473,14 +532,80 @@ extension Text: ElementaryView {
         // it here costs one call per label per pass instead of one per layout
         // computation.
         if backend.measuresTextIndependentlyOfWidget {
-            let environment = attributes.apply(to: environment)
+            let baseEnvironment = attributes.apply(to: environment)
+            let transformedString = baseEnvironment.applyingTextTransforms(to: string)
+            let environment = Self.shrinkingToFit(
+                transformedString,
+                width: layout.size.width,
+                in: baseEnvironment,
+                widget: widget,
+                backend: backend
+            )
             BackendCallStatistics.record("text.updateTextView")
             backend.updateTextView(
                 widget,
-                content: environment.applyingTextTransforms(to: string),
+                content: transformedString,
                 environment: environment
             )
         }
         backend.setSize(of: widget, to: layout.size.vector)
+    }
+}
+
+extension Text {
+    /// Shrinks the font of a single line of text that's wider than `width`,
+    /// down to the environment's ``EnvironmentValues/minimumScaleFactor``.
+    ///
+    /// Only single-line text (`lineLimit(1)`) is shrunk: deciding how far
+    /// to shrink wrapping text needs a measurement per candidate size, which
+    /// would multiply the cost of laying out every label. Wrapping text keeps
+    /// its size and truncates as before.
+    ///
+    /// - Parameters:
+    ///   - string: The text as displayed.
+    ///   - width: The width available to the text.
+    ///   - environment: The text's environment.
+    ///   - widget: The text view, for backends that measure through it.
+    ///   - backend: The backend measuring the text.
+    /// - Returns: `environment`, with the font scaled down if needed.
+    @MainActor
+    static func shrinkingToFit<Backend: BaseAppBackend>(
+        _ string: String,
+        width: Double?,
+        in environment: EnvironmentValues,
+        widget: Backend.Widget,
+        backend: Backend
+    ) -> EnvironmentValues {
+        let minimumScaleFactor = environment.minimumScaleFactor
+        guard
+            minimumScaleFactor < 1,
+            environment.lineLimitSettings?.limit == 1,
+            let width, width.isFinite, width > 0
+        else {
+            return environment
+        }
+
+        if !backend.measuresTextIndependentlyOfWidget {
+            backend.updateTextView(widget, content: string, environment: environment)
+        }
+        BackendCallStatistics.record("text.measure")
+        let naturalWidth = Double(
+            backend.size(
+                of: string,
+                whenDisplayedIn: widget,
+                proposedWidth: nil,
+                proposedHeight: nil,
+                environment: environment
+            ).x
+        )
+        guard naturalWidth > width else {
+            return environment
+        }
+
+        let scale = max(minimumScaleFactor, width / naturalWidth)
+        var overlay = environment.fontOverlay
+        overlay.pointSizeScaleFactor *= scale
+        overlay.lineHeightScaleFactor *= scale
+        return environment.with(\.fontOverlay, overlay)
     }
 }
