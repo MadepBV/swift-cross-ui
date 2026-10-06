@@ -6,7 +6,7 @@ public struct ScenePreferenceValues {
     }
 
     /// The commands to be shown by the app.
-    public var commands: Commands
+    public var commands: ResolvedCommands
 }
 
 extension ScenePreferenceValues {

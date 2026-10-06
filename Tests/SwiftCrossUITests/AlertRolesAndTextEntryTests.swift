@@ -466,7 +466,7 @@ struct AlertRolesAndTextEntryTests {
         harness.widget.firstWidget(ofType: DummyBackend.Button.self)?.action?()
         harness.render()
 
-        #expect(texts(in: harness.widget) == ["Physics"])
+        #expect(texts(in: harness.widget) == ["Back", "Physics"])
     }
 
     @MainActor
@@ -490,7 +490,7 @@ struct AlertRolesAndTextEntryTests {
         harness.widget.firstWidget(ofType: DummyBackend.Button.self)?.action?()
         harness.render()
 
-        #expect(texts(in: harness.widget) == ["Physics"])
+        #expect(texts(in: harness.widget) == ["Back", "Physics"])
     }
 
     // MARK: Helpers

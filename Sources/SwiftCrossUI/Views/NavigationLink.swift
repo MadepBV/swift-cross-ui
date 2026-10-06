@@ -53,7 +53,7 @@ public struct NavigationLink: View {
         case labelledValue(label: AnyView, value: any Codable, path: Binding<NavigationPath>)
         /// A link that appends a value to the path of the enclosing navigation
         /// stack, which it finds through the environment.
-        case stackValue(label: AnyView, value: any Codable)
+        case stackValue(label: AnyView, value: Any?)
         /// A link that pushes a view onto the enclosing navigation stack.
         case destination(label: AnyView, destination: () -> AnyView)
     }
@@ -96,6 +96,9 @@ public struct NavigationLink: View {
                             nowhere to navigate to
                             """
                         )
+                        return
+                    }
+                    guard let value else {
                         return
                     }
                     appendToPath(value)
@@ -218,6 +221,79 @@ public struct NavigationLink: View {
     @MainActor
     public init(_ label: String, value: some Codable) {
         storage = .stackValue(label: AnyView(Text(label)), value: value)
+    }
+
+    /// Creates a navigation link that appends a `Hashable` value to the path
+    /// of the enclosing ``NavigationStack``, SwiftUI's spelling.
+    ///
+    /// The value needn't be `Codable`; see ``init(value:label:)-(_,_)`` for
+    /// how the link finds its stack. A `nil` value makes an inert link.
+    ///
+    /// - Parameters:
+    ///   - value: The value to append to the stack's path when clicked.
+    ///   - label: The label to display on the link.
+    @MainActor
+    public init<Value: Hashable, Label: View>(
+        value: Value?,
+        @ViewBuilder label: () -> Label
+    ) {
+        storage = .stackValue(label: AnyView(label()), value: value.map { $0 as Any })
+    }
+
+    /// Creates a navigation link that appends a value that is both
+    /// `Hashable` and `Codable`.
+    ///
+    /// Exists so that such a value matches one overload rather than two.
+    ///
+    /// - Parameters:
+    ///   - value: The value to append to the stack's path when clicked.
+    ///   - label: The label to display on the link.
+    @MainActor
+    public init<Value: Hashable & Codable, Label: View>(
+        value: Value,
+        @ViewBuilder label: () -> Label
+    ) {
+        storage = .stackValue(label: AnyView(label()), value: value)
+    }
+
+    /// Creates a navigation link with a text label that appends a `Hashable`
+    /// value to the path of the enclosing ``NavigationStack``.
+    ///
+    /// - Parameters:
+    ///   - title: The label to display on the link.
+    ///   - value: The value to append to the stack's path when clicked.
+    @MainActor
+    public init<Value: Hashable>(_ title: String, value: Value?) {
+        storage = .stackValue(label: AnyView(Text(title)), value: value.map { $0 as Any })
+    }
+
+    /// Creates a navigation link with a text label that appends a value that
+    /// is both `Hashable` and `Codable`.
+    ///
+    /// - Parameters:
+    ///   - title: The label to display on the link.
+    ///   - value: The value to append to the stack's path when clicked.
+    @MainActor
+    public init<Value: Hashable & Codable>(_ title: String, value: Value) {
+        storage = .stackValue(label: AnyView(Text(title)), value: value)
+    }
+
+    /// Creates a navigation link with a text label that presents a
+    /// destination view.
+    ///
+    /// The text counterpart of ``init(destination:label:)``.
+    ///
+    /// - Parameters:
+    ///   - title: The link's label.
+    ///   - destination: The view to present when the link is clicked.
+    @MainActor
+    public init<Destination: View>(
+        _ title: String,
+        @ViewBuilder destination: @escaping () -> Destination
+    ) {
+        self.init(destination: destination) {
+            Text(title)
+        }
     }
 
     /// Creates a navigation link that presents a destination view.

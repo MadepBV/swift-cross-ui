@@ -78,6 +78,21 @@ public struct Button<Label: View> {
         self.role = role
     }
 
+    /// Creates a button titled by its role alone, such as SwiftUI's
+    /// `Button(role: .close) { dismiss() }`.
+    ///
+    /// - Parameters:
+    ///   - role: The button's role, whose standard title it shows ("Close",
+    ///     "Cancel", "Delete").
+    ///   - action: The action to perform when the button is triggered.
+    @MainActor
+    public init(
+        role: ButtonRole,
+        action: @escaping @MainActor () -> Void
+    ) where Label == TupleView1<Text> {
+        self.init(role.defaultTitle, role: role, action: action)
+    }
+
     /// Creates a button that displays a custom view as label.
     ///
     /// - Parameters:

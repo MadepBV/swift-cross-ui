@@ -19,6 +19,20 @@ public struct SecureField: ElementaryView, View {
         self._text = text
     }
 
+    /// Creates a secure field with a title and a prompt, SwiftUI's spelling.
+    ///
+    /// The field shows the prompt as its placeholder; the title only labels
+    /// it (in a ``Form``, through its ``LabeledContent``).
+    ///
+    /// - Parameters:
+    ///   - title: The field's title.
+    ///   - text: The text to display and edit.
+    ///   - prompt: The placeholder shown while the field is empty, or `nil`
+    ///     to show the title instead.
+    public init(_ title: String, text: Binding<String>, prompt: Text?) {
+        self.init(prompt?.string ?? title, text: text)
+    }
+
     func asWidget<Backend: BaseAppBackend>(backend: Backend) -> Backend.Widget {
         return backend.createSecureField()
     }

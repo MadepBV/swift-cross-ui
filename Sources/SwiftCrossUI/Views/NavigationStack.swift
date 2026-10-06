@@ -32,23 +32,39 @@ struct NavigationStackRootPath: Codable {}
 /// }
 /// ```
 ///
-/// Use ``navigationDestination(for:destination:)`` on this view instead of its
-/// children, unlike Apple's SwiftUI API.
+/// Destinations can be declared either way: with
+/// ``navigationDestination(for:destination:)`` on the stack itself, or, as in
+/// SwiftUI, with ``View/navigationDestination(for:destination:)-(_,_)`` on a
+/// view inside it. A destination declared inside the stack is remembered for
+/// as long as the stack exists, so it keeps resolving after the view that
+/// declared it has been navigated away from.
 ///
-/// - Note: SwiftUI puts the button that returns to the previous view in a
-///   navigation bar. SwiftCrossUI has no navigation bar, so a stack that has a
-///   closure-pushed destination on top draws a plain back button above it.
-///   Value-driven navigation is unchanged: pop it yourself with
-///   ``NavigationPath/removeLast(_:)``.
+/// A path can also be a plain collection of `Hashable` values, as in SwiftUI:
+///
+/// ```swift
+/// @State private var path: [Destination] = []
+///
+/// NavigationStack(path: $path) {
+///     HomeView()
+///         .navigationDestination(for: Destination.self) { destination in
+///             DestinationView(destination)
+///         }
+/// }
+/// ```
+///
+/// The stack draws a navigation bar above its content (see
+/// ``View/navigationTitle(_:)-(String)``, ``View/toolbar(content:)`` and
+/// ``View/searchable(text:placement:prompt:)-(_,_,String)``). While there's
+/// anything to return to — a closure-pushed destination or a non-empty path —
+/// the bar starts with a Back button, which pops the top view. The bar takes
+/// no room when it has nothing to show.
 public struct NavigationStack<Detail: View>: View {
-    /// The label of the button that returns to the previous view.
-    private static var backButtonLabel: String { "Back" }
-
-    /// The spacing between the back button and the view it returns from.
-    private static var backButtonSpacing: Int { 8 }
-
     /// The navigation path supplied by the surrounding view, if any.
     var externalPath: Binding<NavigationPath>?
+
+    /// A typed navigation path supplied by the surrounding view, if any: a
+    /// collection of `Hashable` values (see ``init(path:_:)-(Binding<Data>,_)``).
+    var typedPath: NavigationStackPath?
 
     /// The navigation path used when the stack manages its own navigation state
     /// (i.e. when no path was supplied at initialization).
@@ -61,6 +77,12 @@ public struct NavigationStack<Detail: View>: View {
     /// and therefore can't live in a ``NavigationPath``. They sit on top of the
     /// path: while there's a view destination, it's what the stack displays.
     @State private var viewDestinations: [AnyView] = []
+
+    /// What the stack's pages ask its bar to show.
+    @State private var chrome = NavigationChromeStorage()
+
+    /// The destinations declared inside the stack.
+    @State private var registeredDestinations = NavigationDestinationStorage()
 
     /// A binding to the current navigation path.
     ///
@@ -81,25 +103,42 @@ public struct NavigationStack<Detail: View>: View {
     /// typesafe without introducing some crazy generated pseudo-variadic storage types of
     /// some sort. This way we can easily have unlimited navigation destinations and there's
     /// just a single simple method for adding a navigation destination.
-    var child: (any Codable) -> Detail?
+    var child: (Any) -> Detail?
+
+    /// The stack's path, whichever kind it is.
+    var resolvedPath: NavigationStackPath {
+        typedPath ?? NavigationStackPath(path, destinationTypes: destinationTypes)
+    }
+
     /// The elements of the navigation path. The result can depend on
     /// ``NavigationStack/destinationTypes`` which determines how the keys are
     /// decoded if they haven't yet been decoded (this happens if they're loaded
     /// from disk for persistence).
-    var elements: [any Codable] {
-        let resolvedPath = path.wrappedValue.path(
-            destinationTypes: destinationTypes
-        )
-        return [NavigationStackRootPath()] + resolvedPath
+    var elements: [Any] {
+        [NavigationStackRootPath()] + resolvedPath.elements()
     }
 
     public var body: some View {
         // Resolved once so that the environment values capture just the
         // bindings rather than the whole stack.
         let destinations = $viewDestinations
-        let path = self.path
+        let path = resolvedPath
+        let elements = self.elements
+        let child = self.child
 
-        visibleContent
+        NavigationChromeHost(
+            chrome: chrome.ownChrome,
+            back: backAction,
+            content: NavigationStackPage(
+                registry: registeredDestinations.registry,
+                viewDestination: viewDestinations.last,
+                depth: elements.count - 1 + viewDestinations.count,
+                element: elements.last,
+                root: { child(NavigationStackRootPath()).map { AnyView($0) } },
+                builtIn: { element in child(element).map { AnyView($0) } }
+            )
+        )
+            .environment(\.navigationDestinations, registeredDestinations.registry)
             .environment(
                 \.pushNavigationDestination,
                 NavigationDestinationPusher { destination in
@@ -109,29 +148,23 @@ public struct NavigationStack<Detail: View>: View {
             .environment(
                 \.appendToNavigationPath,
                 NavigationPathAppender { value in
-                    path.wrappedValue.append(value)
+                    path.append(value)
                 }
             )
     }
 
-    /// The top of the stack: a closure-pushed destination if there is one, and
-    /// the detail view for the current path element otherwise.
-    @ViewBuilder
-    private var visibleContent: some View {
-        if let destination = viewDestinations.last {
-            let destinations = $viewDestinations
-
-            VStack(alignment: .leading, spacing: Self.backButtonSpacing) {
-                Button(Self.backButtonLabel) {
-                    destinations.wrappedValue.removeLast()
-                }
-
-                destination
-            }
-        } else if let element = elements.last {
-            childOrCrash(for: element)
+    /// Pops the top view: the last closure-pushed destination if there is
+    /// one, and the last path element otherwise; `nil` when the stack shows
+    /// its root.
+    private var backAction: (@MainActor () -> Void)? {
+        let destinations = $viewDestinations
+        let path = resolvedPath
+        if !viewDestinations.isEmpty {
+            return { destinations.wrappedValue.removeLast() }
+        } else if !path.isEmpty() {
+            return { path.removeLast() }
         } else {
-            Text("Empty navigation path")
+            return nil
         }
     }
 
@@ -145,7 +178,29 @@ public struct NavigationStack<Detail: View>: View {
         path: Binding<NavigationPath>,
         @ViewBuilder _ root: @escaping () -> Detail
     ) {
-        self.init(externalPath: path, root: root)
+        self.init(externalPath: path, typedPath: nil, root: root)
+    }
+
+    /// Creates a navigation stack with homogeneous navigation state that you
+    /// can control: a collection of `Hashable` values, SwiftUI's spelling.
+    ///
+    /// Declare the values' destination with
+    /// ``View/navigationDestination(for:destination:)-(_,_)`` inside the stack.
+    /// A ``NavigationLink`` whose value isn't of the collection's element type
+    /// does nothing.
+    ///
+    /// - Parameters:
+    ///   - path: A ``Binding`` to the navigation state for this stack.
+    ///   - root: The view to display when the stack is empty.
+    public init<Data>(
+        path: Binding<Data>,
+        @ViewBuilder _ root: @escaping () -> Detail
+    )
+    where
+        Data: MutableCollection & RandomAccessCollection & RangeReplaceableCollection,
+        Data.Element: Hashable
+    {
+        self.init(externalPath: nil, typedPath: NavigationStackPath(path), root: root)
     }
 
     /// Creates a navigation stack that manages its own navigation state.
@@ -155,22 +210,25 @@ public struct NavigationStack<Detail: View>: View {
     ///
     /// - Parameter root: The view to display when the stack is empty.
     public init(@ViewBuilder _ root: @escaping () -> Detail) {
-        self.init(externalPath: nil, root: root)
+        self.init(externalPath: nil, typedPath: nil, root: root)
     }
 
     /// Creates a navigation stack, with or without an externally managed path.
     ///
-    /// Both public initializers funnel through this one.
+    /// All public initializers funnel through this one.
     ///
     /// - Parameters:
     ///   - externalPath: A binding to the navigation state for this stack, or
     ///     `nil` to let the stack manage its own.
+    ///   - typedPath: A typed path for this stack, if it has one instead.
     ///   - root: The view to display when the stack is empty.
     private init(
         externalPath: Binding<NavigationPath>?,
+        typedPath: NavigationStackPath?,
         root: @escaping () -> Detail
     ) {
         self.externalPath = externalPath
+        self.typedPath = typedPath
         destinationTypes = []
         child = { element in
             if element is NavigationStackRootPath {
@@ -212,6 +270,7 @@ public struct NavigationStack<Detail: View>: View {
         destination: @escaping (Component) -> NewDetail?
     ) where Detail == EitherView<PreviousDetail, NewDetail> {
         externalPath = previous.externalPath
+        typedPath = previous.typedPath
         destinationTypes = previous.destinationTypes + [Component.self]
         child = { element in
             if let previous = previous.child(element) {
@@ -227,19 +286,6 @@ public struct NavigationStack<Detail: View>: View {
                 return nil
             }
         }
-    }
-
-    /// Attempts to compute the detail view for the given element (the type of
-    /// the element decides which detail is shown). Crashes if no suitable detail
-    /// view is found.
-    func childOrCrash(for element: some Codable) -> Detail {
-        guard let child = child(element) else {
-            fatalError(
-                "Failed to find detail view for \"\(element)\", make sure you have called .navigationDestination for this type."
-            )
-        }
-
-        return child
     }
 }
 
@@ -273,12 +319,12 @@ struct NavigationDestinationPusher {
 @MainActor
 struct NavigationPathAppender {
     /// Appends a value to the stack's path.
-    var appendValue: (any Codable) -> Void
+    var appendValue: (Any) -> Void
 
     /// Appends a value to the stack's path.
     ///
     /// - Parameter value: The value to append.
-    func callAsFunction(_ value: any Codable) {
+    func callAsFunction(_ value: Any) {
         appendValue(value)
     }
 }

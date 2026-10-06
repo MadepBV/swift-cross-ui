@@ -32,6 +32,15 @@ extension AppKitBackend: BackendFeatures.TextFields {
         }
         textField.onSubmit = onSubmit
 
+        // `textFieldStyle(.plain)`: the field sits inside a container that
+        // draws its own border.
+        let isPlain = environment.textFieldIsPlain
+        if textField.isBezeled == isPlain {
+            textField.isBezeled = !isPlain
+            textField.drawsBackground = !isPlain
+            textField.focusRingType = isPlain ? .none : .default
+        }
+
         if #available(macOS 14, *) {
             textField.contentType =
                 switch environment.textContentType {

@@ -1,5 +1,7 @@
 /// A command menu.
-public struct CommandMenu {
+public struct CommandMenu: Commands {
+    public typealias Body = Never
+
     /// The menu's name.
     var name: String
 
@@ -15,7 +17,7 @@ public struct CommandMenu {
     }
 
     /// The menu's sources, in order; several when menus of the same name
-    /// were merged by ``Commands/overlayed(with:)``.
+    /// were merged by ``ResolvedCommands/overlayed(with:)``.
     private var sources: [Source]
 
     /// The menu's contents, collected under the current menu collection
@@ -68,5 +70,11 @@ public struct CommandMenu {
             label: name,
             content: Menu.resolve(items: content)
         )
+    }
+}
+
+extension CommandMenu {
+    public var _commandMenus: [CommandMenu] {
+        [self]
     }
 }

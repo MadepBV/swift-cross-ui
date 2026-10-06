@@ -44,9 +44,20 @@ enum MenuItemCollection {
     ///
     /// - Parameter view: The view about to have its body read.
     static func prepare<V: View>(_ view: V) {
+        prepareProperties(of: view)
+    }
+
+    /// Installs the current collection environment on the dynamic properties
+    /// of any value whose body is about to be read, such as a ``Commands``
+    /// type's `@FocusedValue`s.
+    ///
+    /// Does nothing outside a collection with an environment.
+    ///
+    /// - Parameter value: The value about to have its body read.
+    static func prepareProperties<Value>(of value: Value) {
         guard let environment else {
             return
         }
-        DynamicPropertyUpdater(for: view).update(view, with: environment, previousValue: nil)
+        DynamicPropertyUpdater(for: value).update(value, with: environment, previousValue: nil)
     }
 }

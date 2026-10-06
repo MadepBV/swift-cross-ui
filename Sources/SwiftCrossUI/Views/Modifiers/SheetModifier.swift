@@ -202,10 +202,17 @@ struct SheetModifier<Content: View, SheetContent: View>: TypeSafeView {
                 isPresented.wrappedValue = false
             })
 
+            // A sheet is a new top level: the presenter's navigation bar and
+            // scroll views don't reach into it, so a sheet's toolbar draws a
+            // bar of its own rather than adding to the one behind it.
             let sheetEnvironment =
                 environment
                     .with(\.dismiss, dismissAction)
                     .with(\.sheet, sheet)
+                    .with(\.navigationChrome, nil)
+                    .with(\.navigationDestinations, nil)
+                    .with(\.scrollTargets, nil)
+                    .with(\.scrollViewReaderScope, nil)
 
             _ = children.sheetContentNode!.computeLayout(
                 with: sheetContent(),

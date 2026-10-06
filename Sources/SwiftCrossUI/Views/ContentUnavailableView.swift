@@ -145,3 +145,37 @@ extension ContentUnavailableView
         "Check the spelling or try a new search."
     }
 }
+
+/// SwiftUI's title-and-symbol presentation.
+extension ContentUnavailableView
+    where
+    Label == TupleView1<AnyView>,
+    Description == TupleView1<AnyView>,
+    Actions == TupleView1<EmptyView>
+{
+    /// Creates a presentation from a title, a symbol and an optional
+    /// description.
+    ///
+    /// ```swift
+    /// ContentUnavailableView(
+    ///     "No downloads",
+    ///     systemImage: "arrow.down.circle",
+    ///     description: Text("Downloaded titles play without a connection.")
+    /// )
+    /// ```
+    ///
+    /// - Parameters:
+    ///   - title: The title.
+    ///   - systemImage: The name of the symbol shown with the title.
+    ///   - description: More about why the content is unavailable, if
+    ///     anything.
+    public init(_ title: String, systemImage: String, description: Text? = nil) {
+        self.init {
+            AnyView(SwiftCrossUI.Label(title, systemImage: systemImage))
+        } description: {
+            description.map { AnyView($0) } ?? AnyView(EmptyView())
+        } actions: {
+            EmptyView()
+        }
+    }
+}

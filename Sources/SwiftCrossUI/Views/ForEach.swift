@@ -364,6 +364,12 @@ extension ForEach: TypeSafeView, View where Child: View {
             participatesInParentLayout: true
         )
 
+        // Identified elements are scroll targets of the enclosing scroll view
+        // (`ScrollViewProxy.scrollTo(_:anchor:)`, `ScrollPosition`).
+        if idKeyPath != nil, let scrollTargets = environment.scrollTargets {
+            scrollTargets.register(children)
+        }
+
         // Reset layoutable children cache so that we recompute them during the
         // next update cycle. This is important at the moment because the `child`
         // closure and `elements` array may have changed. In future we'll separate
@@ -566,5 +572,20 @@ extension ForEach where Items.Element: Identifiable, ID == Items.Element.ID {
         self.elements = elements
         self.child = child
         self.idKeyPath = \.id
+    }
+}
+
+extension ForEachViewChildren: ScrollTargetProvider {
+    func scrollTargetWidget(for id: AnyHashable) -> AnyWidget? {
+        guard let id = id.base as? ID ?? (id as? ID),
+              let index = identifierMap[id], nodes.indices.contains(index)
+        else {
+            return nil
+        }
+        return nodes[index].widget
+    }
+
+    var scrollTargetIdentifiers: [AnyHashable] {
+        identifiers.map { AnyHashable($0) }
     }
 }

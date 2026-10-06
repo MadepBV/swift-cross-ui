@@ -27,6 +27,9 @@ public struct EntryMacro: AccessorMacro, PeerMacro {
             case .environment:
                 getterContent = "self[`__Key_\(trimmedIdentifier)`.self]"
                 setterContent = "self[`__Key_\(trimmedIdentifier)`.self] = newValue"
+            case .focusedValues:
+                getterContent = "self[`__Key_\(trimmedIdentifier)`.self]"
+                setterContent = "self[`__Key_\(trimmedIdentifier)`.self] = newValue"
             case .appStorage:
                 getterContent = "getValue(`__Key_\(trimmedIdentifier)`.self)"
                 setterContent = "setValue(`__Key_\(trimmedIdentifier)`.self, newValue: newValue)"
@@ -73,7 +76,7 @@ public struct EntryMacro: AccessorMacro, PeerMacro {
         // AppStorage has got a special requirement to know the key name as string
         let nameDeclaration: String
         switch enclosingType {
-            case .environment:
+            case .environment, .focusedValues:
                 nameDeclaration = ""
             case .appStorage:
                 nameDeclaration = "\nstatic let name = \"\(escapedIdentifier)\""
@@ -108,7 +111,7 @@ public struct EntryMacro: AccessorMacro, PeerMacro {
             )
         else {
             throw MacroError(
-                "@Entry-annotated properties must be direct children of EnvironmentValues or AppStorageValues extensions."
+                "@Entry-annotated properties must be direct children of EnvironmentValues, FocusedValues or AppStorageValues extensions."
             )
         }
 
@@ -121,6 +124,29 @@ public struct EntryMacro: AccessorMacro, PeerMacro {
         else {
             throw MacroError(
                 "@Entry is only supported on single binding `var` declarations."
+            )
+        }
+
+        // A focused value is optional (`nil` while no focused scene publishes
+        // one), and its key names the wrapped type.
+        if enclosingValueType == .focusedValues {
+            guard let type = patternBinding.type,
+                  type.isOptional || type._syntax.trimmedDescription.hasSuffix("!"),
+                  patternBinding.initialValue == nil
+            else {
+                throw MacroError(
+                    "@Entry in FocusedValues requires an optional type annotation and no initial value."
+                )
+            }
+            var wrapped = type._syntax.trimmedDescription
+            wrapped.removeLast()
+            if wrapped.hasPrefix("("), wrapped.hasSuffix(")") {
+                wrapped = String(wrapped.dropFirst().dropLast())
+            }
+            return (
+                enclosingType: enclosingValueType,
+                identifier: identifier,
+                defaultValueDeclaration: "typealias Value = \(wrapped)"
             )
         }
 
@@ -159,12 +185,15 @@ public struct EntryMacro: AccessorMacro, PeerMacro {
 
     enum EnclosingType: String {
         case environment = "Environment"
+        case focusedValues = "FocusedValue"
         case appStorage = "AppStorage"
 
         init?(rawValue: String) {
             switch rawValue {
                 case "SwiftCrossUI.EnvironmentValues", "EnvironmentValues":
                     self = .environment
+                case "SwiftCrossUI.FocusedValues", "FocusedValues":
+                    self = .focusedValues
                 case "SwiftCrossUI.AppStorageValues", "AppStorageValues":
                     self = .appStorage
                 default:

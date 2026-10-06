@@ -95,16 +95,39 @@ public struct ScrollView<Content: View>: TypeSafeView, View {
             !axes.contains(axis) || proposedSize[component: axis] == nil
         })
 
+        // The content's environment: this scroll view's targets, and none of
+        // the scroll requests that were meant for this scroll view.
+        let contentEnvironment = environment
+            .with(\.scrollTargets, children.scrollTargets)
+            .with(\.scrollRequest, nil)
+            .with(\.scrollGeometryObservers, [])
+            .with(\.scrollTargetVisibilityObservers, [])
+        environment.scrollViewReaderScope?.add(children.scrollTargets)
+
+        // Margins from `contentMargins(_:_:for:)` scroll with the content, so
+        // they come off the proposal along the axes that don't scroll and get
+        // added to the content's size along every axis.
+        let margins = environment.scrollContentMargins
+        children.contentMargins = margins
+
         // Probe how big the child would like to be
         var childProposal = proposedSize
         for axis in Axis.allCases where axes.contains(axis) {
             childProposal[component: axis] = nil
         }
+        for axis in Axis.allCases where !axes.contains(axis) {
+            if let length = childProposal[component: axis] {
+                childProposal[component: axis] = max(
+                    0,
+                    length - margins.totals[axis == .horizontal ? 0 : 1]
+                )
+            }
+        }
 
         let childResult = children.child.computeLayout(
             with: body,
             proposedSize: childProposal,
-            environment: environment.with(
+            environment: contentEnvironment.with(
                 \.allowLayoutCaching,
                 !willEarlyExit || environment.allowLayoutCaching
             )
@@ -114,13 +137,17 @@ public struct ScrollView<Content: View>: TypeSafeView, View {
             return childResult
         }
 
-        let contentSize = childResult.size
+        var contentSize = childResult.size
+        contentSize.width += margins.totals.x
+        contentSize.height += margins.totals.y
+        let hiddenIndicatorAxes = environment.scrollIndicatorsHiddenAxes
 
         // An axis is present when it's a scroll axis AND the corresponding
         // child content size is bigger then the proposed size. If the proposed
         // size along the axis is nil then we don't have a scroll bar.
         let hasHorizontalScrollBar: Bool
         if showsIndicators, axes.contains(.horizontal),
+           !hiddenIndicatorAxes.contains(.horizontal),
            let proposedWidth = proposedSize.width
         {
             hasHorizontalScrollBar = contentSize.width > proposedWidth
@@ -131,6 +158,7 @@ public struct ScrollView<Content: View>: TypeSafeView, View {
 
         let hasVerticalScrollBar: Bool
         if showsIndicators, axes.contains(.vertical),
+           !hiddenIndicatorAxes.contains(.vertical),
            let proposedHeight = proposedSize.height
         {
             hasVerticalScrollBar = contentSize.height > proposedHeight
@@ -158,15 +186,17 @@ public struct ScrollView<Content: View>: TypeSafeView, View {
         let finalChildResult = children.child.computeLayout(
             with: nil,
             proposedSize: finalContentSizeProposal,
-            environment: environment
+            environment: contentEnvironment
         )
 
         // Compute the outer size.
         var outerSize = finalChildResult.size
+        outerSize.width += margins.totals.x
+        outerSize.height += margins.totals.y
         if axes.contains(.horizontal) {
             outerSize.width =
                 proposedSize.width
-                    ?? (finalChildResult.size.width + verticalScrollBarWidth)
+                    ?? (outerSize.width + verticalScrollBarWidth)
         } else {
             outerSize.width += verticalScrollBarWidth
         }
@@ -174,7 +204,7 @@ public struct ScrollView<Content: View>: TypeSafeView, View {
         if axes.contains(.vertical) {
             outerSize.height =
                 proposedSize.height
-                    ?? (finalChildResult.size.height + horizontalScrollBarHeight)
+                    ?? (outerSize.height + horizontalScrollBarHeight)
         } else {
             outerSize.height += horizontalScrollBarHeight
         }
@@ -194,7 +224,10 @@ public struct ScrollView<Content: View>: TypeSafeView, View {
         backend: Backend
     ) {
         let scrollViewSize = layout.size
-        let finalContentSize = children.child.commit().size
+        let margins = children.contentMargins
+        var finalContentSize = children.child.commit().size
+        finalContentSize.width += margins.totals.x
+        finalContentSize.height += margins.totals.y
 
         backend.setSize(of: widget, to: scrollViewSize.vector)
         backend.setSize(
@@ -233,50 +266,43 @@ public struct ScrollView<Content: View>: TypeSafeView, View {
             ofChildAt: 0,
             in: children.innerContainer.into(),
             to: SIMD2(
-                LayoutSystem.roundSize(contentX),
-                LayoutSystem.roundSize(contentY)
+                LayoutSystem.roundSize(contentX + margins.leading),
+                LayoutSystem.roundSize(contentY + margins.top)
             )
         )
 
+        // `scrollBounceBehavior(.basedOnSize)` only bounces content that
+        // overflows.
+        let bouncesBasedOnSize = environment.scrollBouncesBasedOnSizeAxes
         backend.updateScrollContainer(
             widget,
             environment: environment,
-            bounceHorizontally: axes.contains(.horizontal),
-            bounceVertically: axes.contains(.vertical),
+            bounceHorizontally: axes.contains(.horizontal)
+                && (!bouncesBasedOnSize.contains(.horizontal)
+                    || finalContentSize.width > scrollViewSize.width),
+            bounceVertically: axes.contains(.vertical)
+                && (!bouncesBasedOnSize.contains(.vertical)
+                    || finalContentSize.height > scrollViewSize.height),
             hasHorizontalScrollBar: children.hasHorizontalScrollBar,
             hasVerticalScrollBar: children.hasVerticalScrollBar
         )
-    }
-}
 
-class ScrollViewChildren<Content: View>: ViewGraphNodeChildren {
-    var children: TupleView1<VStack<Content>>.Children
-    var innerContainer: AnyWidget
-
-    var hasVerticalScrollBar = false
-    var hasHorizontalScrollBar = false
-
-    var child: AnyViewGraphNode<VStack<Content>> {
-        children.child0
-    }
-
-    var widgets: [AnyWidget] {
-        // The implementation of this property doesn't really matter. It doesn't
-        // really have a reason to get used anywhere.
-        children.widgets
-    }
-
-    var erasedNodes: [ErasedViewGraphNode] {
-        children.erasedNodes
-    }
-
-    init<Backend: BaseAppBackend>(
-        wrapping children: TupleView1<VStack<Content>>.Children,
-        backend: Backend
-    ) {
-        self.children = children
-        let innerContainer = backend.createContainer()
-        backend.insert(children.child0.widget.into(), into: innerContainer, at: 0)
-        self.innerContainer = AnyWidget(innerContainer)
+        children.scrollTargets.controller = ScrollController.make(
+            backend: backend,
+            widget: widget,
+            viewportSize: SIMD2(scrollViewSize.width, scrollViewSize.height),
+            contentSize: SIMD2(
+                max(finalContentSize.width, scrollViewSize.width),
+                max(finalContentSize.height, scrollViewSize.height)
+            )
+        )
+        performScrollRequest(environment.scrollRequest, children: children)
+        reportGeometry(
+            to: environment.scrollGeometryObservers,
+            children: children,
+            viewportSize: scrollViewSize,
+            contentSize: finalContentSize
+        )
+        reportVisibleTargets(to: environment.scrollTargetVisibilityObservers, children: children)
     }
 }

@@ -38,6 +38,19 @@ extension WinUIBackend {
         environment.apply(to: textField)
 
         updateInputScope(of: textField, textContentType: environment.textContentType)
+
+        // `autocorrectionDisabled()`: no red underlines or suggestions in
+        // addresses, user names and codes.
+        textField.isSpellCheckEnabled = !environment.autocorrectionDisabled
+        textField.isTextPredictionEnabled = !environment.autocorrectionDisabled
+
+        // `textFieldStyle(.plain)`: the field sits inside a container that
+        // draws its own border.
+        if environment.textFieldIsPlain {
+            textField.borderThickness = Thickness(left: 0, top: 0, right: 0, bottom: 0)
+        } else if textField.borderThickness.left == 0 && textField.borderThickness.top == 0 {
+            _ = try? textField.clearValue(WinUI.Control.borderThicknessProperty)
+        }
     }
 
     public func setContent(ofTextField textField: Widget, to content: String) {

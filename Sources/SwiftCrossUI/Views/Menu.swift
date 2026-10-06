@@ -20,6 +20,10 @@ public struct Menu {
 
     private var source: Source
 
+    /// The view the menu's label comes from, for a menu created with
+    /// ``init(content:label:)``; ``label`` is its fallback.
+    private var labelView: (any View)?
+
     /// The menu's items.
     ///
     /// Collected on demand under whatever environment the current menu
@@ -45,6 +49,84 @@ public struct Menu {
         self.source = .view(items())
     }
 
+    /// Creates a menu with a label view, SwiftUI's spelling.
+    ///
+    /// Backends draw a menu's button with a text title, so the title is the
+    /// first text in `label` — a ``Label``'s title, or a ``Text``'s string —
+    /// and an icon is dropped. A label with no text at all shows an ellipsis.
+    ///
+    /// - Parameters:
+    ///   - content: The menu's items.
+    ///   - label: The menu's label.
+    @MainActor
+    public init<Label: View>(
+        @ViewBuilder content: () -> some View,
+        @ViewBuilder label: () -> Label
+    ) {
+        self.label = Self.untitledLabel
+        self.source = .view(content())
+        self.labelView = label()
+    }
+
+    /// Creates a menu titled with a string and a symbol, SwiftUI's spelling.
+    ///
+    /// Backends draw a menu's button with a text title, so the symbol is
+    /// dropped.
+    ///
+    /// - Parameters:
+    ///   - title: The menu's title.
+    ///   - systemImage: The name of the menu's symbol.
+    ///   - content: The menu's items.
+    @MainActor
+    public init(
+        _ title: String,
+        systemImage: String,
+        @ViewBuilder content: () -> some View
+    ) {
+        self.init(title, items: content)
+    }
+
+    /// The title of a menu whose label view has no text.
+    static var untitledLabel: String { "\u{2026}" }
+
+    /// The menu's title, read from its label view if it has one.
+    ///
+    /// - Parameter environment: The environment to read the label view in.
+    /// - Returns: The title.
+    @MainActor
+    func resolvedLabel(in environment: EnvironmentValues) -> String {
+        guard let labelView else {
+            return label
+        }
+        let items = MenuItemCollection.withEnvironment(environment) {
+            labelView._asMenuItems
+        }
+        return Self.firstText(in: items) ?? label
+    }
+
+    /// The first text among some menu items.
+    ///
+    /// - Parameter items: The items.
+    /// - Returns: The text, or `nil` if the items hold none.
+    @MainActor
+    private static func firstText(in items: [MenuItem]) -> String? {
+        for item in items {
+            switch item {
+                case .text(let text):
+                    return text.string
+                case .button(let button):
+                    return button.title
+                case .modifiedEnvironment(let item, _):
+                    if let text = firstText(in: [item()]) {
+                        return text
+                    }
+                default:
+                    continue
+            }
+        }
+        return nil
+    }
+
     /// Creates a menu from items that have already been collected.
     ///
     /// - Parameters:
@@ -59,7 +141,7 @@ public struct Menu {
     @MainActor
     func resolve() -> ResolvedMenu.Submenu {
         ResolvedMenu.Submenu(
-            label: label,
+            label: MenuItemCollection.environment.map { resolvedLabel(in: $0) } ?? label,
             content: Self.resolve(items: items)
         )
     }
@@ -168,7 +250,7 @@ extension Menu: TypeSafeView {
                 // with an empty action and fix it in commit.
                 backend.updateSimpleButton(
                     widget,
-                    label: label,
+                    label: resolvedLabel(in: environment),
                     environment: environment,
                     action: {}
                 )
@@ -179,7 +261,7 @@ extension Menu: TypeSafeView {
                 children.menu = menu
                 backend.updateButton(
                     widget,
-                    label: label,
+                    label: resolvedLabel(in: environment),
                     menu: menu,
                     environment: environment
                 )
@@ -214,7 +296,7 @@ extension Menu: TypeSafeView {
             case .dynamicPopover(let backend):
                 backend.updateSimpleButton(
                     widget,
-                    label: label,
+                    label: resolvedLabel(in: environment),
                     environment: environment,
                     action: {
                         let content = MenuItemCollection.withEnvironment(environment) {
@@ -270,7 +352,7 @@ extension Menu: TypeSafeView {
                 //   some layout system/state management issues.
                 backend.updateButton(
                     widget,
-                    label: label,
+                    label: resolvedLabel(in: environment),
                     menu: menu,
                     environment: environment
                 )
