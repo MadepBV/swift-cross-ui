@@ -251,17 +251,17 @@ struct EntryMacroTests {
         )
     }
 
-    @Test("Entry in FocusedValues names the unwrapped value type")
-    func testFocusedValuesEntry() {
+    @Test("Entry in FocusedValues generates a focused value key for the wrapped type")
+    func entryGeneratesFocusedValueKey() {
         assertMacroExpansion(
             """
             extension FocusedValues {
-                @Entry var selection: String?
+                @Entry var selection: Selection?
             }
             """,
             expandedSource: """
                 extension FocusedValues {
-                    var selection: String? {
+                    var selection: Selection? {
                         get {
                             self[`__Key_selection`.self]
                         }
@@ -271,7 +271,7 @@ struct EntryMacroTests {
                     }
 
                     private struct `__Key_selection`: SwiftCrossUI.FocusedValueKey {
-                        typealias Value = String
+                        typealias Value = Selection
                     }
                 }
                 """,

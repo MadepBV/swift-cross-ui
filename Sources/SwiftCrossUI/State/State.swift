@@ -53,6 +53,14 @@ public struct State<Value>: ObservableProperty {
 }
 
 extension State {
+    /// Creates a `State` given an initial value, SwiftUI's older spelling
+    /// for assigning `_property = State(initialValue: ...)` in an initializer.
+    ///
+    /// - Parameter value: The state's initial value.
+    public init(initialValue value: Value) {
+        self.init(wrappedValue: value)
+    }
+
     // NB: `ExpressibleByNilLiteral` is what SwiftUI checks for too.
     public init() where Value: ExpressibleByNilLiteral {
         self.init(wrappedValue: nil)

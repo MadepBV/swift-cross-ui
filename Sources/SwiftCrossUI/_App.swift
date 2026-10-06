@@ -20,6 +20,9 @@ class _App<AppRoot: App>: ModelObserver {
     /// The dynamic property updater for ``app``.
     var dynamicPropertyUpdater: DynamicPropertyUpdater<AppRoot>
 
+    /// The commands of the app's scenes, as of the last scene graph update.
+    var applicationCommands = ResolvedCommands.empty
+
     /// Used by the ``ModelObserver`` protocol to prevent duplicate view updates.
     var currentViewModelObservationID: UUID?
 
@@ -42,19 +45,26 @@ class _App<AppRoot: App>: ModelObserver {
         if let sceneGraphRoot {
             let body = self.observe(with: backend) { app.body }
             let result = sceneGraphRoot.updateNode(body, environment: environment)
-            if let backend = backend as? any BackendFeatures.ApplicationMenus {
-                backend.setApplicationMenu(
-                    MenuItemCollection.withEnvironment(environment) {
-                        result.preferences.commands.resolve()
-                    },
-                    environment: environment
-                )
-            }
+            applicationCommands = result.preferences.commands
+            updateApplicationMenu()
             sceneGraphRoot.update(
                 backend: backend,
                 environment: environment
             )
         }
+    }
+
+    /// Rebuilds the application menu from ``applicationCommands``.
+    func updateApplicationMenu() {
+        guard let backend = backend as? any BackendFeatures.ApplicationMenus else {
+            return
+        }
+        backend.setApplicationMenu(
+            MenuItemCollection.withEnvironment(environment) {
+                applicationCommands.resolve()
+            },
+            environment: environment
+        )
     }
 
     func viewModelDidChange<Backend: BaseAppBackend>(backend: Backend) {
@@ -111,15 +121,16 @@ class _App<AppRoot: App>: ModelObserver {
 
             let result = rootNode.updateNode(nil, environment: environment)
 
-            // Update application-wide menu
-            if let backend = backend as? any BackendFeatures.ApplicationMenus {
-                backend.setApplicationMenu(
-                    MenuItemCollection.withEnvironment(environment) {
-                        result.preferences.commands.resolve()
-                    },
-                    environment: environment
-                )
-            }
+            // Update application-wide menu, and again whenever a focused value
+            // changes, because commands enable their items from focused values.
+            applicationCommands = result.preferences.commands
+            updateApplicationMenu()
+            cancellables.append(
+                FocusedValuesStore.shared.didChange.observeAsUIUpdater(backend: backend) {
+                    [weak self] in
+                    self?.updateApplicationMenu()
+                }
+            )
 
             rootNode.update(backend: backend, environment: environment)
             self.sceneGraphRoot = rootNode

@@ -1,6 +1,62 @@
-/// A type of tap gesture.
+/// A type of tap gesture, and SwiftUI's tap gesture.
+///
+/// As the type of gesture passed to ``View/onTapGesture(gesture:perform:)``
+/// it names an interaction (``primary``, ``secondary``, ``longPress``). As
+/// SwiftUI's `TapGesture` it's a ``Gesture`` that recognizes a number of
+/// primary clicks and runs the actions given to ``onEnded(_:)``:
+///
+/// ```swift
+/// Color.clear
+///     .simultaneousGesture(TapGesture().onEnded { noteActivity() })
+/// ```
 public struct TapGesture: Sendable, Hashable {
     @_spi(Backends) public var kind: TapGestureKind
+
+    /// The number of taps that must happen in quick succession, when used as
+    /// a ``Gesture``.
+    public var count = 1
+
+    /// The actions to run once the taps complete, when used as a
+    /// ``Gesture``.
+    var endHandlers: [@MainActor @Sendable () -> Void] = []
+
+    /// Creates a gesture that recognizes a number of primary taps or clicks,
+    /// SwiftUI's spelling.
+    ///
+    /// - Parameter count: The number of taps that must happen in quick
+    ///   succession.
+    public init(count: Int = 1) {
+        self.kind = .primary
+        self.count = count
+    }
+
+    /// Creates a tap gesture of a kind.
+    ///
+    /// - Parameter kind: The kind of interaction.
+    init(kind: TapGestureKind) {
+        self.kind = kind
+    }
+
+    /// Adds an action to run once the taps complete.
+    ///
+    /// Actions run in the order they were added.
+    ///
+    /// - Parameter action: The action.
+    /// - Returns: A tap gesture that also runs `action`.
+    public func onEnded(_ action: @escaping @MainActor @Sendable () -> Void) -> TapGesture {
+        var gesture = self
+        gesture.endHandlers.append(action)
+        return gesture
+    }
+
+    public static func == (lhs: TapGesture, rhs: TapGesture) -> Bool {
+        lhs.kind == rhs.kind && lhs.count == rhs.count
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(kind)
+        hasher.combine(count)
+    }
 
     /// The idiomatic "primary" interaction for the device, such as a left-click
     /// with the mouse or normal tap on a touch screen.
@@ -101,6 +157,25 @@ struct OnTapGestureModifier<Content: View>: TypeSafeView {
             gesture: gesture,
             environment: environment,
             action: action
+        )
+    }
+}
+
+extension TapGesture: Gesture {
+    public typealias Value = Void
+}
+
+extension TapGesture: _ResolvableGesture {
+    /// A tap gesture is recognized as a spatial tap whose location is
+    /// ignored.
+    package var _resolved: ResolvedGesture {
+        let handlers = endHandlers
+        return .spatialTap(
+            SpatialTapGesture(count: count).onEnded { _ in
+                for handler in handlers {
+                    handler()
+                }
+            }
         )
     }
 }

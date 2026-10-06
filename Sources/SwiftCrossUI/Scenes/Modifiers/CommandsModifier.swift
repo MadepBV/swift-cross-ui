@@ -5,8 +5,11 @@ extension Scene {
     /// if it has one, or in individual windows' menu bars otherwise.
     ///
     /// - Parameter commands: The commands to add.
-    public func commands(@CommandsBuilder _ commands: () -> Commands) -> some Scene {
-        CommandsModifier(content: self, commands: commands())
+    @MainActor
+    public func commands<Content: Commands>(
+        @CommandsBuilder _ commands: () -> Content
+    ) -> some Scene {
+        CommandsModifier(content: self, commands: ResolvedCommands(commands()))
     }
 }
 
@@ -14,9 +17,9 @@ struct CommandsModifier<Content: Scene>: Scene {
     typealias Node = CommandsModifierNode<Content>
 
     var content: Content
-    var commands: Commands
+    var commands: ResolvedCommands
 
-    init(content: Content, commands: Commands) {
+    init(content: Content, commands: ResolvedCommands) {
         self.content = content
         self.commands = commands
     }
@@ -25,7 +28,7 @@ struct CommandsModifier<Content: Scene>: Scene {
 final class CommandsModifierNode<Content: Scene>: SceneGraphNode {
     typealias NodeScene = CommandsModifier<Content>
 
-    var commands: Commands
+    var commands: ResolvedCommands
     var contentNode: Content.Node
 
     init<Backend: BaseAppBackend>(

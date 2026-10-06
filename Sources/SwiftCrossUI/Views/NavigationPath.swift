@@ -23,7 +23,10 @@ public struct NavigationPath {
         /// `path` were added before the navigation path was even used to render
         /// a view. By design they come after the `encodedEntries` (because they
         /// can only be the result of appending and maybe popping).
-        var path: [any Codable] = []
+        /// The decoded entries. Usually `Codable`, but a value appended
+        /// through ``NavigationPath/append(_:)-(Hashable)`` needn't be, which
+        /// only matters when the path is encoded.
+        var path: [Any] = []
         /// Entries that will be decoded when this navigation path is first used
         /// by a ``NavigationStack``.
         ///
@@ -40,12 +43,12 @@ public struct NavigationPath {
     private var storage = Storage()
 
     /// Indicates whether this path is empty.
-    var isEmpty: Bool {
+    public var isEmpty: Bool {
         storage.encodedEntries.isEmpty && storage.path.isEmpty
     }
 
     /// The number of elements in the path.
-    var count: Int {
+    public var count: Int {
         storage.encodedEntries.count + storage.path.count
     }
 
@@ -57,6 +60,33 @@ public struct NavigationPath {
     /// - Parameter component: The component to append.
     public mutating func append(_ component: some Codable) {
         storage.path.append(component)
+    }
+
+    /// Appends a value that isn't `Codable`.
+    ///
+    /// SwiftUI's paths take any `Hashable` value. A path holding one can't be
+    /// encoded (encoding it traps), which is the only difference.
+    ///
+    /// - Parameter value: The value to append.
+    public mutating func append(_ value: some Hashable) {
+        storage.path.append(value)
+    }
+
+    /// Appends a value that is both `Hashable` and `Codable`.
+    ///
+    /// Exists so that such a value matches one overload rather than two.
+    ///
+    /// - Parameter value: The value to append.
+    public mutating func append(_ value: some Hashable & Codable) {
+        storage.path.append(value)
+    }
+
+    /// Appends a value of any type, as a ``NavigationLink`` inside the stack
+    /// does.
+    ///
+    /// - Parameter value: The value to append.
+    mutating func appendAny(_ value: Any) {
+        storage.path.append(value)
     }
 
     /// Removes values from the end of this path.
@@ -93,7 +123,7 @@ public struct NavigationPath {
     ///
     /// - Parameter destinationTypes: The types to use to decode the entries.
     /// - Returns: The decoded entries.
-    func path(destinationTypes: [any Codable.Type]) -> [any Codable] {
+    func path(destinationTypes: [any Codable.Type]) -> [Any] {
         guard !storage.encodedEntries.isEmpty else {
             return storage.path
         }
@@ -115,7 +145,7 @@ public struct NavigationPath {
             }
         }
 
-        var entries: [any Codable] = []
+        var entries: [Any] = []
         for i in 0..<storage.encodedEntries.count {
             guard let entry = decodedEntries[i] else {
                 // This should not be possible to reach
@@ -149,6 +179,9 @@ extension NavigationPath: Codable {
         var entries = storage.encodedEntries
         entries += storage.path.map { entry in
             let type = String(reflecting: type(of: entry))
+            guard let entry = entry as? any Encodable else {
+                fatalError("Navigation path entry of type \(type) isn't Codable")
+            }
             let value: Data
             do {
                 value = try JSONEncoder().encode(entry)

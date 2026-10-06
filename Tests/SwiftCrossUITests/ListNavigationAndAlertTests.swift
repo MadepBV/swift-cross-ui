@@ -423,7 +423,8 @@ struct ListNavigationAndAlertTests {
         path.value.append(NavigationSubject(name: "Physics"))
         harness.render()
 
-        #expect(texts(in: harness.widget) == ["Physics"])
+        // The stack's bar offers a way back to the root.
+        #expect(texts(in: harness.widget) == ["Back", "Physics"])
     }
 
     @MainActor

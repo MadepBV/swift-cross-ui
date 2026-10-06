@@ -5,6 +5,11 @@ extension DummyBackend {
         public var hasHorizontalScrollBar = false
         public var bouncesVertically = false
         public var bouncesHorizontally = false
+        /// How far the container is scrolled, from its content's top-leading
+        /// corner.
+        public var scrollOffset = SIMD2<Double>.zero
+        /// Whether the last programmatic scroll asked to be animated.
+        public var lastScrollWasAnimated = false
 
         public init(child: Widget) {
             self.child = child

@@ -35,12 +35,47 @@ public struct ButtonRole: Hashable, Sendable {
     /// Which role this is.
     package var kind: Kind
 
+    /// The title of a button created with only this role
+    /// (``Button/init(role:action:)``).
+    ///
+    /// Not part of the role's identity: ``close`` is a ``cancel`` role with a
+    /// different title.
+    package var defaultTitle: String
+
+    /// Creates a role.
+    ///
+    /// - Parameters:
+    ///   - kind: Which role it is.
+    ///   - defaultTitle: The title of a button created with only this role.
+    package init(kind: Kind, defaultTitle: String? = nil) {
+        self.kind = kind
+        let standardTitle = switch kind {
+            case .destructive: "Delete"
+            case .cancel: "Cancel"
+        }
+        self.defaultTitle = defaultTitle ?? standardTitle
+    }
+
     /// A role for a button that performs an irreversible or otherwise
     /// dangerous action, such as deleting or resetting something.
     public static let destructive = Self(kind: .destructive)
 
     /// A role for a button that abandons the operation in progress.
     public static let cancel = Self(kind: .cancel)
+
+    /// A role for a button that closes the view it's in, such as a sheet's
+    /// Close button.
+    ///
+    /// It's a cancelling role (it equals ``cancel``), titled "Close".
+    public static let close = Self(kind: .cancel, defaultTitle: "Close")
+
+    public static func == (lhs: ButtonRole, rhs: ButtonRole) -> Bool {
+        lhs.kind == rhs.kind
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(kind)
+    }
 }
 
 extension ButtonRole: CustomStringConvertible {
