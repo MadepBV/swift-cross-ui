@@ -125,7 +125,13 @@ extension Color {
                     // Nothing to bind to: resolves against the label colour.
                     return self
                 }
-                return outer.bindingStyle(in: environment)
+                // The outer colour is bound in the environment outside *it*:
+                // an outer `.secondary` that was itself never bound resolves
+                // against the label colour, rather than against itself
+                // forever (a stack overflow, measured on Windows).
+                var outside = environment
+                outside.foregroundColor = nil
+                return outer.bindingStyle(in: outside)
                     .opacity(level.opacity * opacityMultiplier)
             case .tint:
                 // The tint lives in its own environment value, which the
