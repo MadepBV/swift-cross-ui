@@ -33,6 +33,20 @@ extension Font.Resolved {
                         uiFont = .monospacedSystemFont(ofSize: CGFloat(pointSize), weight: weight)
                     case .default:
                         uiFont = .systemFont(ofSize: CGFloat(pointSize), weight: weight)
+                    case .rounded, .serif:
+                        let systemFont = UIFont.systemFont(
+                            ofSize: CGFloat(pointSize),
+                            weight: weight
+                        )
+                        let systemDesign: UIFontDescriptor.SystemDesign =
+                            design == .rounded ? .rounded : .serif
+                        if let descriptor = systemFont.fontDescriptor
+                            .withDesign(systemDesign)
+                        {
+                            uiFont = UIFont(descriptor: descriptor, size: CGFloat(pointSize))
+                        } else {
+                            uiFont = systemFont
+                        }
                 }
         }
 

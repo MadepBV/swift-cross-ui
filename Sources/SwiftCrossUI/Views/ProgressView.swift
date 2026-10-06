@@ -8,6 +8,8 @@ public struct ProgressView<Label: View>: View {
     private var progress: Double?
     private var kind: Kind
     private var isSpinnerResizable: Bool = false
+    /// The style set by ``View/progressViewStyle(_:)``.
+    @Environment(\.progressViewStyle) private var style
 
     private enum Kind {
         case spinner
@@ -25,7 +27,7 @@ public struct ProgressView<Label: View>: View {
 
     @ViewBuilder
     private var progressIndicator: some View {
-        switch kind {
+        switch style.kind(default: kind == .bar, hasValue: progress != nil) {
             case .spinner:
                 ProgressSpinnerView(isResizable: isSpinnerResizable)
             case .bar:
@@ -165,7 +167,13 @@ struct ProgressSpinnerView: ElementaryView {
         let naturalSize = backend.naturalSize(of: widget)
 
         guard isResizable else {
-            return ViewLayoutResult.leafView(size: ViewSize(naturalSize))
+            let scale = environment.controlSize.spinnerScale
+            return ViewLayoutResult.leafView(
+                size: ViewSize(
+                    (Double(naturalSize.x) * scale).rounded(),
+                    (Double(naturalSize.y) * scale).rounded()
+                )
+            )
         }
 
         let dimension: Double

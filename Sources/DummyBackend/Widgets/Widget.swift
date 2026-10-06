@@ -2,6 +2,7 @@ extension DummyBackend {
     public class Widget {
         public var tag: String?
         public var cornerRadius = 0
+        public var opacity = 1.0
         public var size = SIMD2<Int>.zero
         public var naturalSize: SIMD2<Int> {
             SIMD2<Int>.zero

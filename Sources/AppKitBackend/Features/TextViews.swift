@@ -141,11 +141,15 @@ extension AppKitBackend: BackendFeatures.TextViews {
             )
         }
 
-        return [
+        var attributes: [NSAttributedString.Key: Any] = [
             .foregroundColor: foregroundColor,
             .font: font(for: resolvedFont),
             .paragraphStyle: paragraphStyle,
         ]
+        if resolvedFont.tracking != 0 {
+            attributes[.kern] = CGFloat(resolvedFont.tracking)
+        }
+        return attributes
     }
 
     static func font(for font: Font.Resolved) -> NSFont {
@@ -160,6 +164,10 @@ extension AppKitBackend: BackendFeatures.TextViews {
                         nsFont = NSFont.systemFont(ofSize: size, weight: weight)
                     case .monospaced:
                         nsFont = NSFont.monospacedSystemFont(ofSize: size, weight: weight)
+                    case .rounded:
+                        nsFont = designedSystemFont(.rounded, size: size, weight: weight)
+                    case .serif:
+                        nsFont = designedSystemFont(.serif, size: size, weight: weight)
                 }
         }
 
@@ -168,6 +176,20 @@ extension AppKitBackend: BackendFeatures.TextViews {
         } else {
             return nsFont
         }
+    }
+
+    /// The system font in `design`, or the default system font where the
+    /// design isn't installed.
+    private static func designedSystemFont(
+        _ design: NSFontDescriptor.SystemDesign,
+        size: CGFloat,
+        weight: NSFont.Weight
+    ) -> NSFont {
+        let systemFont = NSFont.systemFont(ofSize: size, weight: weight)
+        guard let descriptor = systemFont.fontDescriptor.withDesign(design) else {
+            return systemFont
+        }
+        return NSFont(descriptor: descriptor, size: size) ?? systemFont
     }
 
     private static func weight(for weight: Font.Weight) -> NSFont.Weight {

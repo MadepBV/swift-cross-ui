@@ -12,6 +12,8 @@ public struct Button<Label: View> {
     public struct StyledLabel: View {
         /// The style to apply, taken from the environment.
         @Environment(\.buttonStyle) private var buttonStyle
+        /// The primitive style to build the button with, if any.
+        @Environment(\.primitiveButtonStyle) private var primitiveButtonStyle
 
         /// The button's label.
         var label: @MainActor () -> Label
@@ -19,18 +21,41 @@ public struct Button<Label: View> {
         /// The button's role, if it has one.
         var role: ButtonRole?
 
+        /// The button's action, for a ``PrimitiveButtonStyle`` to trigger.
+        var action: @MainActor () -> Void
+
         /// Creates a label that applies the environment's button style.
         ///
         /// - Parameters:
         ///   - label: The button's label.
         ///   - role: The button's role, if it has one.
-        init(label: @escaping @MainActor () -> Label, role: ButtonRole?) {
+        ///   - action: The button's action.
+        init(
+            label: @escaping @MainActor () -> Label,
+            role: ButtonRole?,
+            action: @escaping @MainActor () -> Void
+        ) {
             self.label = label
             self.role = role
+            self.action = action
         }
 
         /// The label with the style applied, if the style is a custom one.
         private var styledLabel: any View {
+            if let primitiveButtonStyle {
+                // The style's own buttons see the style outside it, not
+                // this one, or they'd style themselves forever.
+                return AnyView(
+                    primitiveButtonStyle.makeBody(
+                        configuration: PrimitiveButtonStyleConfiguration(
+                            label: ButtonStyleConfiguration.Label(label()),
+                            role: role,
+                            action: action
+                        )
+                    )
+                )
+                .environment(\.primitiveButtonStyle, nil)
+            }
             guard
                 let buttonStyle,
                 !(buttonStyle is any _BuiltinButtonStyle)
@@ -128,7 +153,7 @@ public struct Button<Label: View> {
 @MainActor
 extension Button: TypeSafeView {
     public var body: TupleView1<StyledLabel> {
-        StyledLabel(label: label, role: role)
+        StyledLabel(label: label, role: role, action: action)
     }
 
     typealias Children = TupleViewChildren1<StyledLabel>
@@ -160,6 +185,13 @@ extension Button: TypeSafeView {
         environment: EnvironmentValues,
         backend: Backend
     ) -> ViewLayoutResult {
+        // Under a primitive style the style's body is the control: the
+        // native button around it draws no chrome and takes no action.
+        let isPrimitivelyStyled = environment.primitiveButtonStyle != nil
+        let environment =
+            isPrimitivelyStyled
+            ? environment.with(\.buttonStyle, PlainButtonStyle())
+            : environment
         let buttonPadding = backend.buttonPadding(in: environment)
         let childEnvironment = Self.labelEnvironment(
             role: role,
@@ -184,7 +216,7 @@ extension Button: TypeSafeView {
         backend.updateButton(
             widget,
             environment: environment.with(\.buttonRole, role),
-            action: action
+            action: isPrimitivelyStyled ? {} : action
         )
 
         // Buttons should always be set to label size + padding.

@@ -10,7 +10,10 @@ extension View {
     ///   over this modifier when the receiver is a ``Text``.
     public func foregroundColor(_ color: Color?) -> some View {
         return EnvironmentModifier(self) { environment in
-            return environment.with(\.foregroundColor, color)
+            return environment.with(
+                \.foregroundColor,
+                color?.bindingStyle(in: environment)
+            )
         }
     }
 }

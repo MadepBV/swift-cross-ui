@@ -59,6 +59,14 @@ extension Color {
                             in: environment
                         )
                     }
+
+                case .hierarchical(let level):
+                    Color.hierarchicalBase(in: environment)
+                        .opacity(level.opacity)
+                        .resolve(in: environment)
+
+                case .tint:
+                    Color.tintBase(in: environment).resolve(in: environment)
             }
 
         resolvedColor.opacity *= Float(self.opacityMultiplier)

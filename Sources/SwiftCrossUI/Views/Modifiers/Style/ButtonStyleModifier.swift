@@ -22,7 +22,9 @@ extension View {
     /// - ``Button``
     public func buttonStyle(_ style: any ButtonStyle) -> some View {
         EnvironmentModifier(self) { environment in
-            environment.with(\.buttonStyle, style)
+            environment
+                .with(\.buttonStyle, style)
+                .with(\.primitiveButtonStyle, nil)
         }
     }
 }

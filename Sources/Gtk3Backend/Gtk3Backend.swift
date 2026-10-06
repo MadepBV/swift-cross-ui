@@ -100,7 +100,10 @@ public final class Gtk3Backend {
                 switch font.design {
                     case .monospaced:
                         properties.append(.fontFamily("monospace"))
-                    case .default:
+                    case .serif:
+                        properties.append(.fontFamily("serif"))
+                    case .default, .rounded:
+                        // GTK has no generic rounded family.
                         break
                 }
         }

@@ -34,8 +34,9 @@ extension AndroidBackend {
 
         let baseTypeface =
             switch resolvedFont.design {
-                case .default: typefaceClass.DEFAULT
+                case .default, .rounded: typefaceClass.DEFAULT
                 case .monospaced: typefaceClass.MONOSPACE
+                case .serif: typefaceClass.SERIF
             }
 
         let gravityClass = try! JavaClass<AndroidKit.Gravity>()
