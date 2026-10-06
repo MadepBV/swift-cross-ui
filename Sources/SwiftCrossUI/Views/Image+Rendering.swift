@@ -156,3 +156,26 @@ extension Image {
         case rightMirrored
     }
 }
+
+extension Image {
+    /// Whether an image draws its own colours or only its shape in the
+    /// foreground colour.
+    public enum TemplateRenderingMode: Hashable, Sendable {
+        /// The image's own colours.
+        case original
+        /// The image's opacity as a mask over the foreground colour.
+        case template
+    }
+
+    /// Sets how the image's pixels are drawn.
+    ///
+    /// - Note: Symbols already draw in the foreground colour. Raster images
+    ///   draw their own colours in either mode; no backend masks a bitmap
+    ///   with the foreground colour yet.
+    ///
+    /// - Parameter renderingMode: The mode, or `nil` for the image's default.
+    /// - Returns: The image.
+    public func renderingMode(_ renderingMode: TemplateRenderingMode?) -> Image {
+        self
+    }
+}
