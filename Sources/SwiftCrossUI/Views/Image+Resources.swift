@@ -22,7 +22,7 @@ extension Image {
     ///   - name: The resource's name, without an extension.
     ///   - bundle: The bundle to search. `nil` searches the main bundle.
     public init(_ name: String, bundle: Bundle? = nil) {
-        if let url = Self.resourceURL(named: name, in: bundle ?? .main) {
+        if let url = Self.resourceURL(named: name, in: bundle) {
             self.init(url)
         } else {
             self.init(ImageFormats.Image<RGBA>(width: 0, height: 0, bytes: []))
@@ -40,8 +40,38 @@ extension Image {
         self.init(name, bundle: bundle)
     }
 
-    /// The URL of the first image file called `name` in `bundle`.
-    static func resourceURL(named name: String, in bundle: Bundle) -> URL? {
+    /// The URL of the first image file called `name` in `bundle`, or, with
+    /// no bundle, in the main bundle and then in the resource bundles SwiftPM
+    /// copies beside an executable (`<package>_<target>.resources` on Windows
+    /// and Linux, `.bundle` on macOS) — where an app's own target puts the
+    /// images it ships, since that is not the main bundle there.
+    public static func resourceURL(named name: String, in bundle: Bundle?) -> URL? {
+        if let bundle {
+            return resourceURL(named: name, inOnly: bundle)
+        }
+        for candidate in [Bundle.main] + siblingResourceBundles {
+            if let url = resourceURL(named: name, inOnly: candidate) {
+                return url
+            }
+        }
+        return nil
+    }
+
+    /// The SwiftPM resource bundles in the executable's directory, read once.
+    private static let siblingResourceBundles: [Bundle] = {
+        guard let directory = Bundle.main.executableURL?.deletingLastPathComponent(),
+            let entries = try? FileManager.default.contentsOfDirectory(
+                at: directory, includingPropertiesForKeys: nil)
+        else {
+            return []
+        }
+        return entries
+            .filter { ["resources", "bundle"].contains($0.pathExtension) }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            .compactMap { Bundle(url: $0) }
+    }()
+
+    private static func resourceURL(named name: String, inOnly bundle: Bundle) -> URL? {
         for fileExtension in resourceExtensions {
             if let url = bundle.url(forResource: name, withExtension: fileExtension) {
                 return url
