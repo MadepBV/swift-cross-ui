@@ -1,3 +1,5 @@
+import Foundation
+
 /// The size of a view.
 public struct ViewSize: Hashable, Sendable {
     /// The zero view size.
@@ -23,6 +25,14 @@ public struct ViewSize: Hashable, Sendable {
     /// - Parameter vector: The vector to create the view size from. The
     ///   X component becomes the width, and the Y component becomes the
     ///   height.
+    /// Creates a view size from a Core Graphics size.
+    ///
+    /// - Parameter size: The size.
+    public init(_ size: CGSize) {
+        width = Double(size.width)
+        height = Double(size.height)
+    }
+
     init(_ vector: SIMD2<Int>) {
         width = Double(vector.x)
         height = Double(vector.y)

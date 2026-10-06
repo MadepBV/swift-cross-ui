@@ -1,3 +1,5 @@
+import Foundation
+
 /// The proposed size for a view. `nil` signifies an unspecified dimension.
 public struct ProposedViewSize: Hashable, Sendable {
     /// The zero proposal.
@@ -30,6 +32,24 @@ public struct ProposedViewSize: Hashable, Sendable {
     public init(_ viewSize: ViewSize) {
         self.width = viewSize.width
         self.height = viewSize.height
+    }
+
+    /// Creates a proposal from a Core Graphics size.
+    ///
+    /// - Parameter size: The size to propose.
+    public init(_ size: CGSize) {
+        self.width = Double(size.width)
+        self.height = Double(size.height)
+    }
+
+    /// Creates a proposal with the given dimensions, as SwiftUI spells it.
+    ///
+    /// - Parameters:
+    ///   - width: The proposed width, or `nil` for an unspecified width.
+    ///   - height: The proposed height, or `nil` for an unspecified height.
+    public init(width: CGFloat?, height: CGFloat?) {
+        self.width = width.map { Double($0) }
+        self.height = height.map { Double($0) }
     }
 
     init(_ vector: SIMD2<Int>) {
