@@ -64,7 +64,7 @@ extension View {
 }
 
 /// Insets for the sides of a rectangle. Generally used to represent view padding.
-public struct EdgeInsets: Equatable {
+public struct EdgeInsets: Equatable, Sendable {
     /// The top inset.
     public var top: Int
     /// The bottom inset.

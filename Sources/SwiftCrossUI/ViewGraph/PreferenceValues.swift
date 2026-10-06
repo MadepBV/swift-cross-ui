@@ -57,6 +57,9 @@ public struct PreferenceValues: Sendable {
     /// The layout priority of the view.
     var layoutPriority: Double
 
+    /// The values of app-defined ``PreferenceKey``s.
+    var custom = CustomPreferenceValues()
+
     /// Returns a copy of the preferences with the specified property set to the
     /// provided new value.
     ///
@@ -149,6 +152,9 @@ extension PreferenceValues {
             }
             if gridCellColumns == nil {
                 gridCellColumns = child.gridCellColumns
+            }
+            if !child.custom.isEmpty {
+                custom.merge(child.custom)
             }
         }
 

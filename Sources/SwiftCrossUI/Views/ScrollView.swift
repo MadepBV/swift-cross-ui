@@ -104,7 +104,7 @@ public struct ScrollView<Content: View>: TypeSafeView, View {
         let childResult = children.child.computeLayout(
             with: body,
             proposedSize: childProposal,
-            environment: environment.with(
+            environment: environment.publishingContainerSize(proposedSize).with(
                 \.allowLayoutCaching,
                 !willEarlyExit || environment.allowLayoutCaching
             )
@@ -158,7 +158,7 @@ public struct ScrollView<Content: View>: TypeSafeView, View {
         let finalChildResult = children.child.computeLayout(
             with: nil,
             proposedSize: finalContentSizeProposal,
-            environment: environment
+            environment: environment.publishingContainerSize(proposedSize)
         )
 
         // Compute the outer size.

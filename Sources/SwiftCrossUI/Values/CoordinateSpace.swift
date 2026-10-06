@@ -24,3 +24,13 @@ public enum CoordinateSpace: Hashable {
     /// - Parameter name: The name the ancestor was tagged with.
     case named(AnyHashable)
 }
+
+extension CoordinateSpace {
+    /// The coordinate space of the nearest enclosing scroll view.
+    public static var scrollView: CoordinateSpace {
+        .named(ScrollViewCoordinateSpaceName())
+    }
+
+    /// Identifies the coordinate space of the nearest scroll view.
+    private struct ScrollViewCoordinateSpaceName: Hashable {}
+}
