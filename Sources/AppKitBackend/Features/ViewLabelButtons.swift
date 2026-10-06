@@ -24,6 +24,8 @@ extension AppKitBackend: BackendFeatures.ViewLabelButtons {
         button.isEnabled = environment.isEnabled
         button.buttonStyle = environment.resolvedButtonStyle.kind
         button.role = environment.buttonRole
+        button.prominentFill = environment.resolvedButtonIsProminent
+            ? environment.prominentButtonFill.resolve(in: environment).nsColor : nil
     }
 
     public func buttonPadding(in environment: EnvironmentValues) -> SIMD2<Int> {

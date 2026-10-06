@@ -29,6 +29,17 @@ public struct ButtonBorderShape: Hashable, Sendable {
     public static func roundedRectangle(radius: Double) -> ButtonBorderShape {
         ButtonBorderShape(kind: .roundedRectangle(radius: radius))
     }
+
+    /// The corner radius a backend gives a bordered button of `size` with
+    /// this shape, or `nil` for the platform's own (``automatic``, and a
+    /// rounded rectangle without a radius).
+    public func cornerRadius(forSize size: SIMD2<Double>) -> Double? {
+        switch kind {
+            case .automatic, .roundedRectangle(radius: nil): nil
+            case .capsule, .circle: max(0, min(size.x, size.y) / 2)
+            case .roundedRectangle(let radius?): radius
+        }
+    }
 }
 
 /// The size of the controls in a view.

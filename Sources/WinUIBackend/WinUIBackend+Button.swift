@@ -19,6 +19,9 @@ extension WinUIBackend {
         let button = button as! CustomButton
         button.action = action
         button.buttonStyle = environment.resolvedButtonStyle.kind
+        button.prominentFill = environment.resolvedButtonIsProminent
+            ? environment.prominentButtonFill.resolve(in: environment).uwpColor : nil
+        button.borderShape = environment.buttonBorderShape
         button.enabled = environment.isEnabled
         switch environment.colorScheme {
             case .light:
@@ -88,6 +91,26 @@ final class CustomButton: WinUI.Button {
         }
     }
 
+    /// The fill of a prominent button (`.borderedProminent`, `.glassProminent`);
+    /// nil keeps WinUI's standard button background.
+    fileprivate var prominentFill: UWP.Color? {
+        didSet {
+            if prominentFill != oldValue {
+                updateButtonAppearance()
+            }
+        }
+    }
+
+    /// The shape set by `buttonBorderShape(_:)`, applied to a bordered button's
+    /// corners whenever it is resized.
+    fileprivate var borderShape: ButtonBorderShape = .automatic {
+        didSet {
+            if borderShape != oldValue {
+                updateButtonAppearance()
+            }
+        }
+    }
+
     // Sadly we can't override isEnabled due to it not being an open property
     public var enabled: Bool = true {
         didSet {
@@ -111,6 +134,20 @@ final class CustomButton: WinUI.Button {
         click.addHandler { [weak self] _, _ in
             guard let self else { return }
             self.action?()
+        }
+        sizeChanged.addHandler { [weak self] _, _ in
+            guard let self, self.buttonStyle == .bordered, self.borderShape != .automatic else { return }
+            self.applyBorderShape()
+        }
+    }
+
+    /// Rounds a bordered button's corners to its ``borderShape``.
+    fileprivate func applyBorderShape() {
+        let size = SIMD2(actualWidth, actualHeight)
+        if let radius = borderShape.cornerRadius(forSize: size) {
+            cornerRadius = CornerRadius(topLeft: radius, topRight: radius, bottomRight: radius, bottomLeft: radius)
+        } else {
+            _ = try? clearValue(WinUI.Button.cornerRadiusProperty)
         }
     }
 
@@ -205,6 +242,27 @@ extension ButtonStyle.Kind {
                 _ = resources.remove("ButtonBorderBrushPointerOver")
                 _ = resources.remove("ButtonBorderBrushPressed")
                 _ = resources.remove("ButtonBorderBrushDisabled")
+
+                if let fill = button.prominentFill {
+                    // A prominent button is filled with its tint in every state,
+                    // a little translucent while hovered and pressed, as Fluent's
+                    // accent button is.
+                    func brush(_ alpha: Double) -> SolidColorBrush {
+                        var color = fill
+                        color.a = UInt8((Double(fill.a) * alpha).rounded())
+                        return SolidColorBrush(color)
+                    }
+                    let transparentBrush = SolidColorBrush(UWP.Color.transparent)
+                    button.background = brush(1)
+                    button.borderBrush = transparentBrush
+                    _ = resources.insert("ButtonBackgroundPointerOver", brush(0.9))
+                    _ = resources.insert("ButtonBackgroundPressed", brush(0.8))
+                    _ = resources.insert("ButtonBackgroundDisabled", brush(0.4))
+                    _ = resources.insert("ButtonBorderBrushPointerOver", transparentBrush)
+                    _ = resources.insert("ButtonBorderBrushPressed", transparentBrush)
+                    _ = resources.insert("ButtonBorderBrushDisabled", transparentBrush)
+                }
+                button.applyBorderShape()
             case .plain, .borderless:
                 let transparentBrush = SolidColorBrush(UWP.Color.transparent)
                 button.background = transparentBrush

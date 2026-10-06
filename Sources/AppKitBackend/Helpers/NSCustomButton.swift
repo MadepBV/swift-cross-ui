@@ -15,6 +15,16 @@ public final class NSCustomButton: NSView {
     /// AppKit equivalent for a standalone button (it's meaningful inside
     /// dialogs, which have their own backend methods), so it's stored but not
     /// rendered.
+    /// The fill of a prominent button (`.borderedProminent`, `.glassProminent`);
+    /// nil draws the standard bezel.
+    var prominentFill: NSColor? {
+        didSet {
+            guard prominentFill != oldValue else { return }
+            button?.bezelColor = prominentFill
+            needsDisplay = true
+        }
+    }
+
     var role: ButtonRole? {
         didSet { updateDestructiveAction() }
     }
@@ -209,7 +219,8 @@ public final class NSCustomButton: NSView {
         ])
 
         // The background is recreated whenever a style that needs one comes
-        // back into use, so the role has to be applied to the new instance.
+        // back into use, so the role and fill have to be applied to the new instance.
+        button.bezelColor = prominentFill
         updateDestructiveAction()
     }
 

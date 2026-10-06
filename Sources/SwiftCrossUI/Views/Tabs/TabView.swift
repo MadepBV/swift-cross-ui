@@ -115,9 +115,13 @@ public struct TabView<SelectionValue: Hashable, Content: TabContent>: View
                     Text(tab.title)
                 }
             }
+            // A sidebar marks its selected row with a neutral platter, as a
+            // Mac sidebar does; a tab bar's selected tab is prominent.
             .buttonStyle(
                 isSelected
-                    ? BorderedProminentButtonStyle() as any ButtonStyle
+                    ? (placement == .sidebar
+                        ? BorderedButtonStyle() as any ButtonStyle
+                        : BorderedProminentButtonStyle())
                     : BorderlessButtonStyle()
             )
             .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
