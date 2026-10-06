@@ -376,7 +376,7 @@ struct SelectableListView<SelectionValue: Hashable, RowView: View>: TypeSafeView
     ) -> ViewLayoutResult {
         // Padding that the backend could not remove (some frameworks have a small
         // constant amount of required padding within each row).
-        let baseRowPadding = backend.baseItemPadding(ofSelectableListView: widget)
+        let baseRowPadding = backend.baseItemPadding(ofSelectableListView: widget).integral
         let minimumRowSize = backend.minimumRowSize(ofSelectableListView: widget)
         let horizontalBasePadding = baseRowPadding.axisTotals.x
         let verticalBasePadding = baseRowPadding.axisTotals.y
@@ -455,7 +455,7 @@ struct SelectableListView<SelectionValue: Hashable, RowView: View>: TypeSafeView
         environment: EnvironmentValues,
         backend: Backend
     ) {
-        let baseRowPadding = backend.baseItemPadding(ofSelectableListView: widget)
+        let baseRowPadding = backend.baseItemPadding(ofSelectableListView: widget).integral
         let verticalBasePadding = baseRowPadding.axisTotals.y
 
         let childResults = children.nodes.map { node in node.commit() }

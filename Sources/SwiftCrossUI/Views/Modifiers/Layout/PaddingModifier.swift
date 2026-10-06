@@ -64,15 +64,18 @@ extension View {
 }
 
 /// Insets for the sides of a rectangle. Generally used to represent view padding.
+///
+/// Measured in `CGFloat`, as in SwiftUI. SwiftCrossUI lays out in whole
+/// points, so padding rounds each inset to the nearest point.
 public struct EdgeInsets: Equatable, Sendable {
     /// The top inset.
-    public var top: Int
-    /// The bottom inset.
-    public var bottom: Int
+    public var top: CGFloat
     /// The leading inset.
-    public var leading: Int
+    public var leading: CGFloat
+    /// The bottom inset.
+    public var bottom: CGFloat
     /// The trailing inset.
-    public var trailing: Int
+    public var trailing: CGFloat
 
     /// Rounds a fractional length to the whole points SwiftCrossUI lays out
     /// in.
@@ -83,33 +86,79 @@ public struct EdgeInsets: Equatable, Sendable {
         Int(length.rounded())
     }
 
-    /// The total inset along each axis.
-    var axisTotals: SIMD2<Int> {
-        SIMD2(
-            leading + trailing,
-            top + bottom
-        )
+    /// Constructs edge insets from individual insets, in SwiftUI's order.
+    ///
+    /// - Parameters:
+    ///   - top: The top inset.
+    ///   - leading: The leading inset.
+    ///   - bottom: The bottom inset.
+    ///   - trailing: The trailing inset.
+    public init(top: CGFloat = 0, leading: CGFloat = 0, bottom: CGFloat = 0, trailing: CGFloat = 0) {
+        self.top = top
+        self.leading = leading
+        self.bottom = bottom
+        self.trailing = trailing
     }
 
-    /// Constructs edge insets from individual insets.
+    /// Constructs edge insets from whole-point insets, in SwiftCrossUI's
+    /// original parameter order.
+    ///
+    /// Kept so that existing backends and apps keep compiling; prefer
+    /// ``init(top:leading:bottom:trailing:)``.
     ///
     /// - Parameters:
     ///   - top: The top inset.
     ///   - bottom: The bottom inset.
     ///   - leading: The leading inset.
     ///   - trailing: The trailing inset.
+    @_disfavoredOverload
     public init(top: Int = 0, bottom: Int = 0, leading: Int = 0, trailing: Int = 0) {
-        self.top = top
-        self.bottom = bottom
-        self.leading = leading
-        self.trailing = trailing
+        self.init(
+            top: CGFloat(top),
+            leading: CGFloat(leading),
+            bottom: CGFloat(bottom),
+            trailing: CGFloat(trailing)
+        )
     }
 
-    init(_ insets: Internal, defaultAmount: Int) {
-        top = insets.top ?? defaultAmount
-        bottom = insets.bottom ?? defaultAmount
-        leading = insets.leading ?? defaultAmount
-        trailing = insets.trailing ?? defaultAmount
+    /// The insets rounded to the whole points that layout works in.
+    var integral: Integral {
+        Integral(
+            top: Self.round(top),
+            bottom: Self.round(bottom),
+            leading: Self.round(leading),
+            trailing: Self.round(trailing)
+        )
+    }
+
+    /// Edge insets in whole points, as the layout system uses them.
+    struct Integral {
+        var top: Int
+        var bottom: Int
+        var leading: Int
+        var trailing: Int
+
+        /// The total inset along each axis.
+        var axisTotals: SIMD2<Int> {
+            SIMD2(
+                leading + trailing,
+                top + bottom
+            )
+        }
+
+        init(top: Int, bottom: Int, leading: Int, trailing: Int) {
+            self.top = top
+            self.bottom = bottom
+            self.leading = leading
+            self.trailing = trailing
+        }
+
+        init(_ insets: Internal, defaultAmount: Int) {
+            top = insets.top ?? defaultAmount
+            bottom = insets.bottom ?? defaultAmount
+            leading = insets.leading ?? defaultAmount
+            trailing = insets.trailing ?? defaultAmount
+        }
     }
 
     struct Internal {
@@ -129,10 +178,11 @@ extension EdgeInsets.Internal {
     }
 
     init(_ insets: EdgeInsets) {
-        top = insets.top
-        bottom = insets.bottom
-        leading = insets.leading
-        trailing = insets.trailing
+        let integral = insets.integral
+        top = integral.top
+        bottom = integral.bottom
+        leading = integral.leading
+        trailing = integral.trailing
     }
 }
 
@@ -169,7 +219,7 @@ struct PaddingModifierView<Child: View>: TypeSafeView {
     ) -> ViewLayoutResult {
         // This first block of calculations is somewhat repeated in `commit`,
         // make sure to update things in both places.
-        let insets = EdgeInsets(insets, defaultAmount: backend.defaultPaddingAmount)
+        let insets = EdgeInsets.Integral(insets, defaultAmount: backend.defaultPaddingAmount)
         let horizontalPadding = Double(insets.leading + insets.trailing)
         let verticalPadding = Double(insets.top + insets.bottom)
 
@@ -209,7 +259,7 @@ struct PaddingModifierView<Child: View>: TypeSafeView {
         let size = layout.size
         backend.setSize(of: container, to: size.vector)
 
-        let insets = EdgeInsets(insets, defaultAmount: backend.defaultPaddingAmount)
+        let insets = EdgeInsets.Integral(insets, defaultAmount: backend.defaultPaddingAmount)
         let childPosition = SIMD2(insets.leading, insets.top)
         backend.setPosition(ofChildAt: 0, in: container, to: childPosition)
     }
