@@ -232,7 +232,7 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
         backend.tag(widget: widget, as: tag)
 
         // Update the view and its children when state changes (children are always updated first).
-        forEachField(of: view) { name, _, fieldValue in
+        forEachViewField(of: view) { name, _, fieldValue in
             #if DEBUG
                 if name == "state", fieldValue is ObservableObject {
                     logger.warning(
