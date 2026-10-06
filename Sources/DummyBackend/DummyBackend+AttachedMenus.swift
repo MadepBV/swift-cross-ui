@@ -1,6 +1,6 @@
 @_spi(Backends) import SwiftCrossUI
 
-extension DummyBackend: BackendFeatures.AttachedMenus {
+extension DummyBackend: BackendFeatures.AttachedMenus, BackendFeatures.ViewLabelMenus {
     public class Menu {
         public var content: ResolvedMenu
 
@@ -29,5 +29,9 @@ extension DummyBackend: BackendFeatures.AttachedMenus {
     ) {
         updateSimpleButton(button, label: label, environment: environment, action: {})
         (button as! SimpleButton).menu = menu
+    }
+
+    public func attachMenu(_ menu: Menu, toButton button: Widget) {
+        (button as! Button).menu = menu
     }
 }

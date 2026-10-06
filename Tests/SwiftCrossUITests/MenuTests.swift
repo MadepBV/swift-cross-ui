@@ -36,4 +36,25 @@ struct MenuTests {
             }
         }
     }
+
+    @MainActor
+    @Test("A menu with a label view draws the view on a button that shows the menu")
+    func labelViewMenuDrawsItsLabel() throws {
+        let view = Menu {
+            Button("Mark as Watched") {}
+        } label: {
+            Label("Watched", systemImage: "checkmark.circle").labelStyle(.iconOnly)
+        }
+
+        let node = ViewGraphHelpers.committedNode(for: view)
+
+        let button = try #require(node.widget as? DummyBackend.Button)
+        #expect(button.label != nil)
+        let menu = try #require(button.menu)
+        guard case .button(let title, _) = menu.content.items.first else {
+            Issue.record("Expected the menu's button, got \(menu.content.items)")
+            return
+        }
+        #expect(title == "Mark as Watched")
+    }
 }

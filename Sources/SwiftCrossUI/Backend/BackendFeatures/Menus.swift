@@ -64,6 +64,25 @@ extension BackendFeatures {
         )
     }
 
+    /// Backend methods for showing an attached menu from a button whose label
+    /// is an arbitrary view (one made by
+    /// ``BackendFeatures/ViewLabelButtons/createButton(wrapping:)``).
+    ///
+    /// With it, a ``Menu`` created with a label view draws that view, as
+    /// SwiftUI does, instead of the label's first text. Backends using
+    /// ``MenuImplementationStyle/dynamicPopover(_:)`` need nothing more: the
+    /// menu is shown from the button's action.
+    @MainActor
+    public protocol ViewLabelMenus<Widget, Menu>: AttachedMenus {
+        /// Makes `menu` the menu `button` shows when it is clicked or tapped.
+        ///
+        /// - Parameters:
+        ///   - menu: The menu, from ``BackendFeatures/MenuButtons/createPopoverMenu()``.
+        ///   - button: A button made by
+        ///     ``BackendFeatures/ViewLabelButtons/createButton(wrapping:)``.
+        func attachMenu(_ menu: Menu, toButton button: Widget)
+    }
+
     /// Backend methods for menus which need a separate widget to be created.
     @MainActor
     public protocol PopoverMenus<Widget, Menu>: MenuButtons {

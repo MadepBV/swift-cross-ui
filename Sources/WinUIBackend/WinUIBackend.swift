@@ -114,6 +114,7 @@ public final class WinUIBackend:
     BackendFeatures.Opacity,
     BackendFeatures.Gestures,
     BackendFeatures.AttachedMenus,
+    BackendFeatures.ViewLabelMenus,
     BackendFeatures.Paths,
     BackendFeatures.Tooltips,
     BackendFeatures.Colors,
@@ -1205,6 +1206,11 @@ public final class WinUIBackend:
 
         environment.apply(to: button)
         button.flyout = menu
+    }
+
+    public func attachMenu(_ menu: Menu, toButton button: Widget) {
+        // The button WinUI shows a flyout from; its label is the menu's view.
+        (button as! WinUI.Button).flyout = menu
     }
 
     public func createScrollContainer(for child: Widget) -> Widget {

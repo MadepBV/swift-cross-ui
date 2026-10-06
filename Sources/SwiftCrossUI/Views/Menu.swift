@@ -213,14 +213,139 @@ extension Menu: TypeSafeView {
         snapshots: [ViewGraphSnapshotter.NodeSnapshot]?,
         environment: EnvironmentValues
     ) -> Children {
-        MenuStorage()
+        let storage = MenuStorage()
+        if let labelView, Self.drawsLabelView(with: backend) {
+            storage.labelNode = AnyViewGraphNode(
+                for: AnyView(labelView),
+                backend: backend,
+                snapshot: snapshots?.first,
+                environment: environment
+            )
+        }
+        return storage
     }
 
     func asWidget<Backend: BaseAppBackend>(
         _ children: MenuStorage,
         backend: Backend
     ) -> Backend.Widget {
+        if let labelNode = children.labelNode {
+            return backend.createButton(wrapping: labelNode.widget.into())
+        }
         return backend.createSimpleButton()
+    }
+
+    /// Whether a menu with a label view draws that view on `backend`: a
+    /// backend that shows popovers on demand opens the menu from a plain
+    /// button's action, and one with attached menus must be able to attach
+    /// one to such a button (``BackendFeatures/ViewLabelMenus``). Elsewhere
+    /// the label's first text titles the menu.
+    @MainActor
+    static func drawsLabelView<Backend: BaseAppBackend>(with backend: Backend) -> Bool {
+        if backend is any BackendFeatures.ViewLabelMenus { return true }
+        guard let menuBackend = backend as? any BackendFeatures.MenuButtons else { return false }
+        return usesDynamicPopover(menuBackend)
+    }
+
+    @MainActor
+    private static func usesDynamicPopover<B: BackendFeatures.MenuButtons>(_ backend: B) -> Bool {
+        if case .dynamicPopover = backend.menuImplementationStyle { return true }
+        return false
+    }
+
+    /// Lays out a menu drawn with its label view, as ``Button`` lays out its
+    /// label: the label's size plus the button's padding.
+    @MainActor
+    private func computeLabelViewLayout<Backend: BaseAppBackend>(
+        _ widget: Backend.Widget,
+        labelNode: AnyViewGraphNode<AnyView>,
+        children: MenuStorage,
+        proposedSize: ProposedViewSize,
+        environment: EnvironmentValues,
+        backend: Backend
+    ) -> ViewLayoutResult {
+        let buttonPadding = backend.buttonPadding(in: environment)
+        var childProposal = proposedSize
+        if let width = proposedSize.width {
+            childProposal.width = max(width - Double(buttonPadding.x), 0)
+        }
+        if let height = proposedSize.height {
+            childProposal.height = max(height - Double(buttonPadding.y), 0)
+        }
+        let childResult = labelNode.computeLayout(
+            with: labelView.map { AnyView($0) },
+            proposedSize: childProposal,
+            environment: Button<EmptyView>.labelEnvironment(
+                role: nil, environment: environment, backend: backend)
+        )
+        // The action is set in commit, once the button's size is known.
+        backend.updateButton(widget, environment: environment, action: {})
+        let size = ViewSize(
+            childResult.size.width + Double(buttonPadding.x),
+            childResult.size.height + Double(buttonPadding.y)
+        )
+        return ViewLayoutResult
+            .leafView(size: size)
+            .with(\.isNeverFocusable, false)
+    }
+
+    /// Commits a menu drawn with its label view and connects its menu.
+    @MainActor
+    private func commitLabelView<Backend: BaseAppBackend>(
+        _ widget: Backend.Widget,
+        labelNode: AnyViewGraphNode<AnyView>,
+        children: MenuStorage,
+        layout: ViewLayoutResult,
+        environment: EnvironmentValues,
+        backend: Backend
+    ) {
+        _ = labelNode.commit()
+        backend.setSize(of: widget, to: layout.size.vector)
+        if let attaching = backend as? any BackendFeatures.ViewLabelMenus {
+            attach(with: attaching, widget: widget, children: children, environment: environment)
+        } else if let popovers = backend as? any BackendFeatures.PopoverMenus {
+            showOnAction(with: popovers, base: backend, widget: widget, children: children,
+                         height: layout.size.height, environment: environment)
+        }
+    }
+
+    @MainActor
+    private func attach<B: BackendFeatures.ViewLabelMenus>(
+        with backend: B,
+        widget: some Any,
+        children: MenuStorage,
+        environment: EnvironmentValues
+    ) {
+        let menu = children.menu.flatMap { $0 as? B.Menu } ?? backend.createPopoverMenu()
+        children.menu = menu
+        let content = MenuItemCollection.withEnvironment(environment) { resolve().content }
+        backend.updatePopoverMenu(menu, content: content, environment: environment)
+        backend.attachMenu(menu, toButton: widget as! B.Widget)
+    }
+
+    @MainActor
+    private func showOnAction<B: BackendFeatures.PopoverMenus, Base: BaseAppBackend>(
+        with backend: B,
+        base: Base,
+        widget baseWidget: Base.Widget,
+        children: MenuStorage,
+        height: Double,
+        environment: EnvironmentValues
+    ) {
+        let widget = baseWidget as! B.Widget
+        base.updateButton(baseWidget, environment: environment) {
+            let content = MenuItemCollection.withEnvironment(environment) { resolve().content }
+            let menu = backend.createPopoverMenu()
+            children.menu = menu
+            backend.updatePopoverMenu(menu, content: content, environment: environment)
+            backend.showPopoverMenu(
+                menu,
+                at: SIMD2(0, LayoutSystem.roundSize(height) + 2),
+                relativeTo: widget
+            ) {
+                children.menu = nil
+            }
+        }
     }
 
     func layoutableChildren<Backend: BaseAppBackend>(
@@ -238,6 +363,11 @@ extension Menu: TypeSafeView {
         environment: EnvironmentValues,
         backend: Backend
     ) -> ViewLayoutResult {
+        if let labelNode = children.labelNode {
+            return computeLabelViewLayout(
+                widget, labelNode: labelNode, children: children,
+                proposedSize: proposedSize, environment: environment, backend: backend)
+        }
         // TODO: Look into ways to predict a button's natural size without
         //   updating its content so that computeLayout can be a bit more of
         //   a pure function.
@@ -289,6 +419,12 @@ extension Menu: TypeSafeView {
         environment: EnvironmentValues,
         backend: Backend
     ) {
+        if let labelNode = children.labelNode {
+            commitLabelView(
+                widget, labelNode: labelNode, children: children,
+                layout: layout, environment: environment, backend: backend)
+            return
+        }
         let size = layout.size
         backend.setSize(of: widget, to: size.vector)
 
@@ -370,8 +506,13 @@ extension Menu: TypeSafeView {
 class MenuStorage: ViewGraphNodeChildren {
     var menu: Any?
 
-    var widgets: [AnyWidget] = []
-    var erasedNodes: [ErasedViewGraphNode] = []
+    /// The node of a label view the menu's button draws, if it draws one.
+    var labelNode: AnyViewGraphNode<AnyView>?
+
+    var widgets: [AnyWidget] { labelNode.map { [$0.widget] } ?? [] }
+    var erasedNodes: [ErasedViewGraphNode] {
+        labelNode.map { [ErasedViewGraphNode(wrapping: $0)] } ?? []
+    }
 
     init() {}
 }
