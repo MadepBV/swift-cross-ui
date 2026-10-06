@@ -42,6 +42,14 @@ public struct Image: Sendable {
         case systemName(String)
     }
 
+    /// The SF Symbol name this image shows, or `nil` for a bitmap image.
+    var systemSymbolName: String? {
+        guard case .systemName(let name) = source else {
+            return nil
+        }
+        return name
+    }
+
     /// Creates an image view.
     ///
     /// `png`, `jpg`, and `webp` are supported.

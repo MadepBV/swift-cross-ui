@@ -91,6 +91,21 @@ extension BackendFeatures {
         /// `nil` means that the platform's default grouping applies.
         public var childBehavior: ChildBehavior?
 
+        /// Additional labelled details about the widget, from
+        /// ``View/accessibilityCustomContent(_:_:importance:)``.
+        ///
+        /// Backends with a custom-content API (VoiceOver's "More Content"
+        /// rotor) expose them there; the others fold the high-importance
+        /// entries into the widget's description, which is what SwiftUI reads
+        /// out automatically for them. See ``customContentDescription``.
+        public var customContent: [CustomContent]
+
+        /// Actions assistive technologies can perform on the widget, from
+        /// ``View/accessibilityAction(_:_:)``,
+        /// ``View/accessibilityAction(named:_:)-(Text,_)`` and
+        /// ``View/accessibilityAdjustableAction(_:)``.
+        public var actions: [Action]
+
         /// Creates a set of accessibility metadata.
         ///
         /// - Parameters:
@@ -108,7 +123,9 @@ extension BackendFeatures {
             identifier: String? = nil,
             traits: AccessibilityTraits = [],
             isHidden: Bool? = nil,
-            childBehavior: ChildBehavior? = nil
+            childBehavior: ChildBehavior? = nil,
+            customContent: [CustomContent] = [],
+            actions: [Action] = []
         ) {
             self.label = label
             self.hint = hint
@@ -117,6 +134,8 @@ extension BackendFeatures {
             self.traits = traits
             self.isHidden = isHidden
             self.childBehavior = childBehavior
+            self.customContent = customContent
+            self.actions = actions
         }
 
         /// Whether every property is unset.
@@ -128,6 +147,8 @@ extension BackendFeatures {
                 && traits.isEmpty
                 && isHidden == nil
                 && childBehavior == nil
+                && customContent.isEmpty
+                && actions.isEmpty
         }
 
         /// Combines these properties with those of an enclosing modifier.
@@ -149,7 +170,15 @@ extension BackendFeatures {
                 identifier: identifier ?? outer.identifier,
                 traits: traits.union(outer.traits),
                 isHidden: isHidden ?? outer.isHidden,
-                childBehavior: childBehavior ?? outer.childBehavior
+                childBehavior: childBehavior ?? outer.childBehavior,
+                customContent: customContent
+                    + outer.customContent.filter { entry in
+                        !customContent.contains { $0.id == entry.id }
+                    },
+                actions: actions
+                    + outer.actions.filter { action in
+                        !actions.contains { $0.kind == action.kind }
+                    }
             )
         }
     }

@@ -46,11 +46,17 @@ public struct AnyTransition: Sendable {
     /// The transition this value describes.
     let kind: Kind
 
+    /// The animation the transition carries with it, from
+    /// ``animation(_:)``; `nil` to use the animation of the change that
+    /// inserts or removes the view.
+    let animation: Animation?
+
     /// Creates a transition from its description.
     ///
     /// - Parameter kind: The transition to describe.
-    init(kind: Kind) {
+    init(kind: Kind, animation: Animation? = nil) {
         self.kind = kind
+        self.animation = animation
     }
 
     /// A transition that has no visible effect.
@@ -131,6 +137,18 @@ public struct AnyTransition: Sendable {
     ///
     /// - Note: Inert, as every transition is. See ``AnyTransition``.
     public func combined(with other: AnyTransition) -> AnyTransition {
-        AnyTransition(kind: .combined(kind, other.kind))
+        AnyTransition(kind: .combined(kind, other.kind), animation: animation ?? other.animation)
+    }
+
+    /// Attaches an animation to this transition, so that it would play with
+    /// that animation even when the insertion or removal itself isn't
+    /// animated.
+    ///
+    /// - Parameter animation: The animation to play the transition with.
+    /// - Returns: An inert description of the animated transition.
+    ///
+    /// - Note: Inert, as every transition is. See ``AnyTransition``.
+    public func animation(_ animation: Animation?) -> AnyTransition {
+        AnyTransition(kind: kind, animation: animation)
     }
 }

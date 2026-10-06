@@ -17,6 +17,7 @@ extension WinUIBackend: BackendFeatures.Accessibility {
     /// | `traits` | `AutomationProperties.LocalizedControlType`/`HeadingLevel` |
     /// | `isHidden` | `AutomationProperties.AccessibilityView` of `Raw` |
     /// | `childBehavior` | `AutomationProperties.AccessibilityView` on descendants |
+    /// | `customContent` | high-importance entries prepended to `HelpText` |
     ///
     /// ## Known limitations
     ///
@@ -29,6 +30,14 @@ extension WinUIBackend: BackendFeatures.Accessibility {
     ///   set `LocalizedControlType`, the string Narrator reads out, rather
     ///   than the underlying control type. `.isHeader` additionally sets
     ///   `HeadingLevel`, which is a real UIA property.
+    /// - `actions` aren't exposed. UI Automation offers an element's actions
+    ///   through the control patterns of its automation peer, and the
+    ///   projection reaches no peer for an arbitrary element:
+    ///   `FrameworkElementAutomationPeer.FromElement`/`CreatePeerForElement`
+    ///   aren't projected, and calling `OnCreateAutomationPeer` directly makes
+    ///   a detached peer (or none, for a panel).
+    /// - Custom content has no UIA counterpart, so its high-importance entries
+    ///   are prepended to `HelpText`, which Narrator reads after the name.
     /// - `.isSelected` belongs to UIA's `SelectionItem` pattern, which an
     ///   attached property can't provide, so it is ignored.
     ///
@@ -52,7 +61,7 @@ extension WinUIBackend: BackendFeatures.Accessibility {
         if let identifier = properties.identifier {
             AutomationProperties.setAutomationId(widget, identifier)
         }
-        if let hint = properties.hint {
+        if let hint = properties.hintIncludingCustomContent {
             AutomationProperties.setHelpText(widget, hint)
         }
         if let value = properties.value {

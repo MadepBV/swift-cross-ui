@@ -157,7 +157,16 @@ extension AppKitBackend: BackendFeatures.CoreWindowing {
 
         return rootEnvironment
             .with(\.windowScaleFactor, window.backingScaleFactor)
-            .with(\.scenePhase, window.isKeyWindow ? .active : .inactive)
+            .with(\.scenePhase, Self.scenePhase(of: window))
+    }
+
+    /// A window's phase: in the background while it's miniaturized or the
+    /// app is hidden, active while it's key, and inactive otherwise.
+    private static func scenePhase(of window: Window) -> ScenePhase {
+        if window.isMiniaturized || NSApp.isHidden {
+            return .background
+        }
+        return window.isKeyWindow ? .active : .inactive
     }
 
     public func setWindowEnvironmentChangeHandler(
@@ -197,6 +206,30 @@ extension AppKitBackend: BackendFeatures.CoreWindowing {
         ) { _ in
             Task { @MainActor in
                 action()
+            }
+        }
+
+        // For the background phase: a miniaturized window or a hidden app.
+        for name in [NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification] {
+            NotificationCenter.default.addObserver(
+                forName: name,
+                object: window,
+                queue: .main
+            ) { _ in
+                Task { @MainActor in
+                    action()
+                }
+            }
+        }
+        for name in [NSApplication.didHideNotification, NSApplication.didUnhideNotification] {
+            NotificationCenter.default.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { _ in
+                Task { @MainActor in
+                    action()
+                }
             }
         }
     }

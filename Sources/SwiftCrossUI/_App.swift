@@ -32,6 +32,7 @@ class _App<AppRoot: App>: ModelObserver {
         self.app = app
         self.environment = EnvironmentValues(backend: backend)
         self.cancellables = []
+        AccessibilityNotificationCenter.register(backend)
 
         dynamicPropertyUpdater = DynamicPropertyUpdater(for: app)
     }

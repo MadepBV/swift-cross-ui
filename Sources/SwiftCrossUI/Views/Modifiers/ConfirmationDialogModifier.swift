@@ -199,6 +199,45 @@ public struct ConfirmationDialogActionsBuilder {
         accumulated + next.actions
     }
 
+    /// Starts an action list with any other view, such as a ``ForEach`` of
+    /// buttons or a button with modifiers applied, as SwiftUI's view-builder
+    /// dialogs accept.
+    ///
+    /// The view's buttons are read out of it the way an alert's are (see
+    /// ``View/alert(_:isPresented:actions:)``): every ``Button`` with a text
+    /// label becomes an action, and anything else is ignored.
+    ///
+    /// - Parameter first: The view.
+    /// - Returns: The action list so far.
+    @MainActor
+    public static func buildPartialBlock<Content: View>(
+        first: Content
+    ) -> [ConfirmationDialogAction] {
+        actions(in: first)
+    }
+
+    /// Appends the buttons of any other view to an action list. See
+    /// ``buildPartialBlock(first:)-(Content)``.
+    ///
+    /// - Parameters:
+    ///   - accumulated: The action list so far.
+    ///   - next: The view whose buttons to append.
+    /// - Returns: The extended action list.
+    @MainActor
+    public static func buildPartialBlock<Content: View>(
+        accumulated: [ConfirmationDialogAction],
+        next: Content
+    ) -> [ConfirmationDialogAction] {
+        accumulated + actions(in: next)
+    }
+
+    /// The buttons of a view, as dialog actions, without the "OK" an alert
+    /// adds when there are none.
+    @MainActor
+    private static func actions<Content: View>(in view: Content) -> [ConfirmationDialogAction] {
+        AlertActions.buttons(in: view)
+    }
+
     /// Wraps the contents of an `if` statement without an `else`.
     ///
     /// - Parameter component: The actions, if the branch was taken.
@@ -252,11 +291,11 @@ struct ConfirmationDialogModifierView<Child: View>: TypeSafeView {
     /// - Parameter message: The message view.
     /// - Returns: The message's string, if it has one.
     static func string<Message: View>(ofMessage message: Message) -> String? {
-        if let text = message as? Text {
-            return text.string
+        if let text = message as? any DialogMessageText {
+            return text.dialogMessageString
         }
-        if let wrapper = message as? TupleView1<Text> {
-            return wrapper.view0.string
+        if message is EmptyView {
+            return nil
         }
         logger.warnOnce(
             """
@@ -446,5 +485,39 @@ class ConfirmationDialogModifierViewChildren<Child: View>: ViewGraphNodeChildren
     /// - Parameter childNode: The node of the view the dialog is attached to.
     init(childNode: AnyViewGraphNode<Child>) {
         self.childNode = childNode
+    }
+}
+
+/// A message view whose text a dialog can show: a ``Text``, or the views the
+/// view builder wraps text in (a one-view tuple, either branch of an `if`, an
+/// `if` without an `else`).
+@MainActor
+protocol DialogMessageText {
+    /// The message's string, or `nil` for no message.
+    var dialogMessageString: String? { get }
+}
+
+extension Text: DialogMessageText {
+    var dialogMessageString: String? { string }
+}
+
+extension TupleView1: DialogMessageText {
+    var dialogMessageString: String? {
+        (view0 as? any DialogMessageText)?.dialogMessageString
+    }
+}
+
+extension EitherView: DialogMessageText {
+    var dialogMessageString: String? {
+        switch storage {
+            case .a(let a): (a as? any DialogMessageText)?.dialogMessageString
+            case .b(let b): (b as? any DialogMessageText)?.dialogMessageString
+        }
+    }
+}
+
+extension OptionalView: DialogMessageText {
+    var dialogMessageString: String? {
+        view.flatMap { ($0 as? any DialogMessageText)?.dialogMessageString }
     }
 }

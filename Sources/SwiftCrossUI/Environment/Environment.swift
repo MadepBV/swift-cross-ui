@@ -54,6 +54,8 @@ public struct Environment<Value>: DynamicProperty {
             case .observableObject:
                 value.value =
                     environment.observableObject(ofType: Value.self) as? Value
+            case .optionalObject(let lookup):
+                value.value = lookup(environment)
         }
     }
 
@@ -112,17 +114,39 @@ public struct Environment<Value>: DynamicProperty {
         self.mode = .observableObject
     }
 
+    /// Initializes an ``Environment`` property wrapper that reads an object
+    /// placed in the environment by ``View/environment(_:)``, or `nil` when
+    /// no ancestor put one there.
+    ///
+    /// ```swift
+    /// @Environment(Navigation.self) private var navigation: Navigation?
+    /// ```
+    ///
+    /// This is SwiftUI's form for views that work with or without the object,
+    /// where ``init(_:)-(Value.Type)`` would trap.
+    ///
+    /// - Parameter type: The type of the object to read from the environment.
+    public init<Object: AnyObject>(_ type: Object.Type) where Value == Object? {
+        self.value = Box(nil)
+        self.mode = .optionalObject { environment in
+            // `Value` is `Object?`, so a missing object is a present `nil`.
+            .some(environment.observableObject(ofType: Object.self) as? Object)
+        }
+    }
+
     private enum Mode {
         /// A key path to the enviornment value to access.
         case keyPath(KeyPath<EnvironmentValues, Value>)
         /// An observable object.
         case observableObject
+        /// An observable object that may be missing, read as an optional.
+        case optionalObject((EnvironmentValues) -> Value?)
 
         var pathDescription: String {
             switch self {
                 case .keyPath(let keyPath):
                     "\(keyPath)"
-                case .observableObject:
+                case .observableObject, .optionalObject:
                     "\(Value.self).self"
             }
         }
@@ -136,7 +160,7 @@ public struct Environment<Value>: DynamicProperty {
         /// that case names the modifier that puts it there.
         var missingValueMessage: String {
             switch self {
-                case .keyPath:
+                case .keyPath, .optionalObject:
                     """
                     Environment value at \(pathDescription) used before \
                     initialization. Don't use @Environment properties before \

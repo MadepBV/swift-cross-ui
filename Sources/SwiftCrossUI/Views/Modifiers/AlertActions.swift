@@ -32,11 +32,19 @@ enum AlertActions {
     /// - Parameter view: The view produced by the `actions` block.
     /// - Returns: The alert's actions, never empty.
     static func actions<Actions: View>(from view: Actions) -> [ConfirmationDialogAction] {
-        let actions = view._asMenuItems.flatMap(action(from:))
+        let actions = buttons(in: view)
         guard !actions.isEmpty else {
             return [.default]
         }
         return actions
+    }
+
+    /// Extracts the buttons of a view as dialog actions, which may be none.
+    ///
+    /// - Parameter view: The view to read buttons from.
+    /// - Returns: The view's buttons, in order.
+    static func buttons<Content: View>(in view: Content) -> [ConfirmationDialogAction] {
+        view._asMenuItems.flatMap(action(from:))
     }
 
     /// Turns a single menu item into an alert action, if it is one.
