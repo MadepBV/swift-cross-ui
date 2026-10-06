@@ -311,12 +311,11 @@ public enum LayoutSystem {
                 )
             )
 
-            return ViewLayoutResult(
+            return alignedStackResult(
                 size: size,
                 childResults: results,
-                participateInStackLayoutsWhenEmpty: results
-                    .contains(where: \.participateInStackLayoutsWhenEmpty),
-                preferencesOverlay: nil
+                spacing: spacing,
+                environment: environment
             )
         }
 
@@ -345,12 +344,43 @@ public enum LayoutSystem {
         size[component: perpendicularOrientation] =
             renderedChildren.map(\.size[component: perpendicularOrientation]).max() ?? 0
 
-        return ViewLayoutResult(
+        return alignedStackResult(
             size: size,
             childResults: renderedChildren,
-            participateInStackLayoutsWhenEmpty: renderedChildren
-                .contains(where: \.participateInStackLayoutsWhenEmpty)
+            spacing: spacing,
+            environment: environment
         )
+    }
+
+    /// Builds a stack's layout result from its children's, placing them on
+    /// the stack's alignment guide where one applies and carrying their
+    /// explicit guides outwards (see `StackAlignmentGuides`).
+    @MainActor
+    private static func alignedStackResult(
+        size: ViewSize,
+        childResults: [ViewLayoutResult],
+        spacing: Int,
+        environment: EnvironmentValues
+    ) -> ViewLayoutResult {
+        let guides = environment.stackAlignmentGuides
+        let perpendicular = environment.layoutOrientation.perpendicular
+        var size = size
+        if let extent = guides.guidedPerpendicularExtent(of: childResults) {
+            size[component: perpendicular] = extent
+        }
+        var result = ViewLayoutResult(
+            size: size,
+            childResults: childResults,
+            participateInStackLayoutsWhenEmpty: childResults
+                .contains(where: \.participateInStackLayoutsWhenEmpty),
+            preferencesOverlay: nil
+        )
+        result.alignmentGuides = guides.mergedGuides(
+            of: childResults,
+            spacing: Double(spacing),
+            extent: size[component: perpendicular]
+        )
+        return result
     }
 
     /// Hands a grouping container's children to the enclosing layout that has
@@ -578,7 +608,6 @@ public enum LayoutSystem {
         let size = layout.size
         backend.setSize(of: container, to: size.vector)
 
-        let alignment = environment.layoutAlignment
         let spacing = environment.layoutSpacing
         let orientation = environment.layoutOrientation
         let perpendicularOrientation = orientation.perpendicular
@@ -595,6 +624,10 @@ public enum LayoutSystem {
         }
 
         let renderedChildren = children.map { $0.commit() }
+        let perpendicularOffsets = environment.stackAlignmentGuides.perpendicularOffsets(
+            of: renderedChildren,
+            extent: size[component: perpendicularOrientation]
+        )
 
         var position = Position.zero
         for (index, child) in renderedChildren.enumerated() {
@@ -606,18 +639,7 @@ public enum LayoutSystem {
             }
 
             // Compute alignment
-            switch alignment {
-                case .leading:
-                    position[component: perpendicularOrientation] = 0
-                case .center:
-                    let outer = size[component: perpendicularOrientation]
-                    let inner = child.size[component: perpendicularOrientation]
-                    position[component: perpendicularOrientation] = (outer - inner) / 2
-                case .trailing:
-                    let outer = size[component: perpendicularOrientation]
-                    let inner = child.size[component: perpendicularOrientation]
-                    position[component: perpendicularOrientation] = outer - inner
-            }
+            position[component: perpendicularOrientation] = perpendicularOffsets[index]
 
             backend.setPosition(ofChildAt: index, in: container, to: position.vector)
 
@@ -753,13 +775,7 @@ public enum LayoutSystem {
                 redistributeSpaceOnCommit: proposedSize.width == nil || proposedSize.height == nil
             )
 
-            return ViewLayoutResult(
-                size: size,
-                childResults: results,
-                participateInStackLayoutsWhenEmpty: results
-                    .contains(where: \.participateInStackLayoutsWhenEmpty),
-                preferencesOverlay: nil
-            )
+            return zStackResult(size: size, childResults: results, environment: environment)
         }
 
         cache = recomputeZStackCache(
@@ -779,12 +795,45 @@ public enum LayoutSystem {
         size.width = renderedChildren.map(\.size.width).reduce(0, { max($0, $1) })
         size.height = renderedChildren.map(\.size.height).reduce(0, { max($0, $1) })
 
-        return ViewLayoutResult(
+        return zStackResult(size: size, childResults: renderedChildren, environment: environment)
+    }
+
+    /// Builds a ``ZStack``'s layout result, carrying its children's explicit
+    /// alignment guides outwards: for each guide, the first child's value
+    /// offset by where the stack's alignment places that child.
+    @MainActor
+    private static func zStackResult(
+        size: ViewSize,
+        childResults: [ViewLayoutResult],
+        environment: EnvironmentValues
+    ) -> ViewLayoutResult {
+        var result = ViewLayoutResult(
             size: size,
-            childResults: renderedChildren,
-            participateInStackLayoutsWhenEmpty: renderedChildren
-                .contains(where: \.participateInStackLayoutsWhenEmpty)
+            childResults: childResults,
+            participateInStackLayoutsWhenEmpty: childResults
+                .contains(where: \.participateInStackLayoutsWhenEmpty),
+            preferencesOverlay: nil
         )
+        let alignment = environment.zStackContentAlignment
+        for child in childResults where child.participatesInStackLayouts {
+            for (key, value) in child.alignmentGuides where result.alignmentGuides[key] == nil {
+                let offset =
+                    switch key.axis {
+                        case .horizontal:
+                            alignment.horizontal.position(
+                                ofChild: child.size.width,
+                                in: size.width
+                            )
+                        case .vertical:
+                            alignment.vertical.position(
+                                ofChild: child.size.height,
+                                in: size.height
+                            )
+                    }
+                result.alignmentGuides[key] = value + offset
+            }
+        }
+        return result
     }
 
     @MainActor

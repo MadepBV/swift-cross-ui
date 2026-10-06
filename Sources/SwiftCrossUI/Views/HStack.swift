@@ -19,7 +19,22 @@ public struct HStack<Content: View>: View {
         spacing: Int? = nil,
         @ViewBuilder _ content: () -> Content
     ) {
-        body = content()
+        self.init(alignment: alignment, spacing: spacing, content: content())
+    }
+
+    /// Creates a horizontal stack with the given spacing and alignment.
+    ///
+    /// - Parameters:
+    ///   - alignment: The alignment of the stack's children in the vertical
+    ///     direction.
+    ///   - spacing: The amount of spacing to apply between children.
+    ///   - content: The content of the stack.
+    init(
+        alignment: VerticalAlignment = .center,
+        spacing: Int? = nil,
+        content: Content
+    ) {
+        body = content
         self.spacing = spacing ?? VStack<EmptyView>.defaultSpacing
         self.alignment = alignment
     }
@@ -61,6 +76,7 @@ public struct HStack<Content: View>: View {
             environment: environment.withStackLayout(
                 orientation: .horizontal,
                 alignment: alignment.asStackAlignment,
+                alignmentKey: alignment.key,
                 spacing: spacing
             ),
             backend: backend
@@ -86,6 +102,7 @@ public struct HStack<Content: View>: View {
             environment: environment.withStackLayout(
                 orientation: .horizontal,
                 alignment: alignment.asStackAlignment,
+                alignmentKey: alignment.key,
                 spacing: spacing
             ),
             backend: backend

@@ -84,6 +84,7 @@ public struct VStack<Content: View>: View {
             environment: environment.withStackLayout(
                 orientation: .vertical,
                 alignment: alignment.asStackAlignment,
+                alignmentKey: alignment.key,
                 spacing: spacing
             ),
             backend: backend
@@ -109,6 +110,7 @@ public struct VStack<Content: View>: View {
             environment: environment.withStackLayout(
                 orientation: .vertical,
                 alignment: alignment.asStackAlignment,
+                alignmentKey: alignment.key,
                 spacing: spacing
             ),
             backend: backend

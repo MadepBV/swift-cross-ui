@@ -32,3 +32,20 @@ public enum HorizontalAlignment: Hashable, Sendable {
         }
     }
 }
+
+extension HorizontalAlignment {
+    /// The guide's identity, shared with the layout system's alignment guide
+    /// support (see `AlignmentKey`).
+    ///
+    /// Horizontal alignment stays an enum, unlike ``VerticalAlignment``,
+    /// because backends switch over it exhaustively for
+    /// ``EnvironmentValues/multilineTextAlignment``; custom horizontal guides
+    /// aren't supported.
+    var key: AlignmentKey {
+        switch self {
+            case .leading: AlignmentKey(LeadingAlignmentID.self, axis: .horizontal)
+            case .center: AlignmentKey(HorizontalCenterAlignmentID.self, axis: .horizontal)
+            case .trailing: AlignmentKey(TrailingAlignmentID.self, axis: .horizontal)
+        }
+    }
+}

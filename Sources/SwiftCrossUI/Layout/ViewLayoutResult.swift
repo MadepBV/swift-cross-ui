@@ -12,6 +12,15 @@ public struct ViewLayoutResult {
     /// If a view can ever become focusable (even if it's not focusable right now)
     /// then this must be set to `false`.
     public var isNeverFocusable = true
+    /// The alignment guides that the view or its descendants have set
+    /// explicitly, measured from the view's top-leading corner.
+    ///
+    /// Set by ``View/alignmentGuide(_:computeValue:)-(VerticalAlignment,_)``,
+    /// carried through any view that passes its child's result on, and
+    /// merged by stacks (which offset each child's guides by the child's
+    /// position). Other containers drop them, as their children's positions
+    /// aren't known until commit.
+    var alignmentGuides: [AlignmentKey: Double] = [:]
 
     public init(
         size: ViewSize,

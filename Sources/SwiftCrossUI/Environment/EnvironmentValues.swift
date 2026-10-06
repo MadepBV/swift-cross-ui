@@ -98,7 +98,22 @@ public struct EnvironmentValues {
     ///
     /// Inherited by ``ForEach`` and ``Group`` so that they can be used without
     /// affecting layout.
-    public var layoutAlignment: StackAlignment = .center
+    public var layoutAlignment: StackAlignment {
+        get { _layoutAlignment }
+        set {
+            _layoutAlignment = newValue
+            // An alignment set by size alone replaces any guide that an
+            // enclosing stack aligned on.
+            layoutAlignmentKey = nil
+        }
+    }
+
+    /// Storage for ``layoutAlignment``.
+    private var _layoutAlignment: StackAlignment = .center
+
+    /// The alignment guide the current stack aligns its children on, if it
+    /// was created with one (see `StackAlignmentGuides`).
+    var layoutAlignmentKey: AlignmentKey?
 
     /// The current stack spacing.
     ///
@@ -387,11 +402,13 @@ public struct EnvironmentValues {
     func withStackLayout(
         orientation: Orientation,
         alignment: StackAlignment,
+        alignmentKey: AlignmentKey? = nil,
         spacing: Int
     ) -> Self {
         var environment = self
         environment.layoutOrientation = orientation
         environment.layoutAlignment = alignment
+        environment.layoutAlignmentKey = alignmentKey
         environment.layoutSpacing = spacing
         environment.usesZStackLayout = false
         return environment

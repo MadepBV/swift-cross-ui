@@ -59,15 +59,9 @@ public struct Alignment: Hashable, Sendable {
                 case .trailing:
                     parent.x - child.x
             }
-        let y =
-            switch vertical {
-                case .top:
-                    0
-                case .center:
-                    (parent.y - child.y) / 2
-                case .bottom:
-                    parent.y - child.y
-            }
+        let y = Int(
+            vertical.position(ofChild: Double(child.y), in: Double(parent.y)).rounded(.towardZero)
+        )
         return SIMD2(x, y)
     }
 }
