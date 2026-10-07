@@ -187,11 +187,15 @@ struct NavigationChromeContributor<Content: View>: View {
     var content: Content
 
     @Environment(\.navigationChrome) private var chrome
+    @Environment(\.dormancyScope) private var dormancyScope
     @State private var storage = NavigationChromeStorage()
 
     var body: some View {
+        let _ = dormancyScope?.register(storage.slot)
         if let chrome {
-            let _ = storage.slot.contribute(contribution, to: chrome)
+            // A page out of sight that updates on its own doesn't take the bar.
+            let _ = (dormancyScope?.isDormant ?? false)
+                ? () : storage.slot.contribute(contribution, to: chrome)
             content
         } else if hostsWhenAlone {
             let _ = storage.slot.contribute(contribution, to: storage.ownChrome)

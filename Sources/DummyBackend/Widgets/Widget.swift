@@ -3,6 +3,8 @@ extension DummyBackend {
         public var tag: String?
         public var cornerRadius = 0
         public var opacity = 1.0
+        /// Whether the widget was hidden through `WidgetVisibility`.
+        public var isHidden = false
         public var size = SIMD2<Int>.zero
         public var naturalSize: SIMD2<Int> {
             SIMD2<Int>.zero

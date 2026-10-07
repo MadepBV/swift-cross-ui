@@ -87,12 +87,12 @@ struct OnAppearModifier<Content: View>: TypeSafeView {
             environment: environment,
             backend: backend
         )
+        // The latest action, so that a view appearing later (scrolled near,
+        // or its page shown again) runs it with its values as of then.
+        children.latestAction = action
         guard !children.hasAppeared, let gate = children.gate else {
             return
         }
-        // Waits with the latest action, so that it runs with the view's
-        // values as of when it appears.
-        children.latestAction = action
         if children.entry == nil {
             let entry = LazyAppearanceRegistry.Entry(widget: AnyWidget(widget)) { [weak children] in
                 guard let children, !children.hasAppeared else { return }
@@ -119,6 +119,14 @@ final class OnAppearModifierChildren: ViewGraphNodeChildren {
 
     var erasedNodes: [ErasedViewGraphNode] {
         wrappedChildren.erasedNodes
+    }
+
+    /// Runs the action again for a view that had appeared, as its page is
+    /// shown again (see ``DormantContent``).
+    @MainActor
+    func reappear() {
+        guard hasAppeared else { return }
+        latestAction?()
     }
 
     init(wrappedChildren: any ViewGraphNodeChildren, gate: LazyAppearanceRegistry?) {

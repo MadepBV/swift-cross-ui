@@ -21,9 +21,9 @@ import Foundation
 /// from buttons, as a row above the content or a sidebar beside it (see
 /// ``TabViewStyle``).
 ///
-/// - Note: Only the selected tab's content exists. Switching away discards the
-///   view state (`@State`) of the tab left behind, so keep anything a tab must
-///   remember, such as its navigation path, in a model above the tab view.
+/// - Note: As in SwiftUI, a tab keeps its view state (`@State`, its navigation
+///   stack, where it's scrolled to) while another tab is selected; its views
+///   disappear and appear again as it's left and selected.
 public struct TabView<SelectionValue: Hashable, Content: TabContent>: View
     where Content.TabValue == SelectionValue
 {
@@ -51,6 +51,7 @@ public struct TabView<SelectionValue: Hashable, Content: TabContent>: View
 
     /// Whether the sidebar of ``SidebarAdaptableTabViewStyle`` is showing.
     @State private var sidebarIsVisible = true
+    @State private var visitedTabs = VisitedTabs<SelectionValue>()
 
     /// Creates a tab view whose selection you control.
     ///
@@ -176,18 +177,47 @@ public struct TabView<SelectionValue: Hashable, Content: TabContent>: View
         }
     }
 
-    /// The selected tab's content, identified by the tab's value so that
-    /// switching tabs replaces the content's view state rather than handing it
-    /// to the next tab.
+    /// The content of every tab visited so far, the selected one showing and
+    /// the others dormant (see ``DormantContent``), as SwiftUI keeps a tab's
+    /// state while another is selected. Switching back to a tab shows what's
+    /// already there instead of building the tab again.
     ///
     /// - Parameter tab: The selected tab.
-    /// - Returns: The tab's content.
+    /// - Returns: The tabs' content.
     @ViewBuilder
     private func selectedContent(_ tab: _TabItem<SelectionValue>?) -> some View {
         if let tab {
-            tab.content()
-                .id(tab.value)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            let tabs = content._tabs
+            let visited = visitedTabs.including(tab.value, among: tabs.map(\.value))
+            ZStack {
+                ForEach(visited, id: \.self) { value in
+                    if let item = tabs.first(where: { $0.value == value }) {
+                        DormantContent(
+                            isActive: value == tab.value,
+                            content: item.content()
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        )
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+}
+
+/// The tabs a tab view has shown, in the order they were first selected.
+///
+/// A reference so that recording a tab during `body` doesn't count as a state
+/// change; the selection that adds a tab has already updated the view.
+final class VisitedTabs<Value: Hashable> {
+    private var values: [Value] = []
+
+    /// The visited tabs that still exist, `selected` among them.
+    func including(_ selected: Value, among existing: [Value]) -> [Value] {
+        if !values.contains(selected) {
+            values.append(selected)
+        }
+        values.removeAll { !existing.contains($0) }
+        return values
     }
 }
