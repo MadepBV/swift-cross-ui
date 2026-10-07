@@ -131,9 +131,8 @@ public struct NavigationStack<Detail: View>: View {
             back: backAction,
             content: NavigationStackPage(
                 registry: registeredDestinations.registry,
-                viewDestination: viewDestinations.last,
-                depth: elements.count - 1 + viewDestinations.count,
-                element: elements.last,
+                viewDestinations: viewDestinations,
+                elements: elements,
                 root: { child(NavigationStackRootPath()).map { AnyView($0) } },
                 builtIn: { element in child(element).map { AnyView($0) } }
             )

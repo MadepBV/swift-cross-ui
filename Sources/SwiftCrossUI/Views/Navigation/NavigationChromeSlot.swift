@@ -34,6 +34,13 @@ final class NavigationChromeSlot {
         chrome?.contribute(contribution, from: ObjectIdentifier(self))
     }
 
+    /// Withdraws the contribution, as its page goes out of sight; the next
+    /// `contribute(_:to:)` adds it again.
+    func withdraw() {
+        chrome?.withdraw(ObjectIdentifier(self))
+        chrome = nil
+    }
+
     deinit {
         guard let chrome else {
             return

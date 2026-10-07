@@ -121,71 +121,82 @@ struct NavigationDestinationSubscription: ObservableProperty {
     func update(with environment: EnvironmentValues, previousValue: Self?) {}
 }
 
-/// The page a ``NavigationStack`` shows: its top closure-pushed view, the
-/// destination of its last path element, or its root.
+/// The pages of a ``NavigationStack``: its root, the destination of each path
+/// element, then each closure-pushed view. The top page shows; the pages under
+/// it stay alive but dormant (see ``DormantContent``), as SwiftUI keeps them,
+/// so Back shows the page that was there, where it was scrolled to, instead of
+/// building it again.
 ///
-/// A path element with no destination yet shows the root: the root is where
-/// destinations are usually declared, and once it has declared one the
-/// registry's change brings the element's page up. Each page is identified
-/// by its depth and element, so pushing a page gives it fresh view state.
+/// A path element with no destination yet has no page, so the page below it
+/// shows: the root is where destinations are usually declared, and once it
+/// has declared one the registry's change brings the element's page up. Each
+/// page is identified by its depth and element, so pushing a page gives it
+/// fresh view state.
 struct NavigationStackPage: View {
     /// The stack's declared destinations.
     var registry: NavigationDestinationRegistry
-    /// The top closure-pushed view, if any.
-    var viewDestination: AnyView?
-    /// How many pages sit below this one.
-    var depth: Int
-    /// The last path element (the root marker for the root).
-    var element: Any?
-    /// Builds the root.
+    /// The closure-pushed views, bottom first.
+    var viewDestinations: [AnyView]
+    /// The path's elements, the root's marker first.
+    var elements: [Any]
+    /// Builds the root view.
     var root: @MainActor () -> AnyView?
-    /// Builds the destination of an element with the stack's own
-    /// ``NavigationStack/navigationDestination(for:destination:)``s.
+    /// Builds the destination of a path element that the stack's own
+    /// `navigationDestination` declarations handle.
     var builtIn: @MainActor (Any) -> AnyView?
 
-    /// Redraws the page when a destination is declared.
+    /// Keeps the registry's changes observed.
     private let subscription: NavigationDestinationSubscription
 
     init(
         registry: NavigationDestinationRegistry,
-        viewDestination: AnyView?,
-        depth: Int,
-        element: Any?,
+        viewDestinations: [AnyView],
+        elements: [Any],
         root: @escaping @MainActor () -> AnyView?,
         builtIn: @escaping @MainActor (Any) -> AnyView?
     ) {
         self.registry = registry
-        self.viewDestination = viewDestination
-        self.depth = depth
-        self.element = element
+        self.viewDestinations = viewDestinations
+        self.elements = elements
         self.root = root
         self.builtIn = builtIn
         subscription = NavigationDestinationSubscription(registry)
     }
 
-    /// Identifies a page among the stack's pages.
-    private struct PageIdentity: Hashable {
+    /// A page's identity.
+    struct PageIdentity: Hashable {
         var depth: Int
         var element: AnyHashable?
     }
 
-    var body: some View {
-        let page = resolvedPage
-        page.view
-            .id(PageIdentity(depth: page.depth, element: page.element))
+    struct Page {
+        var identity: PageIdentity
+        var view: AnyView
     }
 
-    /// The view to show, and what identifies it.
-    private var resolvedPage: (view: AnyView, depth: Int, element: AnyHashable?) {
-        if let viewDestination {
-            return (viewDestination, depth, nil)
-        }
-        let identity = (element as? any Hashable).map { AnyHashable($0) }
-        if let element, !(element is NavigationStackRootPath) {
-            if let view = builtIn(element) ?? registry.destination(for: element) {
-                return (view, depth, identity)
+    var body: some View {
+        let pages = resolvedPages
+        let top = pages.last?.identity
+        ZStack {
+            ForEach(pages, id: \.identity) { page in
+                DormantContent(isActive: page.identity == top, content: page.view)
             }
         }
-        return (root() ?? AnyView(EmptyView()), 0, nil)
+    }
+
+    /// Every page that can be shown, bottom first.
+    private var resolvedPages: [Page] {
+        var pages = [Page(identity: PageIdentity(depth: 0, element: nil), view: root() ?? AnyView(EmptyView()))]
+        for (depth, element) in elements.enumerated() where depth > 0 && !(element is NavigationStackRootPath) {
+            guard let view = builtIn(element) ?? registry.destination(for: element) else {
+                continue
+            }
+            let identity = (element as? any Hashable).map { AnyHashable($0) }
+            pages.append(Page(identity: PageIdentity(depth: depth, element: identity), view: view))
+        }
+        for (index, view) in viewDestinations.enumerated() {
+            pages.append(Page(identity: PageIdentity(depth: elements.count + index, element: nil), view: view))
+        }
+        return pages
     }
 }
