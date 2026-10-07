@@ -210,6 +210,35 @@ enum SteadyStateProfile {
             }
         )
 
+        // MARK: A media app's card grid. A re-walk is what an update of the
+        // screen costs (a new feed page); a build is what switching to the tab
+        // costs, since only the selected tab exists.
+        let cardArtwork = CardGridView.makeArtwork()
+        results.append(
+            measure(label: "cards/rewalk", passes: max(passes / 4, 5), backend: backend) {
+                var revision = 0
+                return steadyPass {
+                    revision += 1
+                    return CardGridView(count: 120, revision: revision, artwork: cardArtwork)
+                }
+            }
+        )
+        results.append(
+            measure(label: "cards/build", passes: max(passes / 8, 5), backend: backend) {
+                var node: ViewGraphNode<CardGridView, DummyBackend>?
+                return Pass(
+                    layout: {
+                        LayoutPass.begin()
+                        node = ViewGraphNode(
+                            for: CardGridView(count: 120, revision: 0, artwork: cardArtwork),
+                            backend: backend, snapshot: nil, environment: environment)
+                        _ = node?.computeLayout(proposedSize: proposal, environment: environment)
+                    },
+                    commit: { node?.commit().size ?? .zero }
+                )
+            }
+        )
+
         reportEnvironmentCosts(environment: environment)
 
         report(results)
