@@ -26,4 +26,15 @@
     public static func begin() {
         token &+= 1
     }
+
+    /// Advances whenever a node commits, so work derived from widget
+    /// positions (where a lazy container's waiting children are) can tell
+    /// that nothing has moved them since it was measured.
+    public private(set) static var commitGeneration: UInt64 = 0
+
+    /// Records that a node committed.
+    @inline(__always)
+    static func didCommit() {
+        commitGeneration &+= 1
+    }
 }

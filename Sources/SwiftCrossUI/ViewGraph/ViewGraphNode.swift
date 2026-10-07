@@ -584,6 +584,7 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
             }
         }
         invalidateResultCache()
+        LayoutPass.didCommit()
         PerformanceRecorder.nodeCommitted()
 
         backend.showUpdate(of: widget)

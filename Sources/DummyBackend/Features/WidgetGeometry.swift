@@ -5,6 +5,7 @@ extension DummyBackend: BackendFeatures.WidgetGeometry {
         of widget: Widget,
         in ancestor: Widget
     ) -> (origin: SIMD2<Double>, size: SIMD2<Double>)? {
+        record("frame")
         guard let origin = Self.origin(of: widget, below: ancestor, at: .zero) else {
             return nil
         }
