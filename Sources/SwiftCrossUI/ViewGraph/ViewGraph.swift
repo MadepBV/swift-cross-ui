@@ -68,6 +68,8 @@ public class ViewGraph<Root: View> {
         // evaluated under a different environment. See ``LayoutPass``.
         LayoutPass.begin()
         BackendCallStatistics.record("viewgraph.rootPass")
+        PerformanceRecorder.enter("root.layout")
+        defer { PerformanceRecorder.exit() }
 
         parentEnvironment = environment
         latestProposal = proposedSize
@@ -102,6 +104,8 @@ public class ViewGraph<Root: View> {
     /// Commits the result of the last computeLayout call to the underlying
     /// widget hierarchy.
     public func commit() {
+        PerformanceRecorder.enter("root.commit")
+        defer { PerformanceRecorder.exit() }
         committedProposal = latestProposal
         self.currentRootViewResult = rootNode.commit()
         if isFirstUpdate {

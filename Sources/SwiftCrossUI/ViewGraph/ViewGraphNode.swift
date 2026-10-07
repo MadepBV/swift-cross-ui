@@ -305,6 +305,8 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
         // Whatever prompted this changed something a body may have read, and it
         // is an entry into the graph from outside, so it starts a new pass.
         LayoutPass.begin()
+        PerformanceRecorder.enter("node:\(PerformanceRecorder.shortName(NodeView.self))")
+        defer { PerformanceRecorder.exit() }
 
 
         // First we compute what size the view will be after the update. If it will change size,
@@ -400,6 +402,7 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
         }
 
         BackendCallStatistics.record("viewgraph.computeLayout.recomputed")
+        PerformanceRecorder.layoutComputed()
 
         parentEnvironment = environment
         lastProposedSize = proposedSize
@@ -581,6 +584,8 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
             }
         }
         invalidateResultCache()
+        LayoutPass.didCommit()
+        PerformanceRecorder.nodeCommitted()
 
         backend.showUpdate(of: widget)
 
@@ -617,6 +622,7 @@ extension ViewGraphNode: ObservationTrackingNode {
             return cachedBody
         }
         BackendCallStatistics.record("viewgraph.body.evaluated")
+        PerformanceRecorder.bodyEvaluated(NodeView.self)
         let body = evaluate()
         cachedBody = body
         lastHandOverPass = LayoutPass.token

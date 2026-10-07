@@ -72,4 +72,29 @@ struct LazyAppearanceTests {
         #expect(Set(started.values) == [0, 1, 2, 3])
         withExtendedLifetime(node) {}
     }
+
+    @MainActor
+    @Test("Scrolling locates one waiting row, not every one, while nothing is committed")
+    func scrollingMeasuresOneRow() throws {
+        let recorder = ValueRecorder<Int>()
+        let node = ViewGraphHelpers.committedNode(
+            for: feed(recorder, lazy: true),
+            proposedSize: ProposedViewSize(100, 100)
+        )
+        DeferredGeometryObservations.runPending()
+        let scrollView = try #require(node.widget.firstWidget(ofType: DummyBackend.ScrollContainer.self))
+        let backend = ViewGraphHelpers.backend
+        for step in 1...5 {
+            backend.resetCallCounts()
+            scrollView.scrollOffset = SIMD2(0, Double(step) * 20)
+            scrollView.scrollChangeHandler?()
+            DeferredGeometryObservations.runPending()
+            #expect(backend.callCounts["frame", default: 0] <= 1)
+        }
+        // Rows still appear where the shifted frames say they are.
+        scrollView.scrollOffset = SIMD2(0, 500)
+        scrollView.scrollChangeHandler?()
+        DeferredGeometryObservations.runPending()
+        #expect(recorder.values == [0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13])
+    }
 }

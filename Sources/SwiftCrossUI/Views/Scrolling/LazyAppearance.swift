@@ -87,18 +87,38 @@ final class LazyAppearanceRegistry {
         }
     }
 
+    /// Where each waiting widget was at the last full measurement, relative
+    /// to the visible region, and the commit generation it was taken at.
+    ///
+    /// While nothing has been committed, the only thing that can move the
+    /// waiting widgets relative to this scroll view's visible region is the
+    /// user scrolling it, which moves all of them by the same amount. So
+    /// during a scroll one widget is measured and the others are shifted by
+    /// its movement, instead of asking the backend to locate every waiting
+    /// card on every frame of the scroll (a COM transform per card on WinUI,
+    /// hundreds of them per frame on a long page of shelves).
+    private var measuredFrames: [ObjectIdentifier: CGRect] = [:]
+    private var measuredGeneration: UInt64?
+
     /// Makes every waiting view that's now near the visible region appear,
     /// then does the same for the scroll views inside this one.
     func check() {
         var appearing: [Entry] = []
-        pending.removeAll { entry in
-            guard isNearVisibleRegion(entry.widget) else {
-                return false
+        if !pending.isEmpty, isScrollViewNearVisibleRegion() {
+            let frames = currentFrames()
+            let reach = self.reach
+            pending.removeAll { entry in
+                guard let frame = frames[ObjectIdentifier(entry)],
+                    frame.intersects(reach) || (frame.isEmpty && reach.contains(frame.origin))
+                else {
+                    return false
+                }
+                appearing.append(entry)
+                return true
             }
-            appearing.append(entry)
-            return true
         }
         for entry in appearing {
+            measuredFrames[ObjectIdentifier(entry)] = nil
             entry.action()
         }
         children = children.filter { $0.value.registry != nil }
@@ -107,25 +127,71 @@ final class LazyAppearanceRegistry {
         }
     }
 
+    /// The region within a screen's length of the visible region.
+    private var reach: CGRect {
+        CGRect(
+            x: -viewportSize.x,
+            y: -viewportSize.y,
+            width: viewportSize.x * 3,
+            height: viewportSize.y * 3
+        )
+    }
+
+    /// Whether this registry's scroll view is near the visible region of
+    /// every scroll view around it. Checked once per check rather than once
+    /// per waiting widget: a shelf far off screen skips all of its cards.
+    private func isScrollViewNearVisibleRegion() -> Bool {
+        guard let parent, let scrollWidget = anchor.widget else {
+            return true
+        }
+        return parent.isNearVisibleRegion(scrollWidget)
+    }
+
+    /// The frames of the waiting widgets, measured or shifted (see
+    /// ``measuredFrames``).
+    private func currentFrames() -> [ObjectIdentifier: CGRect] {
+        guard let frame else {
+            return [:]
+        }
+        let generation = LayoutPass.commitGeneration
+        if measuredGeneration == generation,
+            let reference = pending.first(where: { measuredFrames[ObjectIdentifier($0)] != nil }),
+            let then = measuredFrames[ObjectIdentifier(reference)],
+            let now = frame(reference.widget),
+            now.size == then.size
+        {
+            let dx = now.origin.x - then.origin.x
+            let dy = now.origin.y - then.origin.y
+            if dx != 0 || dy != 0 {
+                for (key, value) in measuredFrames {
+                    measuredFrames[key] = value.offsetBy(dx: dx, dy: dy)
+                }
+            }
+            if pending.allSatisfy({ measuredFrames[ObjectIdentifier($0)] != nil }) {
+                return measuredFrames
+            }
+        }
+        measuredFrames.removeAll(keepingCapacity: true)
+        for entry in pending {
+            if let measured = frame(entry.widget) {
+                measuredFrames[ObjectIdentifier(entry)] = measured
+            }
+        }
+        measuredGeneration = generation
+        return measuredFrames
+    }
+
     /// Whether a widget is within a screen's length of the visible region of
     /// this scroll view and of every scroll view around it.
     func isNearVisibleRegion(_ widget: AnyWidget) -> Bool {
         guard let frame = frame?(widget) else {
             return false
         }
-        let reach = CGRect(
-            x: -viewportSize.x,
-            y: -viewportSize.y,
-            width: viewportSize.x * 3,
-            height: viewportSize.y * 3
-        )
+        let reach = self.reach
         guard frame.intersects(reach) || (frame.isEmpty && reach.contains(frame.origin)) else {
             return false
         }
-        guard let parent, let scrollWidget = anchor.widget else {
-            return true
-        }
-        return parent.isNearVisibleRegion(scrollWidget)
+        return isScrollViewNearVisibleRegion()
     }
 }
 

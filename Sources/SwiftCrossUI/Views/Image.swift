@@ -296,28 +296,15 @@ extension Image: TypeSafeView {
     ///     file's magic bytes to determine its format.
     /// - Returns: The loaded content, or ``ImageChildren/Content/none`` if the
     ///   file couldn't be read or decoded.
+    @MainActor
     private static func loadContent(
         fromURL url: URL,
         useFileExtension: Bool
     ) -> ImageChildren.Content {
         // TODO: Propagate these errors somewhere. Maybe even just as trace
         //   log messages.
-        guard let data = try? Data(contentsOf: url) else {
-            return .none
-        }
-
-        let bytes = Array(data)
-        let image: ImageFormats.Image<RGBA>?
-        if useFileExtension {
-            image = try? ImageFormats.Image<RGBA>.load(
-                from: bytes,
-                usingFileExtension: url.pathExtension
-            )
-        } else {
-            image = try? ImageFormats.Image<RGBA>.load(from: bytes)
-        }
-
-        guard let image else {
+        // Shared by every view showing this file; see `DecodedFileImageCache`.
+        guard let image = DecodedFileImageCache.image(at: url, useFileExtension: useFileExtension) else {
             return .none
         }
         return .image(image)

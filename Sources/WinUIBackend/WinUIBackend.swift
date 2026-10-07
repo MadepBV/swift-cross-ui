@@ -662,6 +662,7 @@ public final class WinUIBackend:
 
     public func insert(_ child: Widget, into container: Widget, at index: Int) {
         let container = container as! WinUI.Canvas
+        BackendCallStatistics.record("winui.insert")
         container.children.insertAt(UInt32(index), child)
         WidgetPropertyCache.shared.invalidateChildPositions(of: container)
     }
@@ -683,6 +684,7 @@ public final class WinUIBackend:
 
     public func remove(childAt index: Int, from container: Widget) {
         let container = container as! WinUI.Canvas
+        BackendCallStatistics.record("winui.remove")
         container.children.removeAt(UInt32(index))
         WidgetPropertyCache.shared.invalidateChildPositions(of: container)
     }
@@ -708,6 +710,7 @@ public final class WinUIBackend:
             return
         }
 
+        BackendCallStatistics.record("winui.setPosition")
         WinUI.Canvas.setTop(child, Double(position.y))
         WinUI.Canvas.setLeft(child, Double(position.x))
         entry.childPositions[index] = position
@@ -774,6 +777,7 @@ public final class WinUIBackend:
         if let cached = entry.naturalSize, cached.token == LayoutPass.token {
             return cached.size
         }
+        BackendCallStatistics.record("winui.measureNatural")
         let size = measureNaturalSize(of: widget)
         entry.naturalSize = (LayoutPass.token, size)
         return size
@@ -971,6 +975,7 @@ public final class WinUIBackend:
             return
         }
         entry.size = size
+        BackendCallStatistics.record("winui.setSize")
         widget.width = Double(size.x)
         widget.height = Double(size.y)
     }
@@ -1016,6 +1021,7 @@ public final class WinUIBackend:
             return cached
         }
 
+        BackendCallStatistics.record("winui.measureText")
         // Update the text view's environment and measure its desired line height
         updateTextView(measurementTextBlock, content: text, environment: environment)
 
@@ -1093,6 +1099,8 @@ public final class WinUIBackend:
 
         if entry.text != content {
             entry.text = content
+            BackendCallStatistics.record("winui.setText")
+            PerformanceRecorder.textWritten(content)
             block.text = content
         }
 
@@ -1699,19 +1707,28 @@ public final class WinUIBackend:
         let imageView = imageView as! WinUI.Image
 
         // Resizing is handled entirely by `stretch`, so unless the pixels
-        // changed (or there's no bitmap yet) there's nothing to redraw. A
-        // canvas that replaces a large frame every update reuses the same
-        // `WriteableBitmap` for as long as its dimensions stay the same.
+        // changed (or there's no bitmap yet) there's nothing to redraw. Views
+        // showing the same pixel buffer (one picture on many cards) share one
+        // bitmap, and a canvas that replaces a large frame every update keeps
+        // rewriting the same `WriteableBitmap` while its size stays the same.
         let lookupTiming = WinUITimingDiagnostics.begin()
-        let (bitmap, bitmapIsNew) = ImageBitmapRegistry.shared.bitmap(
+        let lookup = ImageBitmapRegistry.shared.bitmap(
             for: imageView,
+            pixels: rgbaData,
             width: width,
             height: height
         )
         WinUITimingDiagnostics.end(.imageLookup, lookupTiming)
-        WinUITimingDiagnostics.count(bitmapIsNew ? "image.recreated" : "image.reused")
-        guard dataHasChanged || bitmapIsNew else {
+        let bitmap = lookup.bitmap
+        WinUITimingDiagnostics.count(lookup.isNew ? "image.recreated" : "image.reused")
+        if lookup.isShared {
+            BackendCallStatistics.record("image.shared")
+        }
+        guard lookup.needsUpload else {
             WinUITimingDiagnostics.count("image.unchanged")
+            if lookup.needsAssignment {
+                imageView.source = bitmap
+            }
             return
         }
 
@@ -1745,7 +1762,7 @@ public final class WinUIBackend:
         try? bitmap.invalidate()
         WinUITimingDiagnostics.end(.imageInvalidate, invalidateTiming)
 
-        if bitmapIsNew {
+        if lookup.needsAssignment {
             let sourceTiming = WinUITimingDiagnostics.begin()
             imageView.source = bitmap
             WinUITimingDiagnostics.end(.imageSource, sourceTiming)
@@ -3238,64 +3255,147 @@ final class CornerClipRegistry {
     }
 }
 
-/// Keeps the `WriteableBitmap` behind each image view so that an image whose
-/// pixels change every update rewrites one pixel buffer instead of allocating
-/// a new bitmap each time.
+/// Keeps the `WriteableBitmap` behind each image view, shared between views
+/// that show the same pixel buffer.
 ///
-/// `WinUI.Image` is a final class, so the bitmap can't live on a subclass.
-/// Entries hold the image view weakly and are checked for identity on every
-/// lookup, so a recycled `ObjectIdentifier` can never hand a new image view
-/// another view's bitmap.
+/// Two things are cheap here because of it. A picture shown on many cards
+/// (every card of a grid built from a handful of bundled pictures, or one
+/// downloaded poster on a shelf and on a title page) is converted and
+/// uploaded once and held in memory once, instead of once per view — a full
+/// screen of 1672 × 941 pictures had cost 6 MB of bitmap per card. And a view
+/// whose pixels change every update (a canvas frame) still rewrites its own
+/// bitmap in place while its size stays the same, rather than allocating one
+/// per frame.
+///
+/// Pixel buffers are recognised by the address of their storage, which every
+/// copy of one Swift array shares until a copy is mutated. Each bitmap keeps
+/// the array it was filled from alive, so the address can't be reused by a
+/// different picture while the bitmap exists. Views are held weakly and
+/// checked for identity, so a recycled `ObjectIdentifier` never hands a new
+/// view another view's bitmap.
 @MainActor
 final class ImageBitmapRegistry {
     static let shared = ImageBitmapRegistry()
 
-    private struct Entry {
-        weak var imageView: WinUI.Image?
+    /// A bitmap and the pixels it holds.
+    private final class Shared {
         let bitmap: WriteableBitmap
         let width: Int
         let height: Int
+        /// The array the bitmap was filled from, kept so its address stays
+        /// unique while it identifies this bitmap.
+        var pixels: [UInt8]
+        var identity: UInt
+        var users = 0
+
+        init(bitmap: WriteableBitmap, width: Int, height: Int, pixels: [UInt8], identity: UInt) {
+            self.bitmap = bitmap
+            self.width = width
+            self.height = height
+            self.pixels = pixels
+            self.identity = identity
+        }
     }
 
-    private var entries: [ObjectIdentifier: Entry] = [:]
+    private struct ViewEntry {
+        weak var imageView: WinUI.Image?
+        let shared: Shared
+    }
+
+    struct Lookup {
+        let bitmap: WriteableBitmap
+        /// The bitmap was just created.
+        let isNew: Bool
+        /// The bitmap's pixels must be written from the buffer.
+        let needsUpload: Bool
+        /// The bitmap must be set as the view's source.
+        let needsAssignment: Bool
+        /// The bitmap was already showing these pixels in another view.
+        let isShared: Bool
+    }
+
+    private var views: [ObjectIdentifier: ViewEntry] = [:]
+    private var byPixels: [UInt: Shared] = [:]
+    private var lookupsSincePrune = 0
 
     private init() {}
 
-    /// Returns a bitmap of the given size for an image view, reusing the
-    /// view's existing bitmap when the size hasn't changed.
+    /// The bitmap an image view should show a pixel buffer with.
     ///
     /// - Parameters:
-    ///   - imageView: The image view the bitmap is for.
-    ///   - width: The bitmap's width in pixels.
-    ///   - height: The bitmap's height in pixels.
-    /// - Returns: The bitmap, and whether it was newly created (in which case
-    ///   it still has to be assigned as the view's source).
+    ///   - imageView: The image view.
+    ///   - pixels: The picture's RGBA pixels.
+    ///   - width: The picture's width in pixels.
+    ///   - height: The picture's height in pixels.
     func bitmap(
         for imageView: WinUI.Image,
+        pixels: [UInt8],
         width: Int,
         height: Int
-    ) -> (bitmap: WriteableBitmap, isNew: Bool) {
+    ) -> Lookup {
         let key = ObjectIdentifier(imageView)
-        if let entry = entries[key],
-           entry.imageView === imageView,
-           entry.width == width,
-           entry.height == height
-        {
-            return (entry.bitmap, false)
+        let identity = Self.identity(of: pixels)
+        let current = views[key].flatMap { $0.imageView === imageView ? $0.shared : nil }
+        if views[key] != nil && current == nil {
+            release(views[key]!.shared)
+            views[key] = nil
         }
 
-        // Drop entries whose image views have gone away so the registry
-        // doesn't grow without bound in a long-lived app.
-        entries = entries.filter { _, entry in entry.imageView != nil }
+        // Already showing exactly these pixels.
+        if let current, current.identity == identity, current.width == width, current.height == height {
+            return Lookup(bitmap: current.bitmap, isNew: false, needsUpload: false, needsAssignment: false, isShared: false)
+        }
 
+        // Another view already shows these pixels: share its bitmap.
+        if let existing = byPixels[identity], existing.width == width, existing.height == height {
+            if let current { release(current) }
+            existing.users += 1
+            views[key] = ViewEntry(imageView: imageView, shared: existing)
+            return Lookup(bitmap: existing.bitmap, isNew: false, needsUpload: false, needsAssignment: true, isShared: true)
+        }
+
+        // New pixels for a bitmap only this view uses, of the same size:
+        // rewrite it in place.
+        if let current, current.users == 1, current.width == width, current.height == height {
+            if byPixels[current.identity] === current { byPixels[current.identity] = nil }
+            current.pixels = pixels
+            current.identity = identity
+            byPixels[identity] = current
+            return Lookup(bitmap: current.bitmap, isNew: false, needsUpload: true, needsAssignment: false, isShared: false)
+        }
+
+        if let current { release(current) }
+        pruneIfDue()
         let bitmap = WriteableBitmap(Int32(max(width, 1)), Int32(max(height, 1)))
-        entries[key] = Entry(
-            imageView: imageView,
-            bitmap: bitmap,
-            width: width,
-            height: height
-        )
-        return (bitmap, true)
+        let shared = Shared(bitmap: bitmap, width: width, height: height, pixels: pixels, identity: identity)
+        shared.users = 1
+        byPixels[identity] = shared
+        views[key] = ViewEntry(imageView: imageView, shared: shared)
+        return Lookup(bitmap: bitmap, isNew: true, needsUpload: true, needsAssignment: true, isShared: false)
+    }
+
+    private func release(_ shared: Shared) {
+        shared.users -= 1
+        if shared.users <= 0, byPixels[shared.identity] === shared {
+            byPixels[shared.identity] = nil
+        }
+    }
+
+    /// Drops the entries of image views that have gone away, so neither
+    /// table grows without bound in a long-lived app. Amortised: a full scan
+    /// every 64 new bitmaps rather than on every one.
+    private func pruneIfDue() {
+        lookupsSincePrune += 1
+        guard lookupsSincePrune >= 64 else { return }
+        lookupsSincePrune = 0
+        for (key, entry) in views where entry.imageView == nil {
+            release(entry.shared)
+            views[key] = nil
+        }
+    }
+
+    private static func identity(of pixels: [UInt8]) -> UInt {
+        pixels.withUnsafeBufferPointer { UInt(bitPattern: $0.baseAddress) }
     }
 }
 

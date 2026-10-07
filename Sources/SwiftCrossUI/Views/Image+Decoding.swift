@@ -22,10 +22,14 @@ extension ImageFormats.Image where Pixel == RGBA {
     ///   - maximumPixelSize: The longest side allowed, in pixels.
     /// - Returns: The picture, or `nil` if the bytes aren't a supported format.
     public init?(decoding data: Data, maximumPixelSize: Int) {
+        let started = DispatchTime.now().uptimeNanoseconds
         guard let decoded = try? Self.load(from: [UInt8](data)) else {
             return nil
         }
         self = decoded.scaledDown(toFit: maximumPixelSize)
+        PerformanceRecorder.imageDecoded(
+            what: "decoding", width: width, height: height,
+            nanoseconds: DispatchTime.now().uptimeNanoseconds &- started)
     }
 
     /// A copy whose longest side is at most `maximumPixelSize`, or the image
