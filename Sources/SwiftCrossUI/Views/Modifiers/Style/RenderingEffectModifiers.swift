@@ -17,10 +17,13 @@ extension View {
 
     /// Masks this view with the opacity of another view.
     ///
-    /// - Note: Not drawn yet: an alpha mask needs the backend to composite
-    ///   the two views, which no backend exposes to SwiftCrossUI, so the view
-    ///   draws unmasked. Use ``View/clipShape(_:style:)`` to cut a view to a
-    ///   rounded rectangle, capsule or circle, which is drawn.
+    /// The mask is proposed this view's size and placed with `alignment`; it
+    /// doesn't change this view's size. Where the mask is clear the view is
+    /// invisible, where it is opaque the view draws as it is, and in between
+    /// (a gradient fading to clear, say) the view is partially transparent.
+    ///
+    /// - Note: Drawn on backends with ``BackendFeatures/Masks`` (AppKit and
+    ///   WinUI); elsewhere the view draws unmasked.
     ///
     /// - Parameters:
     ///   - alignment: How the mask is aligned in the view's frame.
@@ -30,7 +33,7 @@ extension View {
         alignment: Alignment = .center,
         @ViewBuilder _ mask: () -> Mask
     ) -> some View {
-        self
+        MaskModifier(content: self, mask: mask(), alignment: alignment)
     }
 
     /// Brightens or darkens this view.
