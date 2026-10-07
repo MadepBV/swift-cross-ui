@@ -1,4 +1,5 @@
 @_spi(Backends) import SwiftCrossUI
+import Foundation
 import UWP
 import WinUI
 import WindowsFoundation
@@ -86,7 +87,25 @@ extension WinUIBackend: BackendFeatures.Sheets {
         window: Window,
         parentSheet: Sheet?
     ) {
-        sheet.xamlRoot = window.content.xamlRoot
+        presentSheet(sheet, window: window, attempt: 0)
+    }
+
+    /// A sheet asked for while the window's content is not in a visual tree yet (one an app presents at launch) has
+    /// no `XamlRoot` to show in; it is shown as soon as the content has one, checked every 100 ms for up to 10 s.
+    private func presentSheet(_ sheet: Sheet, window: Window, attempt: Int) {
+        guard let root = window.content?.xamlRoot else {
+            guard attempt < 100 else {
+                logger.error("failed to present sheet", metadata: ["error": "the window has no content root"])
+                sheet.dismissHandler?()
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(100)) { [weak self, weak sheet, weak window] in
+                guard let self, let sheet, let window else { return }
+                self.presentSheet(sheet, window: window, attempt: attempt + 1)
+            }
+            return
+        }
+        sheet.xamlRoot = root
         do {
             let promise = try sheet.showAsync()!
             promise.completed = { [weak sheet] _, status in
