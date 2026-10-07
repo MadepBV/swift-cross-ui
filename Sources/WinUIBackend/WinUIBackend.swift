@@ -1225,6 +1225,13 @@ public final class WinUIBackend:
         scrollViewer.content = child
         child.horizontalAlignment = .left
         child.verticalAlignment = .top
+        // WinUI hit-tests only elements with a background, and the canvases
+        // inside have none, so a mouse wheel turned over the space between
+        // rows reached nothing inside the scroll viewer and didn't scroll it.
+        // A transparent background makes the whole viewport take the wheel.
+        scrollViewer.background = SolidColorBrushCache.brush(
+            for: SwiftCrossUI.Color.Resolved(red: 0, green: 0, blue: 0, opacity: 0)
+        )
         return scrollViewer
     }
 
