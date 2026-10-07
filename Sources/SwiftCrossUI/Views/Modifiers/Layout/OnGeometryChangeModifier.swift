@@ -47,15 +47,15 @@ extension View {
     /// operate on dimensions like points and sizes relative to the named
     /// space.
     ///
-    /// - Important: Accepted so that SwiftUI code compiles, but has no
-    ///   effect: SwiftCrossUI doesn't track where views sit within their
-    ///   ancestors, so ``GeometryProxy/frame(in:)`` always reports a view's
-    ///   local bounds.
+    /// The space's origin is this view's top-leading corner. Frames in it are
+    /// resolved for ``View/onGeometryChange(for:of:action:)-(_,_,(T)->Void)``
+    /// on backends that can locate widgets (``BackendFeatures/WidgetGeometry``);
+    /// see ``GeometryProxy/frame(in:)``.
     ///
     /// - Parameter name: The name of the coordinate space.
-    /// - Returns: The view, unchanged.
+    /// - Returns: A view that names its coordinate space.
     public func coordinateSpace<Name: Hashable>(name: Name) -> some View {
-        self
+        CoordinateSpaceModifier(body: TupleView1(self), space: .named(AnyHashable(name)))
     }
 }
 
@@ -89,10 +89,35 @@ struct OnGeometryChangeModifier<Value: Equatable, Child: View>: View {
             backend: backend
         )
 
-        let proxy = GeometryProxy(
-            size: CGSize(width: layout.size.width, height: layout.size.height)
-        )
+        let size = CGSize(width: layout.size.width, height: layout.size.height)
+        var proxy = GeometryProxy(size: size)
+        let unresolved = Box(false)
+        proxy.unresolvedFrameRequest = unresolved
         let value = transform(proxy)
+        guard unresolved.value else {
+            deliver(value)
+            return
+        }
+
+        // The transform asked where the view is, which isn't known until the
+        // parents committing around this view have positioned it. Ask again
+        // once the whole commit has finished.
+        let anchoredEnvironment = environment
+        let transform = transform
+        DeferredGeometryObservations.schedule(on: backend) { [widget] in
+            var proxy = GeometryProxy(size: size)
+            // The proxy only lives for this call, on the main thread.
+            proxy.resolveFrame = { space in
+                MainActor.assumeIsolated {
+                    anchoredEnvironment.frame(of: widget, in: space, backend: backend)
+                }
+            }
+            self.deliver(transform(proxy))
+        }
+    }
+
+    /// Runs the action if `value` differs from the last value seen.
+    private func deliver(_ value: Value) {
         let box = previousValue.box
         let previous = box.value
         guard previous != value else {
@@ -100,5 +125,101 @@ struct OnGeometryChangeModifier<Value: Equatable, Child: View>: View {
         }
         box.value = value
         action(previous ?? value, value)
+    }
+}
+
+/// Names a view's coordinate space; see ``View/coordinateSpace(name:)``.
+struct CoordinateSpaceModifier<Child: View>: View {
+    /// Keeps one anchor for the life of the view, without its writes
+    /// scheduling updates.
+    struct Anchor {
+        var anchor = CoordinateSpaceAnchor()
+    }
+
+    @State private var anchor = Anchor()
+
+    var body: TupleView1<Child>
+    var space: CoordinateSpace
+
+    func children<Backend: BaseAppBackend>(
+        backend: Backend,
+        snapshots: [ViewGraphSnapshotter.NodeSnapshot]?,
+        environment: EnvironmentValues
+    ) -> any ViewGraphNodeChildren {
+        body.children(
+            backend: backend,
+            snapshots: snapshots,
+            environment: environment.addingCoordinateSpace(space, anchoredAt: anchor.anchor)
+        )
+    }
+
+    func computeLayout<Backend: BaseAppBackend>(
+        _ widget: Backend.Widget,
+        children: any ViewGraphNodeChildren,
+        proposedSize: ProposedViewSize,
+        environment: EnvironmentValues,
+        backend: Backend
+    ) -> ViewLayoutResult {
+        body.computeLayout(
+            widget,
+            children: children,
+            proposedSize: proposedSize,
+            environment: environment.addingCoordinateSpace(space, anchoredAt: anchor.anchor),
+            backend: backend
+        )
+    }
+
+    func commit<Backend: BaseAppBackend>(
+        _ widget: Backend.Widget,
+        children: any ViewGraphNodeChildren,
+        layout: ViewLayoutResult,
+        environment: EnvironmentValues,
+        backend: Backend
+    ) {
+        anchor.anchor.widget = AnyWidget(widget)
+        body.commit(
+            widget,
+            children: children,
+            layout: layout,
+            environment: environment.addingCoordinateSpace(space, anchoredAt: anchor.anchor),
+            backend: backend
+        )
+    }
+}
+
+/// Geometry observations waiting for a commit to finish positioning widgets.
+///
+/// A view commits before its parent positions it, so a frame in an
+/// ancestor's coordinate space can only be read once the outermost commit
+/// returns. The observations run together on the backend's main thread right
+/// after it.
+@MainActor
+enum DeferredGeometryObservations {
+    private static var pending: [@MainActor () -> Void] = []
+    private static var isScheduled = false
+
+    /// Runs `observation` after the current commit.
+    static func schedule<Backend: BaseAppBackend>(
+        on backend: Backend,
+        _ observation: @escaping @MainActor () -> Void
+    ) {
+        pending.append(observation)
+        guard !isScheduled else {
+            return
+        }
+        isScheduled = true
+        backend.runInMainThread {
+            runPending()
+        }
+    }
+
+    /// Runs every waiting observation. Tests call it directly.
+    static func runPending() {
+        isScheduled = false
+        let observations = pending
+        pending = []
+        for observation in observations {
+            observation()
+        }
     }
 }

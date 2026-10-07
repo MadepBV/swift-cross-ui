@@ -9,6 +9,10 @@ class ScrollViewChildren<Content: View>: ViewGraphNodeChildren {
     /// The views this scroll view can scroll to, and the means to scroll it.
     let scrollTargets = ScrollTargetRegistry()
 
+    /// The origin of ``CoordinateSpace/scrollView`` for the content: this
+    /// scroll view's visible region.
+    let coordinateSpaceAnchor = CoordinateSpaceAnchor()
+
     /// The margins around the content, as of the last layout.
     var contentMargins = ScrollContentMargins()
 

@@ -100,6 +100,7 @@ public struct ScrollView<Content: View>: TypeSafeView, View {
         let contentEnvironment = environment
             .publishingContainerSize(proposedSize)
             .with(\.scrollTargets, children.scrollTargets)
+            .addingCoordinateSpace(.scrollView, anchoredAt: children.coordinateSpaceAnchor)
             .with(\.scrollRequest, nil)
             .with(\.scrollGeometryObservers, [])
             .with(\.scrollTargetVisibilityObservers, [])
@@ -224,6 +225,7 @@ public struct ScrollView<Content: View>: TypeSafeView, View {
         environment: EnvironmentValues,
         backend: Backend
     ) {
+        children.coordinateSpaceAnchor.widget = AnyWidget(widget)
         let scrollViewSize = layout.size
         let margins = children.contentMargins
         var finalContentSize = children.child.commit().size
