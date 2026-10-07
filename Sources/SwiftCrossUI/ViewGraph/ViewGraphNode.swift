@@ -302,6 +302,12 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
     /// current view gets updated due to a state change and has potential to trigger its parent to
     /// update as well, or the current view's child has propagated such an update upwards).
     private func bottomUpUpdate() {
+        // A page out of sight (a covered navigation page, an unselected tab)
+        // is laid out afresh when it's shown, which reads every body again;
+        // updating it now would only lay out what nobody can see.
+        if parentEnvironment.dormancyScope?.isDormant == true {
+            return
+        }
         // Whatever prompted this changed something a body may have read, and it
         // is an entry into the graph from outside, so it starts a new pass.
         LayoutPass.begin()
@@ -529,6 +535,8 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
     /// - Returns: The most recently computed layout. Guaranteed to match the
     ///   result of the last call to ``computeLayout(with:proposedSize:environment:)``.
     public func commit() -> ViewLayoutResult {
+        PerformanceRecorder.commitBegan()
+        defer { PerformanceRecorder.commitEnded() }
         guard let currentLayout else {
             logger.warning("layout committed before being computed, ignoring")
             return .leafView(size: .zero)

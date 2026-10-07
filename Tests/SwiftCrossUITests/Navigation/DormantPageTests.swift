@@ -109,4 +109,32 @@ struct DormantPageTests {
         #expect(!harness.texts.contains("Detail title"))
         #expect(log.value == ["appear Root", "disappear Root", "appear Root"])
     }
+
+    @Test("A tab out of sight doesn't update until it's shown, then shows its latest state")
+    func dormantTabWaitsToUpdate() async throws {
+        let selection = StateBox(Section.home)
+        let log = StateBox<[String]>([])
+        let harness = GraphHarness {
+            TabView(selection: selection.binding) {
+                Tab("Home", value: Section.home) { Counter(name: "Home", log: log) }
+                Tab("Library", value: Section.library) { Text("Library page") }
+            }
+        }
+        harness.render(passes: 1)
+        let homeButton = try #require(harness.widgets.compactMap { $0 as? DummyBackend.Button }.first { button in
+            button.label.map { harness.texts(in: $0) == ["Home 0"] } ?? false
+        })
+        selection.value = .library
+        harness.render(passes: 1)
+
+        // The hidden tab's state changes; its update is scheduled, and skipped.
+        harness.backend.resetCallCounts()
+        homeButton.action?()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(harness.backend.totalCallCount == 0)
+
+        selection.value = .home
+        harness.render(passes: 1)
+        #expect(harness.texts.contains("Home 1"))
+    }
 }
