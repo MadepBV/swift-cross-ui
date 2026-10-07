@@ -18,8 +18,11 @@ import Foundation
 struct NavigationBar: View {
     /// The spacing between the bar's items.
     static let itemSpacing = 8
-    /// The bar's inset from the container's edges.
-    static let horizontalInset: CGFloat = 12
+    /// The bar's inset from the container's edges: Fluent's page margin for
+    /// medium and wide windows, so that the title and back button line up
+    /// with page content laid out on the same margin instead of sitting 12
+    /// points left of it.
+    static let horizontalInset: CGFloat = 24
     /// The bar's vertical inset.
     static let verticalInset: CGFloat = 6
     /// The width of a search field drawn in the bar's row.
