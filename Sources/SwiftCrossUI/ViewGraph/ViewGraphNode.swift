@@ -540,7 +540,9 @@ public class ViewGraphNode<NodeView: View, Backend: BaseAppBackend>: Sendable {
         }
 
         if parentEnvironment.allowLayoutCaching {
-            logger.warning(
+            // Once: a large subtree updating every second wrote thousands of these a second, each formatting a deeply
+            // generic type name, which starved the main thread (a playing video's clock over a loaded catalog).
+            logger.warnOnce(
                 "committing layout computed with caching enabled; results may be invalid",
                 metadata: ["NodeView": "\(NodeView.self)"]
             )
