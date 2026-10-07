@@ -101,10 +101,12 @@ public struct ScrollView<Content: View>: TypeSafeView, View {
             .publishingContainerSize(proposedSize)
             .with(\.scrollTargets, children.scrollTargets)
             .addingCoordinateSpace(.scrollView, anchoredAt: children.coordinateSpaceAnchor)
+            .with(\.lazyAppearance, children.lazyAppearance)
             .with(\.scrollRequest, nil)
             .with(\.scrollGeometryObservers, [])
             .with(\.scrollTargetVisibilityObservers, [])
         environment.scrollViewReaderScope?.add(children.scrollTargets)
+        children.lazyAppearance.setParent(environment.lazyAppearance)
 
         // Margins from `contentMargins(_:_:for:)` scroll with the content, so
         // they come off the proposal along the axes that don't scroll and get
@@ -307,5 +309,67 @@ public struct ScrollView<Content: View>: TypeSafeView, View {
             contentSize: finalContentSize
         )
         reportVisibleTargets(to: environment.scrollTargetVisibilityObservers, children: children)
+        Self.prepareLazyAppearance(
+            children.lazyAppearance,
+            scrollContainer: widget,
+            viewportSize: SIMD2(scrollViewSize.width, scrollViewSize.height),
+            backend: backend
+        )
+    }
+
+    /// Lets the views waiting in this scroll view's lazy containers appear
+    /// once they're near the visible region: checked after this commit, and
+    /// whenever the user scrolls.
+    private static func prepareLazyAppearance<Backend: BaseAppBackend>(
+        _ registry: LazyAppearanceRegistry,
+        scrollContainer: Backend.Widget,
+        viewportSize: SIMD2<Double>,
+        backend: Backend
+    ) {
+        registry.viewportSize = viewportSize
+        guard registry.frame == nil else {
+            registry.scheduleCheck()
+            return
+        }
+        guard let geometryBackend = backend as? any BackendFeatures.WidgetGeometry,
+              let observingBackend = backend as? any BackendFeatures.ScrollObservation
+        else {
+            return
+        }
+        registry.frame = LazyAppearanceFrames.resolver(in: scrollContainer, backend: geometryBackend)
+        registry.schedule = { work in
+            DeferredGeometryObservations.schedule(on: backend, work)
+        }
+        LazyAppearanceFrames.observeScrolling(of: scrollContainer, backend: observingBackend) { [weak registry] in
+            registry?.scheduleCheck()
+        }
+        registry.scheduleCheck()
+    }
+}
+
+/// Opens the backend existentials the lazy appearance registry needs.
+@MainActor
+enum LazyAppearanceFrames {
+    static func resolver<GeometryBackend: BackendFeatures.WidgetGeometry>(
+        in scrollContainer: Any,
+        backend: GeometryBackend
+    ) -> @MainActor (AnyWidget) -> CGRect? {
+        let container = scrollContainer as! GeometryBackend.Widget
+        return { widget in
+            guard let widget = widget.widget as? GeometryBackend.Widget,
+                  let frame = backend.frame(of: widget, in: container)
+            else {
+                return nil
+            }
+            return CGRect(x: frame.origin.x, y: frame.origin.y, width: frame.size.x, height: frame.size.y)
+        }
+    }
+
+    static func observeScrolling<ObservingBackend: BackendFeatures.ScrollObservation>(
+        of scrollContainer: Any,
+        backend: ObservingBackend,
+        action: @escaping @MainActor () -> Void
+    ) {
+        backend.setScrollChangeHandler(of: scrollContainer as! ObservingBackend.Widget, to: action)
     }
 }

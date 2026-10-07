@@ -13,6 +13,10 @@ class ScrollViewChildren<Content: View>: ViewGraphNodeChildren {
     /// scroll view's visible region.
     let coordinateSpaceAnchor = CoordinateSpaceAnchor()
 
+    /// The views in lazy containers inside this scroll view that wait to be
+    /// scrolled near before they appear.
+    lazy var lazyAppearance = LazyAppearanceRegistry(anchor: coordinateSpaceAnchor)
+
     /// The margins around the content, as of the last layout.
     var contentMargins = ScrollContentMargins()
 

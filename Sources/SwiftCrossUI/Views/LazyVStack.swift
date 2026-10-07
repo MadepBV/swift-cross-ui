@@ -63,6 +63,19 @@ public struct LazyVStack<Content: View>: View {
         )
     }
 
+    public func children<Backend: BaseAppBackend>(
+        backend: Backend,
+        snapshots: [ViewGraphSnapshotter.NodeSnapshot]?,
+        environment: EnvironmentValues
+    ) -> any ViewGraphNodeChildren {
+        // Its children appear as they're scrolled near (`LazyAppearanceRegistry`).
+        stack.children(
+            backend: backend,
+            snapshots: snapshots,
+            environment: environment.with(\.appearsLazily, true)
+        )
+    }
+
     public func asWidget<Backend: BaseAppBackend>(
         _ children: any ViewGraphNodeChildren,
         backend: Backend
@@ -81,7 +94,7 @@ public struct LazyVStack<Content: View>: View {
             widget,
             children: children,
             proposedSize: proposedSize,
-            environment: environment,
+            environment: environment.with(\.appearsLazily, true),
             backend: backend
         )
         // Unlike a `VStack`, SwiftUI's lazy stack takes the whole width it's
@@ -105,7 +118,7 @@ public struct LazyVStack<Content: View>: View {
             widget,
             children: children,
             layout: layout,
-            environment: environment,
+            environment: environment.with(\.appearsLazily, true),
             backend: backend
         )
     }

@@ -96,7 +96,7 @@ public struct LazyVGrid<Content: View>: View {
             wrapping: defaultChildren(
                 backend: backend,
                 snapshots: snapshots,
-                environment: environment
+                environment: environment.with(\.appearsLazily, true)
             )
         )
     }
@@ -160,6 +160,7 @@ public struct LazyVGrid<Content: View>: View {
         // downwards flow to them.
         let participantEnvironment =
             environment
+                .with(\.appearsLazily, true)
                 .with(\.layoutOrientation, .vertical)
                 .with(\.layoutAlignment, alignment.asStackAlignment)
                 .with(\.layoutSpacing, LayoutSystem.roundSize(spacing))
