@@ -23,6 +23,10 @@ class ScrollViewChildren<Content: View>: ViewGraphNodeChildren {
     /// The identity of the last scroll request carried out.
     var lastScrollRequest: AnyHashable?
 
+    /// The size of the visible region when the last scroll request was
+    /// carried out.
+    var lastScrollRequestViewport: SIMD2<Double>?
+
     /// The values last reported to each scroll geometry observer.
     var reportedGeometryValues: [Any] = []
 
