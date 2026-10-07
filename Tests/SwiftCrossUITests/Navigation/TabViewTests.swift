@@ -105,4 +105,22 @@ struct TabViewTests {
         #expect(harness.texts.contains("Library"))
         #expect(harness.texts.contains("Home page"))
     }
+
+    @Test("Sidebar rows are one height and as wide as each other, whichever is selected")
+    func sidebarRowsAreUniform() {
+        let selection = StateBox(Section.library)
+        let harness = GraphHarness {
+            TabView(selection: selection.binding) {
+                Tab("Home", systemImage: "house", value: Section.home) { Text("Home page") }
+                Tab("Library", systemImage: "books.vertical", value: Section.library) { Text("Library page") }
+                Tab("Search", systemImage: "magnifyingglass", value: Section.search) { Text("Search page") }
+            }
+            .tabViewStyle(.sidebarAdaptable)
+        }
+        harness.render()
+        // The first button is the sidebar's own toggle; the rest are the rows.
+        let rows = Array(harness.widgets.compactMap { $0 as? DummyBackend.Button }.dropFirst())
+        #expect(rows.count == 3)
+        #expect(Set(rows.map(\.size)).count == 1)
+    }
 }

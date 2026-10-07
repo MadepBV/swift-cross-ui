@@ -33,6 +33,13 @@ public struct TabView<SelectionValue: Hashable, Content: TabContent>: View
     static var tabSpacing: Int { 4 }
     /// The tab bar's inset from the edges of the view.
     static var tabBarInset: CGFloat { 8 }
+    /// A sidebar row's horizontal inset inside its selection platter.
+    static var sidebarRowInset: CGFloat { 8 }
+    /// A sidebar row's vertical inset, which makes it the 28 points of a Mac
+    /// sidebar row with a body-sized title.
+    static var sidebarRowVerticalInset: CGFloat { 6 }
+    /// The corner radius of a sidebar row's selection platter.
+    static var sidebarRowCornerRadius: CGFloat { 6 }
 
     /// The value of the selected tab.
     var selection: Binding<SelectionValue>
@@ -92,6 +99,7 @@ public struct TabView<SelectionValue: Hashable, Content: TabContent>: View
                             // Level with the navigation bar's row beside it, as
                             // a Mac window's toolbar runs across its sidebar.
                             SidebarToggleButton(toggle: toggle)
+                                .padding(.leading, Self.sidebarRowInset)
                                 .padding(.bottom, Self.tabBarInset)
                             tabButtons(tabs, selected: selected?.value)
                             Spacer()
@@ -121,30 +129,50 @@ public struct TabView<SelectionValue: Hashable, Content: TabContent>: View
         return ForEach(Array(tabs.indices), id: \.self) { index in
             let tab = tabs[index]
             let isSelected = tab.value == selected
-            Button {
-                selection.wrappedValue = tab.value
-            } label: {
-                Group {
-                    if let systemImage = tab.systemImage {
-                        Label(tab.title, systemImage: systemImage)
-                    } else {
-                        Text(tab.title)
-                    }
+            if placement == .sidebar {
+                // Every sidebar row is drawn alike, with the selection as a
+                // platter behind it, so the rows are one height and their
+                // icons and titles share one leading edge, as in a Mac
+                // sidebar. A bordered selected row moved its title 12 points
+                // in and stood twice as tall as the rows around it.
+                Button {
+                    selection.wrappedValue = tab.value
+                } label: {
+                    tabLabel(tab)
+                        .padding(.horizontal, Self.sidebarRowInset)
+                        .padding(.vertical, Self.sidebarRowVerticalInset)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background {
+                            RoundedRectangle(cornerRadius: Self.sidebarRowCornerRadius)
+                                .fill(isSelected ? Color.gray.opacity(0.25) : Color.clear)
+                        }
                 }
-                // A sidebar row is as wide as the sidebar, so its selection
-                // platter is too, as in a Mac sidebar.
-                .frame(maxWidth: placement == .sidebar ? .infinity : nil, alignment: .leading)
+                .buttonStyle(PlainButtonStyle())
+                .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+            } else {
+                // A tab bar's selected tab is prominent.
+                Button {
+                    selection.wrappedValue = tab.value
+                } label: {
+                    tabLabel(tab)
+                }
+                .buttonStyle(
+                    isSelected
+                        ? BorderedProminentButtonStyle() as any ButtonStyle
+                        : BorderlessButtonStyle()
+                )
+                .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
             }
-            // A sidebar marks its selected row with a neutral platter, as a
-            // Mac sidebar does; a tab bar's selected tab is prominent.
-            .buttonStyle(
-                isSelected
-                    ? (placement == .sidebar
-                        ? BorderedButtonStyle() as any ButtonStyle
-                        : BorderedProminentButtonStyle())
-                    : BorderlessButtonStyle()
-            )
-            .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        }
+    }
+
+    /// A tab's title, with its symbol when it has one.
+    @ViewBuilder
+    private func tabLabel(_ tab: _TabItem<SelectionValue>) -> some View {
+        if let systemImage = tab.systemImage {
+            Label(tab.title, systemImage: systemImage)
+        } else {
+            Text(tab.title)
         }
     }
 
