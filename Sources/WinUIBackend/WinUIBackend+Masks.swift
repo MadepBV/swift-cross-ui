@@ -151,8 +151,14 @@ private enum MaskCompositionError: Swift.Error {
 /// projection leaves out: only `SetElementChildVisual` is needed, to show a
 /// composition visual on top of an element's own content.
 final class ElementCompositionPreview: WindowsFoundation.IInspectable {
+    /// `IElementCompositionPreviewStatics`, read from WinAppSDK 1.5's
+    /// `Microsoft.UI.Xaml.winmd` with `winmdidl`. The C header declares the
+    /// constant but the projection defines none for interfaces it leaves out.
     override public class var IID: WindowsFoundation.IID {
-        IID___x_ABI_CMicrosoft_CUI_CXaml_CHosting_CIElementCompositionPreviewStatics
+        .init(
+            Data1: 0x84DA_5A6C, Data2: 0x0CFA, Data3: 0x532B,
+            Data4: (0x9B, 0x15, 0xCC, 0xD9, 0x86, 0x37, 0x43, 0x42)
+        )
     }
 
     nonisolated(unsafe) static let statics: ElementCompositionPreview = try! RoGetActivationFactory(
