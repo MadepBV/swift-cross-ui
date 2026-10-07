@@ -314,6 +314,11 @@ enum SteadyStateProfile {
         backend: DummyBackend,
         setUp: () -> Pass
     ) -> Stats {
+        // SCUI_PROFILE_ONLY=<label> runs one scenario, for a profiler.
+        if let only = ProcessInfo.processInfo.environment["SCUI_PROFILE_ONLY"], only != label {
+            return Stats(label: label, samples: [], layoutSamples: [], commitSamples: [],
+                         bodyEvaluationsPerPass: 0, backendCallsPerPass: 0, committedSize: .zero)
+        }
         let pass = setUp()
 
         // Warm up: let the allocator and the branch predictors settle, and get
