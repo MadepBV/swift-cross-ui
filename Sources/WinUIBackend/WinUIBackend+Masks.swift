@@ -143,7 +143,7 @@ final class MaskCompositionRegistry {
     }
 }
 
-private enum MaskCompositionError: Error {
+private enum MaskCompositionError: Swift.Error {
     case noVisual
 }
 
