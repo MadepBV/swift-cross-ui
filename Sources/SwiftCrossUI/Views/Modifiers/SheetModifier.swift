@@ -243,7 +243,13 @@ struct SheetModifier<Content: View, SheetContent: View>: TypeSafeView {
                 // environment, not that of its content.
                 environment: environment,
                 size: result.size.vector,
-                onDismiss: { handleDismiss(children: children) },
+                // Weak: the sheet holds this closure, and the children hold the
+                // sheet, so a strong capture kept both alive after the
+                // presenter went away.
+                onDismiss: { [weak children] in
+                    guard let children else { return }
+                    handleDismiss(children: children)
+                },
                 cornerRadius: preferences.presentationCornerRadius,
                 detents: preferences.presentationDetents ?? [],
                 dragIndicatorVisibility: preferences.presentationDragIndicatorVisibility
@@ -265,6 +271,13 @@ struct SheetModifier<Content: View, SheetContent: View>: TypeSafeView {
             children.sheet = sheet
             children.window = window
             children.parentSheet = parentSheet
+            // If the presenting view leaves the view graph while the sheet is
+            // up (the view under it is replaced, say), the sheet goes with
+            // it, as in SwiftUI, instead of staying on screen with nothing
+            // that can dismiss it.
+            children.dismissOnRemoval = OnDisappearAction {
+                backend.dismissSheet(sheet, window: window as! NewBackend.Window, parentSheet: parentSheet)
+            }
         } else if !isPresented.wrappedValue && children.sheet != nil {
             backend.dismissSheet(
                 children.sheet as! NewBackend.Sheet,
@@ -275,10 +288,12 @@ struct SheetModifier<Content: View, SheetContent: View>: TypeSafeView {
             children.window = nil
             children.parentSheet = nil
             children.sheetContentNode = nil
+            children.dismissOnRemoval = nil
         }
     }
 
     func handleDismiss(children: Children) {
+        children.dismissOnRemoval = nil
         onDismiss?()
         children.sheet = nil
         children.window = nil
@@ -306,6 +321,9 @@ class SheetModifierViewChildren<Child: View, SheetContent: View>: ViewGraphNodeC
     var sheet: Any?
     var window: Any?
     var parentSheet: Any?
+    /// Dismisses the sheet on screen; run if these children go away while it
+    /// is presented.
+    var dismissOnRemoval: OnDisappearAction?
 
     init(
         childNode: AnyViewGraphNode<Child>,
@@ -315,5 +333,14 @@ class SheetModifierViewChildren<Child: View, SheetContent: View>: ViewGraphNodeC
         self.childNode = childNode
         self.sheetContentNode = sheetContentNode
         self.sheet = sheet
+    }
+
+    deinit {
+        // `deinit` runs wherever the last reference is released, so it hands
+        // the dismissal back to the main actor (see `OnDisappearModifierChildren`).
+        guard let dismissOnRemoval else { return }
+        Task { @MainActor in
+            dismissOnRemoval.run()
+        }
     }
 }
