@@ -1,5 +1,6 @@
 import Dispatch
 import Foundation
+@_spi(Backends) import SwiftCrossUI
 import UWP
 import WinUI
 import WindowsFoundation
@@ -25,15 +26,28 @@ enum WinUITreeDiagnostics {
     }
 
     private static func schedule(_ windows: @escaping @MainActor () -> [CustomWindow]) {
-        let interval = Double(ProcessInfo.processInfo.environment["SCUI_WINUI_TREE_INTERVAL"] ?? "") ?? 5
+        // With SCUI_WINUI_TREE_REQUEST set, a dump is written only when that file appears (it is then deleted), so a
+        // driver can find elements without periodic dumps holding the main thread while it measures.
+        let request = ProcessInfo.processInfo.environment["SCUI_WINUI_TREE_REQUEST"].flatMap { $0.isEmpty ? nil : $0 }
+        let interval = request != nil
+            ? 0.25 : Double(ProcessInfo.processInfo.environment["SCUI_WINUI_TREE_INTERVAL"] ?? "") ?? 5
         DispatchQueue.main.asyncAfter(deadline: .now() + interval) {
             MainActor.assumeIsolated {
                 guard let path else { return }
+                if let request {
+                    guard FileManager.default.fileExists(atPath: request) else {
+                        schedule(windows)
+                        return
+                    }
+                    try? FileManager.default.removeItem(atPath: request)
+                }
+                PerformanceRecorder.enter("tree.dump")
                 var lines: [String] = ["dumped \(Date())"]
                 for window in windows() {
                     lines.append("window")
                     walk(window.grid, root: window.grid, depth: 0, into: &lines)
                 }
+                PerformanceRecorder.exit()
                 try? lines.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8)
                 schedule(windows)
             }

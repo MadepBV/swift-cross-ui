@@ -658,6 +658,7 @@ public final class WinUIBackend:
 
     public func insert(_ child: Widget, into container: Widget, at index: Int) {
         let container = container as! WinUI.Canvas
+        BackendCallStatistics.record("winui.insert")
         container.children.insertAt(UInt32(index), child)
         WidgetPropertyCache.shared.invalidateChildPositions(of: container)
     }
@@ -679,6 +680,7 @@ public final class WinUIBackend:
 
     public func remove(childAt index: Int, from container: Widget) {
         let container = container as! WinUI.Canvas
+        BackendCallStatistics.record("winui.remove")
         container.children.removeAt(UInt32(index))
         WidgetPropertyCache.shared.invalidateChildPositions(of: container)
     }
@@ -704,6 +706,7 @@ public final class WinUIBackend:
             return
         }
 
+        BackendCallStatistics.record("winui.setPosition")
         WinUI.Canvas.setTop(child, Double(position.y))
         WinUI.Canvas.setLeft(child, Double(position.x))
         entry.childPositions[index] = position
@@ -770,6 +773,7 @@ public final class WinUIBackend:
         if let cached = entry.naturalSize, cached.token == LayoutPass.token {
             return cached.size
         }
+        BackendCallStatistics.record("winui.measureNatural")
         let size = measureNaturalSize(of: widget)
         entry.naturalSize = (LayoutPass.token, size)
         return size
@@ -967,6 +971,7 @@ public final class WinUIBackend:
             return
         }
         entry.size = size
+        BackendCallStatistics.record("winui.setSize")
         widget.width = Double(size.x)
         widget.height = Double(size.y)
     }
@@ -1012,6 +1017,7 @@ public final class WinUIBackend:
             return cached
         }
 
+        BackendCallStatistics.record("winui.measureText")
         // Update the text view's environment and measure its desired line height
         updateTextView(measurementTextBlock, content: text, environment: environment)
 
@@ -1089,6 +1095,8 @@ public final class WinUIBackend:
 
         if entry.text != content {
             entry.text = content
+            BackendCallStatistics.record("winui.setText")
+            PerformanceRecorder.textWritten(content)
             block.text = content
         }
 

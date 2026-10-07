@@ -40,6 +40,9 @@ public enum BackendCallStatistics {
         return counts
     }
 
+    /// What has been counted so far, without stopping.
+    public static func snapshot() -> [String: Int] { counts }
+
     /// Records an event, if counting is on.
     ///
     /// - Parameters:

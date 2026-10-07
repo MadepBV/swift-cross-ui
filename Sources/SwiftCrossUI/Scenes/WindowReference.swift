@@ -197,6 +197,8 @@ final class WindowReference<SceneType: WindowingScene> {
         environment: EnvironmentValues,
         windowSizeIsFinal: Bool = false
     ) {
+        PerformanceRecorder.enter("window.update")
+        defer { PerformanceRecorder.exit() }
         guard let window = window as? Backend.Window else {
             fatalError("Scene updated with a backend incompatible with the window it was given")
         }
