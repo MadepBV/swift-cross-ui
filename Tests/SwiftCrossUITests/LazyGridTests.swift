@@ -332,7 +332,7 @@ struct LazyGridTests {
     // MARK: Lazy stacks
 
     @MainActor
-    @Test("LazyVStack lays out like a VStack")
+    @Test("LazyVStack lays out like a VStack, but takes the width it's offered")
     func lazyVStackMatchesVStack() {
         let proposedSize = ProposedViewSize(100, 100)
 
@@ -351,8 +351,8 @@ struct LazyGridTests {
             proposedSize: proposedSize
         )
 
-        #expect(lazyResult.size == ViewSize(50, 32))
-        #expect(lazyResult.size == eagerResult.size)
+        #expect(lazyResult.size == ViewSize(100, 32))
+        #expect(lazyResult.size.height == eagerResult.size.height)
     }
 
     // MARK: Helpers

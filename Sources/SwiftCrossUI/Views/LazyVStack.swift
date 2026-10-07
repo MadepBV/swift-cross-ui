@@ -77,13 +77,21 @@ public struct LazyVStack<Content: View>: View {
         environment: EnvironmentValues,
         backend: Backend
     ) -> ViewLayoutResult {
-        stack.computeLayout(
+        let result = stack.computeLayout(
             widget,
             children: children,
             proposedSize: proposedSize,
             environment: environment,
             backend: backend
         )
+        // Unlike a `VStack`, SwiftUI's lazy stack takes the whole width it's
+        // offered and aligns its children within it, so a leading-aligned
+        // column in a scroll view starts at the leading edge instead of being
+        // centred as a block as narrow as its widest child.
+        guard let width = proposedSize.width, width.isFinite, width > result.size.width else {
+            return result
+        }
+        return result.with(\.size, ViewSize(width, result.size.height))
     }
 
     public func commit<Backend: BaseAppBackend>(
