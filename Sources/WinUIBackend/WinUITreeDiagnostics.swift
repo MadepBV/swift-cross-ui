@@ -71,6 +71,11 @@ enum WinUITreeDiagnostics {
             if element.renderTransform != nil { line += " T" }
             if element.clip != nil { line += " clip" }
         }
+        if let element = node as? WinUI.UIElement, element.visibility == .collapsed {
+            // A dormant page: kept alive, but not on screen.
+            lines.append(line + " collapsed")
+            return
+        }
         if let text = node as? WinUI.TextBlock { line += " \"\(text.text.prefix(60))\"" }
         lines.append(line)
         let count = WinUI.VisualTreeHelper.getChildrenCount(node)

@@ -42,6 +42,9 @@ public enum PerformanceRecorder {
     private static var layouts = 0
     private static var commits = 0
     private static var started = false
+    private static var commitDepth = 0
+    private static var commitStart: UInt64 = 0
+    private static var commitNanoseconds: UInt64 = 0
 
     /// Starts the pinger and the writer. Idempotent; cheap when disabled.
     public static func start() {
@@ -66,6 +69,7 @@ public enum PerformanceRecorder {
         bodies = 0
         layouts = 0
         commits = 0
+        commitNanoseconds = 0
     }
 
     /// Marks the end of the work begun by the matching ``enter(_:)``.
@@ -88,7 +92,8 @@ public enum PerformanceRecorder {
             }
             let topCalls = calls.sorted { $0.1 > $1.1 }.prefix(8).map { "\($0.0)=\($0.1)" }
                 .joined(separator: " ")
-            detail = "\(segmentLabel) | \(topBodies) | \(topCalls)"
+            let commitMs = Double(commitNanoseconds) / 1_000_000
+            detail = "\(segmentLabel) commit=\(String(format: "%.1f", commitMs))ms | \(topBodies) | \(topCalls)"
         }
         Sink.shared.segment(
             durationMs: duration, bodies: bodies, layouts: layouts, commits: commits, detail: detail)
@@ -112,6 +117,22 @@ public enum PerformanceRecorder {
     public static func layoutComputed() {
         guard isEnabled else { return }
         layouts += 1
+    }
+
+    /// Brackets a node's commit, so a segment can say how much of it was
+    /// committing (backend writes) rather than laying out.
+    @inline(__always)
+    public static func commitBegan() {
+        guard isEnabled, depth > 0 else { return }
+        commitDepth += 1
+        if commitDepth == 1 { commitStart = DispatchTime.now().uptimeNanoseconds }
+    }
+
+    @inline(__always)
+    public static func commitEnded() {
+        guard isEnabled, depth > 0, commitDepth > 0 else { return }
+        commitDepth -= 1
+        if commitDepth == 0 { commitNanoseconds &+= DispatchTime.now().uptimeNanoseconds &- commitStart }
     }
 
     /// Counts one node commit.
