@@ -49,13 +49,26 @@ extension Image {
         if let bundle {
             return resourceURL(named: name, inOnly: bundle)
         }
+        // A view's body names its picture on every evaluation, and each
+        // lookup below is a file-system probe per extension and bundle, so
+        // the answer for the default bundles is remembered.
+        if let known = defaultBundleURLs.withLock({ $0[name] }) {
+            return known
+        }
+        var found: URL?
         for candidate in [Bundle.main] + siblingResourceBundles {
             if let url = resourceURL(named: name, inOnly: candidate) {
-                return url
+                found = url
+                break
             }
         }
-        return nil
+        defaultBundleURLs.withLock { $0[name] = .some(found) }
+        return found
     }
+
+    /// Resolved names in the default bundles, including names that resolve to
+    /// nothing. Bundled resources don't change while an app runs.
+    private static let defaultBundleURLs = ResourceURLCache()
 
     /// The SwiftPM resource bundles in the executable's directory, read once.
     private static let siblingResourceBundles: [Bundle] = {
@@ -78,5 +91,18 @@ extension Image {
             }
         }
         return nil
+    }
+}
+
+/// A lock-guarded name → URL table, usable from any isolation because
+/// `Image.init(_:bundle:)` is nonisolated.
+final class ResourceURLCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var urls: [String: URL?] = [:]
+
+    func withLock<T>(_ body: (inout [String: URL?]) -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body(&urls)
     }
 }
