@@ -18,8 +18,11 @@ import Foundation
 struct NavigationBar: View {
     /// The spacing between the bar's items.
     static let itemSpacing = 8
-    /// The bar's inset from the container's edges.
-    static let horizontalInset: CGFloat = 12
+    /// The bar's inset from the container's edges: Fluent's page margin for
+    /// medium and wide windows, so that the title and back button line up
+    /// with page content laid out on the same margin instead of sitting 12
+    /// points left of it.
+    static let horizontalInset: CGFloat = 24
     /// The bar's vertical inset.
     static let verticalInset: CGFloat = 6
     /// The width of a search field drawn in the bar's row.
@@ -36,6 +39,9 @@ struct NavigationBar: View {
 
     /// Redraws the bar whenever a contribution changes.
     private let subscription: NavigationChromeSubscription
+
+    /// The button that shows a hidden tab view sidebar; see `SidebarToggle`.
+    @Environment(\.sidebarToggle) private var sidebarToggle
 
     /// Creates a bar.
     ///
@@ -56,13 +62,16 @@ struct NavigationBar: View {
         let trailing = state.entries(in: .trailing)
         let inlineSearch = state.search.flatMap { $0.placement.isInBarRow ? $0 : nil }
         let drawerSearch = state.search.flatMap { $0.placement.isInBarRow ? nil : $0 }
-        let hasRow = back != nil || title != nil || !leading.isEmpty
+        let hasRow = sidebarToggle != nil || back != nil || title != nil || !leading.isEmpty
             || !principal.isEmpty || !trailing.isEmpty || inlineSearch != nil
 
         if state.visibility != .hidden && (hasRow || drawerSearch != nil) {
             VStack(alignment: .leading, spacing: Self.itemSpacing) {
                 if hasRow {
                     HStack(spacing: Self.itemSpacing) {
+                        if let sidebarToggle {
+                            SidebarToggleButton(toggle: sidebarToggle)
+                        }
                         if let back {
                             Button(Self.backButtonLabel) { back() }
                         }

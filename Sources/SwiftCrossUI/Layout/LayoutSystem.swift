@@ -22,6 +22,26 @@ public enum LayoutSystem {
         }
     }
 
+    /// The whole number of points a backend reports for a length it measured
+    /// natively, such as a text block's desired width.
+    ///
+    /// Rounds up, as ``roundSize(_:)`` does for layout sizes: a parent that
+    /// gives a label exactly the size it reported must give it at least the
+    /// space the native control needs. Truncating instead makes a label that
+    /// measured 102.5 points wide report 102, so the parent sizes it to 102 and
+    /// the control wraps its last word onto a second line. A measurement within
+    /// a thousandth of a point of a whole number is that number, so floating
+    /// point noise in a native measurement doesn't add a point.
+    ///
+    /// - Parameter length: The natively measured length, in points.
+    /// - Returns: The length as whole points.
+    @_spi(Backends) public static func measuredLength(_ length: Double) -> Int {
+        guard length.isFinite else {
+            return roundSize(length)
+        }
+        return roundSize(length - 0.001)
+    }
+
     static func clamp(_ value: Double, minimum: Double?, maximum: Double?) -> Double {
         var value = value
         if let minimum {
@@ -667,10 +687,20 @@ public enum LayoutSystem {
         let orientation = environment.layoutOrientation
         let perpendicularOrientation = orientation.perpendicular
         var spaceUsedAlongStackAxis = 0.0
+        // As in SwiftUI, a group of equal priority shares what the stack has
+        // left equally, children in order of ascending flexibility, while the
+        // minimum lengths of lower-priority groups stay reserved for them.
+        // Reserving the minimums of the group's own later children as well
+        // proposed the least flexible child less than its share: three buttons
+        // proposed exactly their ideal width each got about four fifths of it,
+        // and their labels wrapped.
         var reservedSpace = cache.totalReservedSpace
         for group in cache.priorityGroups {
             var childrenRemaining = group.children.count { index in
                 !cache.isHidden[index]
+            }
+            for index in group.children where !cache.isHidden[index] {
+                reservedSpace -= cache.minimumLengths[index]
             }
 
             for index in group.children {
@@ -702,8 +732,6 @@ public enum LayoutSystem {
                     renderedChildren[index].size = .zero
                     continue
                 }
-
-                reservedSpace -= cache.minimumLengths[index]
 
                 var proposedChildSize = ProposedViewSize.unspecified
                 proposedChildSize[component: orientation] = max(

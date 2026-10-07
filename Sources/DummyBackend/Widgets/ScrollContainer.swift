@@ -10,6 +10,9 @@ extension DummyBackend {
         public var scrollOffset = SIMD2<Double>.zero
         /// Whether the last programmatic scroll asked to be animated.
         public var lastScrollWasAnimated = false
+        /// What SwiftCrossUI runs when the user scrolls; tests call it after
+        /// moving ``scrollOffset`` to stand in for the user.
+        public var scrollChangeHandler: (@MainActor () -> Void)?
 
         public init(child: Widget) {
             self.child = child

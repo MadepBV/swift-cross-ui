@@ -417,6 +417,34 @@ struct ButtonRoleAndSheetTests {
         }
 
         @MainActor
+        @Test("A sheet goes away with the view that presented it")
+        func sheetGoesAwayWithItsPresenter() async {
+            let source = ItemSource<Bool>(true)
+            let harness = SheetHarness {
+                Group {
+                    if source.item == true {
+                        Text("Welcome")
+                            .sheet(isPresented: Binding(get: { true }, set: { _ in })) {
+                                Text("Connect")
+                            }
+                    } else {
+                        Text("Watch Now")
+                    }
+                }
+            }
+
+            harness.render()
+            #expect(harness.presentedSheet != nil)
+
+            // Connecting replaces the welcome screen, the sheet's presenter.
+            source.item = false
+            harness.render()
+            for _ in 0..<10 { await Task.yield() }
+
+            #expect(harness.presentedSheet == nil)
+        }
+
+        @MainActor
         @Test("Clearing the item dismisses an item-based sheet")
         func clearingTheItemDismissesTheSheet() {
             let source = ItemSource(SheetItem(id: 7, name: "Anchor"))

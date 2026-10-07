@@ -44,7 +44,14 @@ extension View {
 }
 
 struct TaskModifier<Id: Equatable, Content: View> {
+    /// Whether the view has appeared, kept by reference so that recording it
+    /// doesn't schedule an update.
+    struct Appearance {
+        var hasAppeared = Box(false)
+    }
+
     @State var task: Task<(), any Error>? = nil
+    @State private var appearance = Appearance()
 
     var id: Id
     var content: Content
@@ -54,13 +61,27 @@ struct TaskModifier<Id: Equatable, Content: View> {
 
 extension TaskModifier: View {
     var body: some View {
-        content.onChange(of: id, initial: true) {
-            task?.cancel()
-            task = Task(priority: priority) {
-                await action()
+        // The task starts as the view appears, which inside a lazy container
+        // waits until it's scrolled near (`LazyAppearanceRegistry`), and
+        // restarts when `id` changes after that.
+        content
+            .onChange(of: id) {
+                guard appearance.hasAppeared.value else { return }
+                start()
             }
-        }.onDisappear {
-            task?.cancel()
+            .onAppear {
+                appearance.hasAppeared.value = true
+                start()
+            }
+            .onDisappear {
+                task?.cancel()
+            }
+    }
+
+    private func start() {
+        task?.cancel()
+        task = Task(priority: priority) {
+            await action()
         }
     }
 }

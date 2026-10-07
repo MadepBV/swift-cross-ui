@@ -180,6 +180,7 @@ enum LucideIconGeometry {
         "paintbrush",
         "palette",
         "panel-bottom",
+        "panel-left",
         "panel-right",
         "panels-top-left",
         "pen-tool",
@@ -390,6 +391,7 @@ enum LucideIconGeometry {
             case "paintbrush": return paintbrush
             case "palette": return palette
             case "panel-bottom": return panelBottom
+            case "panel-left": return panelLeft
             case "panel-right": return panelRight
             case "panels-top-left": return panelsTopLeft
             case "pen-tool": return penTool
@@ -2459,6 +2461,21 @@ enum LucideIconGeometry {
             .cubicCurve(control1: SIMD2(3, 3.8954), control2: SIMD2(3.8954, 3), end: SIMD2(5, 3)),
             .move(SIMD2(3, 15)),
             .line(SIMD2(21, 15)),
+        ]
+
+    private static let panelLeft:
+        [SymbolGeometry.Command] = [
+            .move(SIMD2(5, 3)),
+            .line(SIMD2(19, 3)),
+            .cubicCurve(control1: SIMD2(20.1046, 3), control2: SIMD2(21, 3.8954), end: SIMD2(21, 5)),
+            .line(SIMD2(21, 19)),
+            .cubicCurve(control1: SIMD2(21, 20.1046), control2: SIMD2(20.1046, 21), end: SIMD2(19, 21)),
+            .line(SIMD2(5, 21)),
+            .cubicCurve(control1: SIMD2(3.8954, 21), control2: SIMD2(3, 20.1046), end: SIMD2(3, 19)),
+            .line(SIMD2(3, 5)),
+            .cubicCurve(control1: SIMD2(3, 3.8954), control2: SIMD2(3.8954, 3), end: SIMD2(5, 3)),
+            .move(SIMD2(9, 3)),
+            .line(SIMD2(9, 21)),
         ]
 
     private static let panelRight:

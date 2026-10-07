@@ -566,6 +566,10 @@ public final class WinUIBackend:
                 .with(\.appPhase, windows.contains(where: \.isActive) ? .active : .inactive)
                 .with(\.locale, locale)
                 .with(\.calendar, locale.calendar)
+                // A Windows setting is a ToggleSwitch, as SwiftUI's automatic
+                // style is a switch in a grouped form; a toggle drawn as a
+                // button read as an action.
+                .with(\.toggleStyle, .switch)
     }
 
     public func setRootEnvironmentChangeHandler(
@@ -880,8 +884,8 @@ public final class WinUIBackend:
         let adjustment = sizeCorrection(for: widget)
 
         let out = SIMD2(
-            Int(computedSize.width) + adjustment.x,
-            Int(computedSize.height) + adjustment.y
+            LayoutSystem.measuredLength(Double(computedSize.width)) + adjustment.x,
+            LayoutSystem.measuredLength(Double(computedSize.height)) + adjustment.y
         )
 
         return out
@@ -1026,7 +1030,7 @@ public final class WinUIBackend:
         let lineHeight = environment.resolvedFont.lineHeight
 
         if let lineLimitSettings = environment.lineLimitSettings {
-            let height = Int(
+            let height = LayoutSystem.measuredLength(
                 Double(max(lineLimitSettings.limit, 1)) * lineHeight
             )
 
@@ -1037,7 +1041,7 @@ public final class WinUIBackend:
 
         // Make sure the text doesn't get shorter than a single line of text even if
         // it's empty.
-        size.y = max(usedHeight, Int(lineHeight))
+        size.y = max(usedHeight, LayoutSystem.measuredLength(lineHeight))
         TextMeasurementCache.record(size, for: cacheKey)
         return size
     }
@@ -1053,10 +1057,13 @@ public final class WinUIBackend:
         )
         try! textBlock.measure(allocation)
 
+        // Rounded up: see `LayoutSystem.measuredLength(_:)`. At 200 % scaling
+        // a desired width often ends in half a point, and truncating it gave a
+        // label half a point less than it needs, wrapping its last word.
         let computedSize = textBlock.desiredSize
         return SIMD2(
-            Int(computedSize.width),
-            Int(computedSize.height)
+            LayoutSystem.measuredLength(Double(computedSize.width)),
+            LayoutSystem.measuredLength(Double(computedSize.height))
         )
     }
 
@@ -1218,6 +1225,13 @@ public final class WinUIBackend:
         scrollViewer.content = child
         child.horizontalAlignment = .left
         child.verticalAlignment = .top
+        // WinUI hit-tests only elements with a background, and the canvases
+        // inside have none, so a mouse wheel turned over the space between
+        // rows reached nothing inside the scroll viewer and didn't scroll it.
+        // A transparent background makes the whole viewport take the wheel.
+        scrollViewer.background = SolidColorBrushCache.brush(
+            for: SwiftCrossUI.Color.Resolved(red: 0, green: 0, blue: 0, opacity: 0)
+        )
         return scrollViewer
     }
 
