@@ -566,6 +566,10 @@ public final class WinUIBackend:
                 .with(\.appPhase, windows.contains(where: \.isActive) ? .active : .inactive)
                 .with(\.locale, locale)
                 .with(\.calendar, locale.calendar)
+                // A Windows setting is a ToggleSwitch, as SwiftUI's automatic
+                // style is a switch in a grouped form; a toggle drawn as a
+                // button read as an action.
+                .with(\.toggleStyle, .switch)
     }
 
     public func setRootEnvironmentChangeHandler(
