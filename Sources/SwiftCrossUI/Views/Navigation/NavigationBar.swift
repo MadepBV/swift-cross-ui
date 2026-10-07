@@ -37,6 +37,9 @@ struct NavigationBar: View {
     /// Redraws the bar whenever a contribution changes.
     private let subscription: NavigationChromeSubscription
 
+    /// The button that shows a hidden tab view sidebar; see `SidebarToggle`.
+    @Environment(\.sidebarToggle) private var sidebarToggle
+
     /// Creates a bar.
     ///
     /// - Parameters:
@@ -56,13 +59,16 @@ struct NavigationBar: View {
         let trailing = state.entries(in: .trailing)
         let inlineSearch = state.search.flatMap { $0.placement.isInBarRow ? $0 : nil }
         let drawerSearch = state.search.flatMap { $0.placement.isInBarRow ? nil : $0 }
-        let hasRow = back != nil || title != nil || !leading.isEmpty
+        let hasRow = sidebarToggle != nil || back != nil || title != nil || !leading.isEmpty
             || !principal.isEmpty || !trailing.isEmpty || inlineSearch != nil
 
         if state.visibility != .hidden && (hasRow || drawerSearch != nil) {
             VStack(alignment: .leading, spacing: Self.itemSpacing) {
                 if hasRow {
                     HStack(spacing: Self.itemSpacing) {
+                        if let sidebarToggle {
+                            SidebarToggleButton(toggle: sidebarToggle)
+                        }
                         if let back {
                             Button(Self.backButtonLabel) { back() }
                         }

@@ -335,6 +335,8 @@ enum SFSymbolLucideMapping {
         "scribble.variable": "pen-tool",
         "seal": "badge",
         "server.rack": "server",
+        "sidebar.left": "panel-left",
+        "sidebar.leading": "panel-left",
         "sidebar.right": "panel-right",
         "sidebar.trailing": "panel-right",
         "slider.horizontal.3": "sliders-horizontal",

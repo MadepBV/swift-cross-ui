@@ -42,6 +42,9 @@ public struct TabView<SelectionValue: Hashable, Content: TabContent>: View
 
     @Environment(\.tabBarPlacement) private var placement
 
+    /// Whether the sidebar of ``SidebarAdaptableTabViewStyle`` is showing.
+    @State private var sidebarIsVisible = true
+
     /// Creates a tab view whose selection you control.
     ///
     /// - Parameters:
@@ -80,14 +83,26 @@ public struct TabView<SelectionValue: Hashable, Content: TabContent>: View
                     selectedContent(selected)
                 }
             case .sidebar:
+                let toggle = SidebarToggle(isVisible: sidebarIsVisible) {
+                    sidebarIsVisible.toggle()
+                }
                 HStack(spacing: 0) {
-                    VStack(alignment: .leading, spacing: Self.tabSpacing) {
-                        tabButtons(tabs, selected: selected?.value)
-                        Spacer()
+                    if sidebarIsVisible {
+                        VStack(alignment: .leading, spacing: Self.tabSpacing) {
+                            // Level with the navigation bar's row beside it, as
+                            // a Mac window's toolbar runs across its sidebar.
+                            SidebarToggleButton(toggle: toggle)
+                                .padding(.bottom, Self.tabBarInset)
+                            tabButtons(tabs, selected: selected?.value)
+                            Spacer()
+                        }
+                        .padding(.horizontal, Self.tabBarInset)
+                        .padding(.top, NavigationBar.verticalInset)
+                        .padding(.bottom, Self.tabBarInset)
+                        .frame(width: Self.sidebarWidth)
                     }
-                    .padding(Self.tabBarInset)
-                    .frame(width: Self.sidebarWidth)
                     selectedContent(selected)
+                        .environment(\.sidebarToggle, sidebarIsVisible ? nil : toggle)
                 }
         }
     }
@@ -109,11 +124,16 @@ public struct TabView<SelectionValue: Hashable, Content: TabContent>: View
             Button {
                 selection.wrappedValue = tab.value
             } label: {
-                if let systemImage = tab.systemImage {
-                    Label(tab.title, systemImage: systemImage)
-                } else {
-                    Text(tab.title)
+                Group {
+                    if let systemImage = tab.systemImage {
+                        Label(tab.title, systemImage: systemImage)
+                    } else {
+                        Text(tab.title)
+                    }
                 }
+                // A sidebar row is as wide as the sidebar, so its selection
+                // platter is too, as in a Mac sidebar.
+                .frame(maxWidth: placement == .sidebar ? .infinity : nil, alignment: .leading)
             }
             // A sidebar marks its selected row with a neutral platter, as a
             // Mac sidebar does; a tab bar's selected tab is prominent.
