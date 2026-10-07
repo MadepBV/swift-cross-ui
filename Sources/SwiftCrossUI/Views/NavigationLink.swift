@@ -64,6 +64,8 @@ public struct NavigationLink: View {
     /// Pushes a destination onto the enclosing navigation stack, if there is
     /// one.
     @Environment(\.pushNavigationDestination) private var push
+    @Environment(\.isInsideForm) private var isInsideForm
+    @Environment(\.formStyle) private var formStyle
 
     /// Appends a value to the path of the enclosing navigation stack, if there
     /// is one.
@@ -71,23 +73,53 @@ public struct NavigationLink: View {
 
     @ViewBuilder
     public var body: some View {
-        switch storage {
-            case .value(let label, let value, let path):
-                Button(label) {
-                    path.wrappedValue.append(value)
-                }
-            case .labelledValue(let label, let value, let path):
-                Button {
-                    path.wrappedValue.append(value)
-                } label: {
+        let label = self.label
+        let action = self.action
+        if isInsideForm {
+            // A form or list row: the whole row is the link, as a Mac's
+            // grouped form and list draw it, rather than a bordered button
+            // as wide as its title. A grouped form adds the trailing
+            // chevron that says the row opens a page.
+            Button(action: action) {
+                HStack {
                     label
+                    Spacer(minLength: 8)
+                    if formStyle is GroupedFormStyle {
+                        Image(systemName: "chevron.right")
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                    }
                 }
-            case .stackValue(let label, let value):
-                // Resolved here so that the button's action captures just the
-                // appender and the value rather than the whole link.
-                let appendToPath = self.appendToPath
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(PlainButtonStyle())
+        } else {
+            Button(action: action) {
+                label
+            }
+        }
+    }
 
-                Button {
+    /// The link's label as a view.
+    private var label: AnyView {
+        switch storage {
+            case .value(let label, _, _):
+                AnyView(Text(label))
+            case .labelledValue(let label, _, _), .stackValue(let label, _), .destination(let label, _):
+                label
+        }
+    }
+
+    /// What activating the link does: appends its value to a path, or pushes
+    /// its destination. Resolved here so that the button's action captures
+    /// just what it needs rather than the whole link.
+    private var action: @MainActor () -> Void {
+        switch storage {
+            case .value(_, let value, let path), .labelledValue(_, let value, let path):
+                return { path.wrappedValue.append(value) }
+            case .stackValue(_, let value):
+                let appendToPath = self.appendToPath
+                return {
                     guard let appendToPath else {
                         logger.warning(
                             """
@@ -102,15 +134,10 @@ public struct NavigationLink: View {
                         return
                     }
                     appendToPath(value)
-                } label: {
-                    label
                 }
-            case .destination(let label, let destination):
-                // Resolved here so that the button's action captures just the
-                // two closures rather than the whole link.
+            case .destination(_, let destination):
                 let push = self.push
-
-                Button {
+                return {
                     guard let push else {
                         logger.warning(
                             """
@@ -122,8 +149,6 @@ public struct NavigationLink: View {
                         return
                     }
                     push(destination())
-                } label: {
-                    label
                 }
         }
     }
