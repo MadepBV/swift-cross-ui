@@ -667,10 +667,20 @@ public enum LayoutSystem {
         let orientation = environment.layoutOrientation
         let perpendicularOrientation = orientation.perpendicular
         var spaceUsedAlongStackAxis = 0.0
+        // As in SwiftUI, a group of equal priority shares what the stack has
+        // left equally, children in order of ascending flexibility, while the
+        // minimum lengths of lower-priority groups stay reserved for them.
+        // Reserving the minimums of the group's own later children as well
+        // proposed the least flexible child less than its share: three buttons
+        // proposed exactly their ideal width each got about four fifths of it,
+        // and their labels wrapped.
         var reservedSpace = cache.totalReservedSpace
         for group in cache.priorityGroups {
             var childrenRemaining = group.children.count { index in
                 !cache.isHidden[index]
+            }
+            for index in group.children where !cache.isHidden[index] {
+                reservedSpace -= cache.minimumLengths[index]
             }
 
             for index in group.children {
@@ -702,8 +712,6 @@ public enum LayoutSystem {
                     renderedChildren[index].size = .zero
                     continue
                 }
-
-                reservedSpace -= cache.minimumLengths[index]
 
                 var proposedChildSize = ProposedViewSize.unspecified
                 proposedChildSize[component: orientation] = max(

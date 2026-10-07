@@ -75,4 +75,32 @@ struct StackLayoutTests {
         #expect(result.size.height == ViewGraphHelpers.environment.resolvedFont.lineHeight)
         #expect(result.size.vector.x == minimumWidthWithoutWrapping)
     }
+
+    @MainActor
+    @Test("A row proposed its ideal width gives every child its ideal width")
+    func rowProposedItsIdealWidthKeepsEveryChildIdeal() {
+        // Three wrappable labels of different flexibility, like a row of
+        // buttons. Each one must be offered its share of the whole row, not
+        // its share minus every later sibling's minimum, or the least flexible
+        // labels wrap although the row has all the space it asked for.
+        let titles = ["Sign in to Avelio", "Connect a provider", "Explore a preview"]
+        let view = HStack(spacing: 12) {
+            Text(titles[0])
+            Text(titles[1])
+            Text(titles[2])
+        }
+
+        let ideal = ViewGraphHelpers.computeLayout(of: view)
+        let node = ViewGraphHelpers.committedNode(
+            for: view,
+            proposedSize: ProposedViewSize(ideal.size.width, 600)
+        )
+
+        let children = node.widget.getChildren()
+        for (child, title) in zip(children, titles) {
+            let idealChild = ViewGraphHelpers.computeLayout(of: Text(title))
+            #expect(Double(child.size.x) == idealChild.size.width)
+            #expect(Double(child.size.y) == idealChild.size.height)
+        }
+    }
 }
