@@ -880,8 +880,8 @@ public final class WinUIBackend:
         let adjustment = sizeCorrection(for: widget)
 
         let out = SIMD2(
-            Int(computedSize.width) + adjustment.x,
-            Int(computedSize.height) + adjustment.y
+            LayoutSystem.measuredLength(Double(computedSize.width)) + adjustment.x,
+            LayoutSystem.measuredLength(Double(computedSize.height)) + adjustment.y
         )
 
         return out
@@ -1026,7 +1026,7 @@ public final class WinUIBackend:
         let lineHeight = environment.resolvedFont.lineHeight
 
         if let lineLimitSettings = environment.lineLimitSettings {
-            let height = Int(
+            let height = LayoutSystem.measuredLength(
                 Double(max(lineLimitSettings.limit, 1)) * lineHeight
             )
 
@@ -1037,7 +1037,7 @@ public final class WinUIBackend:
 
         // Make sure the text doesn't get shorter than a single line of text even if
         // it's empty.
-        size.y = max(usedHeight, Int(lineHeight))
+        size.y = max(usedHeight, LayoutSystem.measuredLength(lineHeight))
         TextMeasurementCache.record(size, for: cacheKey)
         return size
     }
@@ -1053,10 +1053,13 @@ public final class WinUIBackend:
         )
         try! textBlock.measure(allocation)
 
+        // Rounded up: see `LayoutSystem.measuredLength(_:)`. At 200 % scaling
+        // a desired width often ends in half a point, and truncating it gave a
+        // label half a point less than it needs, wrapping its last word.
         let computedSize = textBlock.desiredSize
         return SIMD2(
-            Int(computedSize.width),
-            Int(computedSize.height)
+            LayoutSystem.measuredLength(Double(computedSize.width)),
+            LayoutSystem.measuredLength(Double(computedSize.height))
         )
     }
 

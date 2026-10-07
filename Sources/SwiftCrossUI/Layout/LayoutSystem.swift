@@ -22,6 +22,26 @@ public enum LayoutSystem {
         }
     }
 
+    /// The whole number of points a backend reports for a length it measured
+    /// natively, such as a text block's desired width.
+    ///
+    /// Rounds up, as ``roundSize(_:)`` does for layout sizes: a parent that
+    /// gives a label exactly the size it reported must give it at least the
+    /// space the native control needs. Truncating instead makes a label that
+    /// measured 102.5 points wide report 102, so the parent sizes it to 102 and
+    /// the control wraps its last word onto a second line. A measurement within
+    /// a thousandth of a point of a whole number is that number, so floating
+    /// point noise in a native measurement doesn't add a point.
+    ///
+    /// - Parameter length: The natively measured length, in points.
+    /// - Returns: The length as whole points.
+    @_spi(Backends) public static func measuredLength(_ length: Double) -> Int {
+        guard length.isFinite else {
+            return roundSize(length)
+        }
+        return roundSize(length - 0.001)
+    }
+
     static func clamp(_ value: Double, minimum: Double?, maximum: Double?) -> Double {
         var value = value
         if let minimum {
