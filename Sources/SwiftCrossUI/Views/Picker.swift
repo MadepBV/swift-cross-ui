@@ -133,6 +133,7 @@ public struct Picker<Label: View, SelectedValue: Hashable, Content: View>: View 
         return HStack {
             if !environment.labelsHidden {
                 label
+                HorizontalControlSpacer()
             }
             AnyView(control)
         }
