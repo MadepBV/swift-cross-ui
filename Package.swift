@@ -191,10 +191,9 @@ let package = Package(
             url: "https://github.com/stackotter/swift-image-formats",
             .upToNextMinor(from: "0.5.0")
         ),
-        .package(
-            url: "https://github.com/moreSwift/swift-winui",
-            .upToNextMinor(from: "0.2.2")
-        ),
+        // swift-winui 0.2.2 with MediaPlayerElement, MediaTransportControls and CodecQuery added to its
+        // projections; Vendor/README.md says how it was generated and how to regenerate it.
+        .package(path: "Vendor/swift-winui"),
         .package(
             url: "https://github.com/stackotter/swift-benchmark",
             .upToNextMinor(from: "0.2.0")
