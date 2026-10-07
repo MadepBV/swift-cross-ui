@@ -172,8 +172,13 @@ public final class WinUIBackend:
     // pass for a window of a few hundred labels.
     public let measuresTextIndependentlyOfWidget = true
 
+    /// Zero: WinUI 3's scroll bars overlay the content, which runs under
+    /// them (the scroll viewer's content presenter spans the bars' column and
+    /// row) and they show on demand, as a Mac's overlay scrollers do. Reserving
+    /// 12 points made a page's content 12 points narrower than its scroll view
+    /// and centred it, 6 points right of the page title above it.
     public var scrollBarWidth: Int {
-        12
+        0
     }
 
     var borderedButtonPadding: SIMD2<Int>?

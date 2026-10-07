@@ -12,14 +12,23 @@ extension ScrollView {
     ///   - children: The scroll view's children.
     func performScrollRequest(
         _ request: ScrollRequest?,
-        children: ScrollViewChildren<Content>
+        children: ScrollViewChildren<Content>,
+        viewportSize: SIMD2<Double>
     ) {
-        guard let request, request.identity != children.lastScrollRequest,
-              let controller = children.scrollTargets.controller
+        guard let request, let controller = children.scrollTargets.controller else {
+            return
+        }
+        // A resize moves content laid out by the viewport's size (the pages
+        // of a paging carousel) out from under an unchanged offset, so the
+        // request is applied again, keeping its target where it was, as in
+        // SwiftUI.
+        guard request.identity != children.lastScrollRequest
+            || viewportSize != children.lastScrollRequestViewport
         else {
             return
         }
         children.lastScrollRequest = request.identity
+        children.lastScrollRequestViewport = viewportSize
         request.apply(controller, children.scrollTargets)
     }
 

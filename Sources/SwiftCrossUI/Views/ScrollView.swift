@@ -301,7 +301,11 @@ public struct ScrollView<Content: View>: TypeSafeView, View {
                 max(finalContentSize.height, scrollViewSize.height)
             )
         )
-        performScrollRequest(environment.scrollRequest, children: children)
+        performScrollRequest(
+            environment.scrollRequest,
+            children: children,
+            viewportSize: SIMD2(scrollViewSize.width, scrollViewSize.height)
+        )
         reportGeometry(
             to: environment.scrollGeometryObservers,
             children: children,

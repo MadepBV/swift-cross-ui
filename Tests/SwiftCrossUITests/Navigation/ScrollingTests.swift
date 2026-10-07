@@ -92,6 +92,31 @@ struct ScrollingTests {
         #expect(scrollView.scrollOffset.y == 60)
     }
 
+    @Test("scrollPosition(id:) keeps its view in place when the scroll view is resized")
+    func scrollPositionIDSurvivesResize() throws {
+        let id = StateBox<Int?>(2)
+        let width = StateBox(100.0)
+        let harness = GraphHarness {
+            ScrollView(.horizontal) {
+                HStack(spacing: 0) {
+                    ForEach(0..<5, id: \.self) { page in
+                        Color.blue.frame(width: width.value, height: 20).id(page)
+                    }
+                }
+            }
+            .scrollPosition(id: id.binding, anchor: .leading)
+            .frame(width: width.value, height: 20)
+        }
+        harness.render(passes: 1)
+        let scrollView = try #require(harness.first(DummyBackend.ScrollContainer.self))
+        #expect(scrollView.scrollOffset.x == 200)
+
+        // A wider window makes every page wider; page 2 stays in view.
+        width.value = 150
+        harness.render(passes: 1)
+        #expect(scrollView.scrollOffset.x == 300)
+    }
+
     @Test("Hidden scroll indicators reserve no room for a scroll bar")
     func hiddenIndicatorsReserveNoRoom() throws {
         let harness = GraphHarness {

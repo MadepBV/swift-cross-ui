@@ -374,6 +374,23 @@ final class WindowReference<SceneType: WindowingScene> {
 
         if needsWindowSizeCommit {
             backend.setSize(ofWindow: window, to: proposedWindowSize)
+            // A backend may not give the window the size asked for: WinUI
+            // keeps a window inside its display's work area, so a default
+            // size larger than the screen comes back smaller. Laid out at the
+            // size asked for, the content ran past the window's edge, so it is
+            // laid out again, once, at the size the window really has.
+            let actualWindowSize = backend.size(ofWindow: window)
+            if actualWindowSize != proposedWindowSize {
+                update(
+                    nil,
+                    proposedWindowSize: actualWindowSize,
+                    needsWindowSizeCommit: false,
+                    backend: backend,
+                    environment: parentEnvironment,
+                    windowSizeIsFinal: windowSizeIsFinal
+                )
+                return
+            }
         }
         cachedWindowSize = proposedWindowSize
 

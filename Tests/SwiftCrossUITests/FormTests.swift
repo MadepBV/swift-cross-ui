@@ -384,3 +384,24 @@ struct FormTests {
         return node
     }
 }
+
+@Suite("Form rows")
+struct FormRowControlTests {
+    @MainActor
+    @Test("A form row puts a switch at its trailing edge; elsewhere the switch follows its label")
+    func switchIsTrailingInAForm() {
+        let isOn = Binding(get: { true }, set: { (_: Bool) in })
+        let inForm = ViewGraphHelpers.computeLayout(
+            of: Toggle("Autoplay next episode", isOn: isOn)
+                .toggleStyle(.switch)
+                .environment(\.isInsideForm, true),
+            proposedSize: ProposedViewSize(400, 100)
+        )
+        let alone = ViewGraphHelpers.computeLayout(
+            of: Toggle("Autoplay next episode", isOn: isOn).toggleStyle(.switch),
+            proposedSize: ProposedViewSize(400, 100)
+        )
+        #expect(inForm.size.width == 400)
+        #expect(alone.size.width < 400)
+    }
+}
